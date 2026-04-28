@@ -1,185 +1,147 @@
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
-
 const PORT = process.env.PORT || 3000;
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'db', 'bipagem.db');
 
-// ── Ensure db folder exists ──────────────────────────────────
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+// ── JSON database (no native compilation needed) ─────────────
+const DB_DIR  = path.join(__dirname, 'db');
+const DB_FILE = path.join(DB_DIR, 'data.json');
+fs.mkdirSync(DB_DIR, { recursive: true });
 
-// ── Database setup ───────────────────────────────────────────
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS colaboradores (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nome TEXT NOT NULL UNIQUE,
-    setor TEXT DEFAULT '',
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS marketplaces (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nome TEXT NOT NULL UNIQUE,
-    cor TEXT DEFAULT '#00e5a0',
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS bipagens (
-    id TEXT PRIMARY KEY,
-    etiqueta TEXT NOT NULL UNIQUE,
-    marketplace_id INTEGER,
-    colaborador_id INTEGER,
-    marketplace_nome TEXT,
-    colaborador_nome TEXT,
-    data TEXT,
-    hora TEXT,
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (marketplace_id) REFERENCES marketplaces(id),
-    FOREIGN KEY (colaborador_id) REFERENCES colaboradores(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS pendencias (
-    id TEXT PRIMARY KEY,
-    etiqueta TEXT NOT NULL,
-    colaborador_nome TEXT,
-    transito TEXT DEFAULT '',
-    obs TEXT DEFAULT '',
-    data TEXT,
-    hora TEXT,
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS retornos (
-    id TEXT PRIMARY KEY,
-    etiqueta TEXT NOT NULL,
-    motivo TEXT DEFAULT '',
-    data TEXT,
-    hora TEXT,
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-`);
-
-// Seed default data if empty
-const colabCount = db.prepare('SELECT COUNT(*) as c FROM colaboradores').get().c;
-if (colabCount === 0) {
-  const insertColab = db.prepare('INSERT OR IGNORE INTO colaboradores (nome, setor) VALUES (?, ?)');
-  ['PEDRO','VITOR','GEAN','KAUAN','GABRIEL','MURILO','LIEDSON','GUNTHER','LUIS','EDSON','EDINHO'].forEach(n => insertColab.run(n, ''));
+function readDB() {
+  try {
+    if (fs.existsSync(DB_FILE)) return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  } catch(e) {}
+  return {
+    colaboradores: [],
+    marketplaces: [],
+    bipagens: [],
+    pendencias: [],
+    retornos: []
+  };
 }
 
-const mktCount = db.prepare('SELECT COUNT(*) as c FROM marketplaces').get().c;
-if (mktCount === 0) {
-  const insertMkt = db.prepare('INSERT OR IGNORE INTO marketplaces (nome, cor) VALUES (?, ?)');
-  [['SHOPEE','#ff5722'],['MERCADO LIVRE','#ffe600'],['AMAZON','#ff9900'],['SHEIN','#e91e8c']].forEach(([n,c]) => insertMkt.run(n, c));
+function writeDB(data) {
+  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+// Seed defaults if empty
+let db = readDB();
+if (!db.colaboradores.length) {
+  db.colaboradores = [
+    'PEDRO','VITOR','GEAN','KAUAN','GABRIEL',
+    'MURILO','LIEDSON','GUNTHER','LUIS','EDSON','EDINHO'
+  ].map((nome, i) => ({ id: i+1, nome, setor: '', criado_em: new Date().toISOString() }));
+}
+if (!db.marketplaces.length) {
+  db.marketplaces = [
+    { id:1, nome:'SHOPEE',         cor:'#ff5722' },
+    { id:2, nome:'MERCADO LIVRE',  cor:'#ffe600' },
+    { id:3, nome:'AMAZON',         cor:'#ff9900' },
+    { id:4, nome:'SHEIN',          cor:'#e91e8c' },
+  ].map(m => ({ ...m, criado_em: new Date().toISOString() }));
+}
+writeDB(db);
+
+// ── Helpers ──────────────────────────────────────────────────
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function nowBR() {
+  const now = new Date();
+  return {
+    data: now.toLocaleDateString('pt-BR'),
+    hora: now.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+  };
 }
 
 // ── WebSocket broadcast ──────────────────────────────────────
 function broadcast(event, data) {
   const msg = JSON.stringify({ event, data });
-  wss.clients.forEach(client => {
-    if (client.readyState === 1) client.send(msg);
-  });
+  wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
 }
-
-wss.on('connection', (ws) => {
-  ws.on('error', console.error);
-});
+wss.on('connection', ws => ws.on('error', console.error));
 
 // ── Middleware ───────────────────────────────────────────────
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Helpers ──────────────────────────────────────────────────
-function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
-function nowBR() {
-  const now = new Date();
-  const data = now.toLocaleDateString('pt-BR');
-  const hora = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  return { data, hora };
-}
-
-// ── API: Estado inicial ──────────────────────────────────────
+// ── Estado inicial ───────────────────────────────────────────
 app.get('/api/estado', (req, res) => {
-  res.json({
-    colaboradores: db.prepare('SELECT * FROM colaboradores ORDER BY nome').all(),
-    marketplaces:  db.prepare('SELECT * FROM marketplaces ORDER BY nome').all(),
-    bipagens:      db.prepare('SELECT * FROM bipagens ORDER BY criado_em DESC').all(),
-    pendencias:    db.prepare('SELECT * FROM pendencias ORDER BY criado_em DESC').all(),
-    retornos:      db.prepare('SELECT * FROM retornos ORDER BY criado_em DESC').all(),
-  });
+  db = readDB();
+  res.json(db);
 });
 
-// ── API: Colaboradores ───────────────────────────────────────
+// ── Colaboradores ────────────────────────────────────────────
 app.get('/api/colaboradores', (req, res) => {
-  res.json(db.prepare('SELECT * FROM colaboradores ORDER BY nome').all());
+  db = readDB(); res.json(db.colaboradores);
 });
 
 app.post('/api/colaboradores', (req, res) => {
   const { nome, setor = '' } = req.body;
   if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
+  db = readDB();
   const nomeFmt = nome.trim().toUpperCase();
-  try {
-    const result = db.prepare('INSERT INTO colaboradores (nome, setor) VALUES (?, ?)').run(nomeFmt, setor.trim());
-    const colab = db.prepare('SELECT * FROM colaboradores WHERE id = ?').get(result.lastInsertRowid);
-    broadcast('colaborador:add', colab);
-    res.json(colab);
-  } catch (e) {
-    res.status(409).json({ erro: 'Colaborador já existe.' });
-  }
+  if (db.colaboradores.find(c => c.nome === nomeFmt))
+    return res.status(409).json({ erro: 'Colaborador já existe.' });
+  const colab = { id: Date.now(), nome: nomeFmt, setor: setor.trim(), criado_em: new Date().toISOString() };
+  db.colaboradores.push(colab);
+  writeDB(db);
+  broadcast('colaborador:add', colab);
+  res.json(colab);
 });
 
 app.delete('/api/colaboradores/:id', (req, res) => {
-  db.prepare('DELETE FROM colaboradores WHERE id = ?').run(req.params.id);
-  broadcast('colaborador:del', { id: parseInt(req.params.id) });
+  db = readDB();
+  const id = parseInt(req.params.id);
+  db.colaboradores = db.colaboradores.filter(c => c.id !== id);
+  writeDB(db);
+  broadcast('colaborador:del', { id });
   res.json({ ok: true });
 });
 
-// ── API: Marketplaces ────────────────────────────────────────
+// ── Marketplaces ─────────────────────────────────────────────
 app.get('/api/marketplaces', (req, res) => {
-  res.json(db.prepare('SELECT * FROM marketplaces ORDER BY nome').all());
+  db = readDB(); res.json(db.marketplaces);
 });
 
 app.post('/api/marketplaces', (req, res) => {
   const { nome, cor = '#00e5a0' } = req.body;
   if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
+  db = readDB();
   const nomeFmt = nome.trim().toUpperCase();
-  try {
-    const result = db.prepare('INSERT INTO marketplaces (nome, cor) VALUES (?, ?)').run(nomeFmt, cor);
-    const mkt = db.prepare('SELECT * FROM marketplaces WHERE id = ?').get(result.lastInsertRowid);
-    broadcast('marketplace:add', mkt);
-    res.json(mkt);
-  } catch (e) {
-    res.status(409).json({ erro: 'Marketplace já existe.' });
-  }
+  if (db.marketplaces.find(m => m.nome === nomeFmt))
+    return res.status(409).json({ erro: 'Marketplace já existe.' });
+  const mkt = { id: Date.now(), nome: nomeFmt, cor, criado_em: new Date().toISOString() };
+  db.marketplaces.push(mkt);
+  writeDB(db);
+  broadcast('marketplace:add', mkt);
+  res.json(mkt);
 });
 
 app.delete('/api/marketplaces/:id', (req, res) => {
-  db.prepare('DELETE FROM marketplaces WHERE id = ?').run(req.params.id);
-  broadcast('marketplace:del', { id: parseInt(req.params.id) });
+  db = readDB();
+  const id = parseInt(req.params.id);
+  db.marketplaces = db.marketplaces.filter(m => m.id !== id);
+  writeDB(db);
+  broadcast('marketplace:del', { id });
   res.json({ ok: true });
 });
 
-// ── API: Bipagens ────────────────────────────────────────────
+// ── Bipagens ─────────────────────────────────────────────────
 app.get('/api/bipagens', (req, res) => {
+  db = readDB();
+  let list = db.bipagens;
   const { colab, mkt, de, ate } = req.query;
-  let q = 'SELECT * FROM bipagens WHERE 1=1';
-  const params = [];
-  if (colab) { q += ' AND colaborador_nome = ?'; params.push(colab); }
-  if (mkt)   { q += ' AND marketplace_nome = ?'; params.push(mkt); }
-  if (de)    { q += ' AND date(criado_em) >= date(?)'; params.push(de); }
-  if (ate)   { q += ' AND date(criado_em) <= date(?)'; params.push(ate); }
-  q += ' ORDER BY criado_em DESC';
-  res.json(db.prepare(q).all(...params));
+  if (colab) list = list.filter(b => b.colaborador_nome === colab);
+  if (mkt)   list = list.filter(b => b.marketplace_nome === mkt);
+  if (de)    list = list.filter(b => new Date(b.criado_em) >= new Date(de));
+  if (ate)   list = list.filter(b => new Date(b.criado_em) <= new Date(ate + 'T23:59:59'));
+  res.json(list.sort((a,b) => new Date(b.criado_em) - new Date(a.criado_em)));
 });
 
 app.post('/api/bipagens', (req, res) => {
@@ -187,87 +149,85 @@ app.post('/api/bipagens', (req, res) => {
   if (!etiqueta || !marketplace_id || !colaborador_id)
     return res.status(400).json({ erro: 'Etiqueta, marketplace e colaborador são obrigatórios.' });
 
+  db = readDB();
   const etiqFmt = etiqueta.trim().toUpperCase();
+  const dup = db.bipagens.find(b => b.etiqueta === etiqFmt);
+  if (dup) return res.status(409).json({ erro: 'ETIQUETA DUPLICADA', duplicata: dup });
 
-  // Verificar duplicata
-  const dup = db.prepare('SELECT * FROM bipagens WHERE etiqueta = ?').get(etiqFmt);
-  if (dup) {
-    return res.status(409).json({
-      erro: 'ETIQUETA DUPLICADA',
-      duplicata: dup
-    });
-  }
-
-  const mkt   = db.prepare('SELECT * FROM marketplaces WHERE id = ?').get(marketplace_id);
-  const colab = db.prepare('SELECT * FROM colaboradores WHERE id = ?').get(colaborador_id);
+  const mkt   = db.marketplaces.find(m => m.id === parseInt(marketplace_id));
+  const colab = db.colaboradores.find(c => c.id === parseInt(colaborador_id));
   if (!mkt || !colab) return res.status(400).json({ erro: 'Marketplace ou colaborador inválido.' });
 
   const { data, hora } = nowBR();
-  const id = uid();
-
-  db.prepare(`
-    INSERT INTO bipagens (id, etiqueta, marketplace_id, colaborador_id, marketplace_nome, colaborador_nome, data, hora)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, etiqFmt, marketplace_id, colaborador_id, mkt.nome, colab.nome, data, hora);
-
-  const bip = db.prepare('SELECT * FROM bipagens WHERE id = ?').get(id);
+  const bip = {
+    id: uid(), etiqueta: etiqFmt,
+    marketplace_id: mkt.id, marketplace_nome: mkt.nome,
+    colaborador_id: colab.id, colaborador_nome: colab.nome,
+    data, hora, criado_em: new Date().toISOString()
+  };
+  db.bipagens.unshift(bip);
+  writeDB(db);
   broadcast('bipagem:add', bip);
   res.json(bip);
 });
 
 app.delete('/api/bipagens/:id', (req, res) => {
-  db.prepare('DELETE FROM bipagens WHERE id = ?').run(req.params.id);
+  db = readDB();
+  db.bipagens = db.bipagens.filter(b => b.id !== req.params.id);
+  writeDB(db);
   broadcast('bipagem:del', { id: req.params.id });
   res.json({ ok: true });
 });
 
-// ── API: Pendências ──────────────────────────────────────────
+// ── Pendências ───────────────────────────────────────────────
 app.get('/api/pendencias', (req, res) => {
-  res.json(db.prepare('SELECT * FROM pendencias ORDER BY criado_em DESC').all());
+  db = readDB(); res.json(db.pendencias);
 });
 
 app.post('/api/pendencias', (req, res) => {
   const { etiqueta, colaborador_nome = '', transito = '', obs = '' } = req.body;
   if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
+  db = readDB();
   const { data, hora } = nowBR();
-  const id = uid();
-  db.prepare('INSERT INTO pendencias (id, etiqueta, colaborador_nome, transito, obs, data, hora) VALUES (?,?,?,?,?,?,?)')
-    .run(id, etiqueta.trim().toUpperCase(), colaborador_nome, transito, obs, data, hora);
-  const pend = db.prepare('SELECT * FROM pendencias WHERE id = ?').get(id);
+  const pend = { id: uid(), etiqueta: etiqueta.trim().toUpperCase(), colaborador_nome, transito, obs, data, hora, criado_em: new Date().toISOString() };
+  db.pendencias.unshift(pend);
+  writeDB(db);
   broadcast('pendencia:add', pend);
   res.json(pend);
 });
 
 app.delete('/api/pendencias/:id', (req, res) => {
-  db.prepare('DELETE FROM pendencias WHERE id = ?').run(req.params.id);
+  db = readDB();
+  db.pendencias = db.pendencias.filter(p => p.id !== req.params.id);
+  writeDB(db);
   broadcast('pendencia:del', { id: req.params.id });
   res.json({ ok: true });
 });
 
-// ── API: Retornos ────────────────────────────────────────────
+// ── Retornos ─────────────────────────────────────────────────
 app.get('/api/retornos', (req, res) => {
-  res.json(db.prepare('SELECT * FROM retornos ORDER BY criado_em DESC').all());
+  db = readDB(); res.json(db.retornos);
 });
 
 app.post('/api/retornos', (req, res) => {
   const { etiqueta, motivo = '' } = req.body;
   if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
+  db = readDB();
   const { data, hora } = nowBR();
-  const id = uid();
-  db.prepare('INSERT INTO retornos (id, etiqueta, motivo, data, hora) VALUES (?,?,?,?,?)')
-    .run(id, etiqueta.trim().toUpperCase(), motivo, data, hora);
-  const ret = db.prepare('SELECT * FROM retornos WHERE id = ?').get(id);
+  const ret = { id: uid(), etiqueta: etiqueta.trim().toUpperCase(), motivo, data, hora, criado_em: new Date().toISOString() };
+  db.retornos.unshift(ret);
+  writeDB(db);
   broadcast('retorno:add', ret);
   res.json(ret);
 });
 
 app.delete('/api/retornos/:id', (req, res) => {
-  db.prepare('DELETE FROM retornos WHERE id = ?').run(req.params.id);
+  db = readDB();
+  db.retornos = db.retornos.filter(r => r.id !== req.params.id);
+  writeDB(db);
   broadcast('retorno:del', { id: req.params.id });
   res.json({ ok: true });
 });
 
 // ── Start ────────────────────────────────────────────────────
-server.listen(PORT, () => {
-  console.log(`✓ Servidor rodando na porta ${PORT}`);
-});
+server.listen(PORT, () => console.log(`✓ Servidor na porta ${PORT}`));
