@@ -586,8 +586,8 @@ async function bipar() {
   document.getElementById('inp-etiq').value = '';
   try {
     const bip = await api('POST','/api/bipagens',{etiqueta:etiq,marketplace_id:mktId,colaborador_id:colabId});
-    S.bipagens.unshift(bip);
-    flashCard('ok'); renderBipagem(); renderHistorico(); updateCounts();
+    // Não adiciona ao state local aqui — o WebSocket fará isso para todos os clientes
+    flashCard('ok');
     toast(`✓ ${bip.etiqueta} — ${bip.marketplace_nome}`,'ok',1800);
   } catch(err) {
     flashCard('err');
@@ -667,11 +667,9 @@ async function addPend() {
   const transito= document.getElementById('pend-transito').value.trim();
   const obs     = document.getElementById('pend-obs').value.trim();
   if (!etiq) { toast('Informe a etiqueta.','warn'); return; }
-  const p = await api('POST','/api/pendencias',{etiqueta:etiq,colaborador_nome:colab,transito,obs});
-  S.pendencias.unshift(p);
+  await api('POST','/api/pendencias',{etiqueta:etiq,colaborador_nome:colab,transito,obs});
   document.getElementById('pend-etiq').value='';
   document.getElementById('pend-obs').value='';
-  renderPendencias(); updateCounts();
   toast('Pendência registrada.','ok');
 }
 
@@ -701,17 +699,13 @@ async function addRetorno() {
   if (!etiq) { toast('Informe a etiqueta.','warn'); return; }
   try {
     const res = await api('POST','/api/retornos',{etiqueta:etiq,motivo});
-    S.retornos.unshift(res.ret);
     if (res.bipagem_removida) {
-      S.bipagens = S.bipagens.filter(b=>b.id!==res.bipagem_removida.id);
-      renderBipagem();
       toast(`✓ Retorno registrado — etiqueta removida da bipagem`,'ok',3000);
     } else {
       toast(`✓ Retorno registrado`,'ok');
     }
     document.getElementById('ret-etiq').value='';
     document.getElementById('ret-motivo').value='';
-    renderRetornos(); updateCounts();
   } catch(e) { toast(e.erro||'Erro.','err'); }
 }
 
