@@ -1,0 +1,78 @@
+# Sistema de Bipagem — Deploy na Internet
+
+## O que você tem aqui
+
+- **server.js** — servidor Node.js com banco de dados SQLite
+- **public/index.html** — o sistema completo (abre no navegador)
+- **WebSockets** — todos os PCs veem as bipagens em tempo real
+- **Banco de dados** — histórico permanente de tudo
+
+---
+
+## Como colocar na internet (Railway) — GRÁTIS para começar
+
+### Passo 1 — Criar conta no GitHub (se não tiver)
+Acesse: https://github.com e crie uma conta gratuita.
+
+### Passo 2 — Criar repositório no GitHub
+1. Acesse https://github.com/new
+2. Nome: `bipagem-server`
+3. Clique em **Create repository**
+4. Na próxima tela, clique em **uploading an existing file**
+5. Arraste TODOS os arquivos desta pasta (exceto `node_modules` e `db`)
+6. Clique em **Commit changes**
+
+### Passo 3 — Deploy no Railway
+1. Acesse https://railway.app e clique em **Login with GitHub**
+2. Clique em **New Project**
+3. Escolha **Deploy from GitHub repo**
+4. Selecione `bipagem-server`
+5. O Railway detecta automaticamente o Node.js e faz o deploy
+
+### Passo 4 — Pegar o link
+1. No Railway, clique no seu projeto
+2. Vá em **Settings → Networking → Generate Domain**
+3. Você receberá um link tipo: `https://bipagem-server-production.up.railway.app`
+4. **Compartilhe esse link com todos os computadores da empresa**
+
+---
+
+## Custo Railway
+- **Plano gratuito (Hobby Free)**: $5 de crédito/mês — suficiente para uso leve
+- **Plano pago**: a partir de $5/mês (~R$25) para uso intenso
+- O banco de dados SQLite fica salvo no servidor (persistente)
+
+---
+
+## Alternativa: Render.com (também gratuito)
+1. Acesse https://render.com
+2. New → Web Service → Connect GitHub → selecione o repo
+3. Build Command: `npm install`
+4. Start Command: `npm start`
+5. Clique em **Create Web Service**
+
+**Atenção no Render gratuito**: o servidor "dorme" após 15 min sem uso.
+Para uso contínuo na empresa, recomenda-se o plano pago (~$7/mês).
+
+---
+
+## Uso local na rede da empresa (sem internet)
+Se preferir rodar só na rede interna:
+
+1. Instale Node.js em um computador (o "servidor")
+2. Extraia os arquivos
+3. Abra o Prompt de Comando na pasta e rode:
+   ```
+   npm install
+   npm start
+   ```
+4. O servidor roda na porta 3000
+5. Todos os outros PCs acessam pelo IP do servidor:
+   `http://192.168.x.x:3000`
+
+---
+
+## Dados e backup
+- O banco fica em `db/bipagem.db`
+- Faça backup desse arquivo regularmente
+- Para exportar dados: use o botão "CSV" dentro do sistema

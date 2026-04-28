@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Controle de Bipagem</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#0f0f0f;--surface:#1a1a1a;--surface2:#222;--surface3:#2a2a2a;
+  --border:#2e2e2e;--border2:#3a3a3a;--text:#f0f0f0;--text2:#888;--text3:#555;
+  --accent:#00e5a0;--accent2:#00b87a;--danger:#ff4d4d;--warn:#ffb547;--info:#4d9fff;
+  --font:'IBM Plex Sans',sans-serif;--mono:'IBM Plex Mono',monospace;--r:6px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html{scrollbar-width:thin;scrollbar-color:var(--border2) var(--bg);}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;}
+
+@keyframes scanFlash{0%{background:rgba(0,229,160,.18);}100%{background:transparent;}}
+@keyframes errorFlash{0%{background:rgba(255,77,77,.2);}100%{background:transparent;}}
+@keyframes slideIn{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:translateY(0);}}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+.header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 1.5rem;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;}
+.brand{display:flex;align-items:center;gap:10px;}
+.brand-icon{font-family:var(--mono);font-size:20px;color:var(--accent);font-weight:600;}
+.brand-text{font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;}
+.brand-sub{font-size:10px;color:var(--text3);font-family:var(--mono);}
+.header-right{display:flex;align-items:center;gap:12px;}
+.clock{font-family:var(--mono);font-size:12px;color:var(--text2);}
+.ws-dot{width:8px;height:8px;border-radius:50%;background:var(--danger);transition:background .3s;}
+.ws-dot.connected{background:var(--accent);animation:blink 2s ease-in-out infinite;}
+.ws-label{font-size:11px;color:var(--text3);font-family:var(--mono);}
+
+.layout{display:grid;grid-template-columns:220px 1fr;min-height:calc(100vh - 52px);}
+.sidebar{background:var(--surface);border-right:1px solid var(--border);padding:1rem 0;display:flex;flex-direction:column;}
+.sidebar-section{padding:.5rem 1rem .25rem;font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);}
+.nav-item{display:flex;align-items:center;gap:8px;padding:.6rem 1rem;cursor:pointer;transition:all .15s;border-left:2px solid transparent;font-size:13px;color:var(--text2);}
+.nav-item:hover{background:var(--surface2);color:var(--text);}
+.nav-item.active{background:var(--surface2);color:var(--accent);border-left-color:var(--accent);}
+.nav-item .count{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--surface3);padding:1px 6px;border-radius:20px;}
+.nav-item.active .count{background:rgba(0,229,160,.15);color:var(--accent);}
+.sidebar-divider{border:none;border-top:1px solid var(--border);margin:.5rem 0;}
+
+.main{padding:1.5rem;overflow:auto;}
+.panel{display:none;animation:fadeIn .2s ease;}
+.panel.active{display:block;}
+
+.bip-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.25rem;gap:1rem;}
+.bip-title{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:4px;}
+.bip-name{font-size:22px;font-weight:600;letter-spacing:-.02em;}
+
+.stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-bottom:1.25rem;}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:.75rem 1rem;}
+.stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);margin-bottom:4px;}
+.stat-value{font-size:24px;font-weight:600;font-family:var(--mono);}
+.stat-card.total .stat-value{color:var(--accent);}
+
+.scan-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1.25rem;margin-bottom:1rem;transition:background .3s;}
+.scan-card.flash-ok{animation:scanFlash .6s ease;}
+.scan-card.flash-err{animation:errorFlash .6s ease;}
+.scan-top{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;margin-bottom:1rem;align-items:flex-end;}
+.field label{display:block;font-size:10px;color:var(--text3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);}
+.field select,.field input{width:100%;padding:8px 10px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:13px;}
+.field select:focus,.field input:focus{outline:none;border-color:var(--accent);}
+.field select option{background:var(--surface2);}
+
+.scan-input-wrap input{width:100%;padding:14px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--mono);font-size:16px;letter-spacing:1.5px;text-align:center;transition:border-color .2s;}
+.scan-input-wrap input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(0,229,160,.1);}
+.scan-input-wrap input::placeholder{font-family:var(--font);font-size:13px;letter-spacing:0;color:var(--text3);}
+.scan-hint{text-align:center;font-size:11px;color:var(--text3);margin-top:6px;font-family:var(--mono);}
+
+.toast-area{position:fixed;top:64px;right:1rem;display:flex;flex-direction:column;gap:6px;z-index:999;}
+.toast{padding:10px 14px;border-radius:var(--r);font-size:13px;font-weight:500;animation:slideIn .2s ease;display:flex;align-items:flex-start;gap:8px;min-width:260px;max-width:380px;}
+.toast.ok{background:#052e1e;border:1px solid var(--accent);color:var(--accent);}
+.toast.err{background:#2a0a0a;border:1px solid var(--danger);color:var(--danger);}
+.toast.warn{background:#2a1a00;border:1px solid var(--warn);color:var(--warn);}
+.toast.info{background:#0a1a2e;border:1px solid var(--info);color:var(--info);}
+.toast-icon{font-size:15px;flex-shrink:0;margin-top:1px;}
+
+.mkt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin-bottom:1rem;}
+.mkt-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.mkt-header{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid var(--border);}
+.mkt-name{font-size:13px;font-weight:600;}
+.mkt-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.mkt-count-badge{font-family:var(--mono);font-size:11px;background:var(--surface2);padding:2px 8px;border-radius:20px;color:var(--text2);}
+.mkt-table{width:100%;border-collapse:collapse;font-size:12px;}
+.mkt-table th{padding:6px 10px;text-align:left;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);border-bottom:1px solid var(--border);}
+.mkt-table td{padding:7px 10px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11px;color:var(--text2);}
+.mkt-table tr:last-child td{border-bottom:none;}
+.mkt-table tr:hover td{background:var(--surface2);}
+.mkt-table td.etiq{color:var(--text);font-size:12px;}
+.mkt-table td .del-btn{background:none;border:none;color:var(--text3);cursor:pointer;padding:1px 4px;border-radius:3px;font-size:11px;transition:color .15s;}
+.mkt-table tr:hover .del-btn{color:var(--danger);}
+.mkt-empty{padding:1.5rem;text-align:center;color:var(--text3);font-size:12px;font-family:var(--mono);}
+.table-scroll{max-height:300px;overflow-y:auto;}
+
+.data-table{width:100%;border-collapse:collapse;font-size:12px;}
+.data-table th{padding:8px 12px;text-align:left;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid var(--border);font-family:var(--mono);white-space:nowrap;}
+.data-table td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tr:hover td{background:var(--surface2);}
+.data-table td.mono{font-family:var(--mono);font-size:11px;color:var(--text2);}
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.table-scroll-full{max-height:500px;overflow-y:auto;}
+
+.config-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:.75rem;}
+.config-chip{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);}
+.config-chip-left{display:flex;align-items:center;gap:8px;}
+.config-chip-dot{width:8px;height:8px;border-radius:50%;}
+.config-chip-del{background:none;border:none;color:var(--text3);cursor:pointer;padding:2px 5px;border-radius:3px;font-size:12px;transition:color .15s;}
+.config-chip-del:hover{color:var(--danger);}
+
+.add-form{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem;margin-bottom:1rem;}
+.add-form-title{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:.75rem;}
+.add-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
+.add-row .field{flex:1;min-width:120px;}
+
+.color-pick-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}
+.color-swatch{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:border-color .15s;}
+.color-swatch.selected{border-color:var(--text);}
+
+.export-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;}
+.export-label{font-size:11px;color:var(--text3);font-family:var(--mono);}
+
+.filters-row{display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;align-items:flex-end;}
+.filters-row .field{min-width:130px;}
+
+.btn{padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;font-family:var(--font);border-radius:var(--r);transition:all .15s;display:inline-flex;align-items:center;gap:6px;}
+.btn-primary{background:var(--accent);color:#000;border:none;}
+.btn-primary:hover{background:var(--accent2);}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border2);}
+.btn-ghost:hover{background:var(--surface2);color:var(--text);}
+.btn-danger{background:transparent;color:var(--danger);border:1px solid #3a1414;}
+.btn-danger:hover{background:#2a0a0a;}
+.btn-sm{padding:5px 10px;font-size:12px;}
+
+.empty-state{text-align:center;padding:2.5rem;color:var(--text3);font-size:12px;font-family:var(--mono);}
+
+.loading{display:flex;align-items:center;justify-content:center;height:200px;color:var(--text3);font-family:var(--mono);font-size:13px;gap:10px;}
+.spinner{width:16px;height:16px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">
+    <div class="brand-icon">&#9783;</div>
+    <div>
+      <div class="brand-text">Controle de Bipagem</div>
+      <div class="brand-sub" id="relogio"></div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="ws-dot" id="ws-dot"></div>
+    <span class="ws-label" id="ws-label">conectando...</span>
+    <div class="clock" id="data-full"></div>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="sidebar-section">Operação</div>
+    <div class="nav-item active" data-panel="bipagem" onclick="switchPanel('bipagem',this)">
+      <span>&#9783;</span> Bipagem
+      <span class="count" id="nav-bip-count">0</span>
+    </div>
+    <div class="nav-item" data-panel="pendencias" onclick="switchPanel('pendencias',this)">
+      <span>&#9888;</span> Pendências
+      <span class="count" id="nav-pend-count">0</span>
+    </div>
+    <div class="nav-item" data-panel="retorno" onclick="switchPanel('retorno',this)">
+      <span>&#8617;</span> Retorno
+      <span class="count" id="nav-ret-count">0</span>
+    </div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section">Histórico</div>
+    <div class="nav-item" data-panel="historico" onclick="switchPanel('historico',this)">
+      <span>&#9776;</span> Histórico
+    </div>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section">Config</div>
+    <div class="nav-item" data-panel="colaboradores" onclick="switchPanel('colaboradores',this)">
+      <span>&#128100;</span> Colaboradores
+    </div>
+    <div class="nav-item" data-panel="marketplaces" onclick="switchPanel('marketplaces',this)">
+      <span>&#128722;</span> Marketplaces
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- BIPAGEM -->
+    <div class="panel active" id="panel-bipagem">
+      <div class="bip-header">
+        <div>
+          <div class="bip-title">Estação de bipagem</div>
+          <div class="bip-name" id="bip-colab-name">Selecione um colaborador</div>
+        </div>
+        <div class="field" style="min-width:200px;">
+          <label>Colaborador</label>
+          <select id="sel-colab" onchange="selecionarColab()">
+            <option value="">— selecionar —</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="stats-row" id="stats-row">
+        <div class="stat-card total"><div class="stat-label">Total hoje</div><div class="stat-value" id="stat-total">0</div></div>
+      </div>
+
+      <div class="scan-card" id="scan-card">
+        <div class="scan-top">
+          <div class="field">
+            <label>Marketplace</label>
+            <select id="sel-mkt"><option value="">— selecionar —</option></select>
+          </div>
+          <div class="field">
+            <label>Colaborador (confirmar)</label>
+            <select id="sel-colab2"><option value="">— selecionar —</option></select>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="limparScan()">Limpar</button>
+        </div>
+        <div class="scan-input-wrap">
+          <input type="text" id="inp-etiq" placeholder="Bipe ou digite a etiqueta aqui"
+            autocomplete="off" autocorrect="off" spellcheck="false"
+            onkeydown="if(event.key==='Enter')bipar()"/>
+        </div>
+        <div class="scan-hint">ENTER para registrar &nbsp;·&nbsp; detecção automática de duplicatas em tempo real</div>
+      </div>
+
+      <div class="mkt-grid" id="mkt-grid"></div>
+    </div>
+
+    <!-- PENDÊNCIAS -->
+    <div class="panel" id="panel-pendencias">
+      <div class="bip-title" style="margin-bottom:1rem;">Pendências</div>
+      <div class="add-form">
+        <div class="add-form-title">Registrar pendência</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:flex-end;">
+          <div class="field"><label>Etiqueta</label><input type="text" id="pend-etiq" placeholder="Etiqueta" onkeydown="if(event.key==='Enter')addPend()"/></div>
+          <div class="field"><label>Responsável</label><select id="pend-colab"><option value="">— selecionar —</option></select></div>
+          <div class="field"><label>Trânsito</label><input type="text" id="pend-transito" placeholder="Ex: em rota"/></div>
+          <div class="field"><label>Pendência</label><input type="text" id="pend-obs" placeholder="Descreva"/></div>
+          <button class="btn btn-primary btn-sm" onclick="addPend()">+ Add</button>
+        </div>
+      </div>
+      <div class="export-bar">
+        <span class="export-label" id="pend-label">0 pendências</span>
+        <button class="btn btn-ghost btn-sm" onclick="exportCSV('pendencias')">&#8595; CSV</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-scroll-full">
+          <table class="data-table">
+            <thead><tr><th>Data</th><th>Hora</th><th>Etiqueta</th><th>Responsável</th><th>Trânsito</th><th>Pendência</th><th></th></tr></thead>
+            <tbody id="pend-tbody"><tr><td colspan="7" class="empty-state">Nenhuma pendência.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- RETORNO -->
+    <div class="panel" id="panel-retorno">
+      <div class="bip-title" style="margin-bottom:1rem;">Retorno de Etiqueta</div>
+      <div class="add-form">
+        <div class="add-form-title">Registrar devolução</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:flex-end;">
+          <div class="field"><label>Etiqueta</label><input type="text" id="ret-etiq" placeholder="Etiqueta devolvida" onkeydown="if(event.key==='Enter')addRetorno()"/></div>
+          <div class="field"><label>Motivo</label><input type="text" id="ret-motivo" placeholder="Motivo"/></div>
+          <button class="btn btn-primary" onclick="addRetorno()">Registrar</button>
+        </div>
+      </div>
+      <div class="export-bar">
+        <span class="export-label" id="ret-label">0 retornos</span>
+        <button class="btn btn-ghost btn-sm" onclick="exportCSV('retornos')">&#8595; CSV</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-scroll-full">
+          <table class="data-table">
+            <thead><tr><th>Data</th><th>Hora</th><th>Etiqueta</th><th>Motivo</th><th></th></tr></thead>
+            <tbody id="ret-tbody"><tr><td colspan="5" class="empty-state">Nenhum retorno.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- HISTÓRICO -->
+    <div class="panel" id="panel-historico">
+      <div class="bip-title" style="margin-bottom:1rem;">Histórico Completo</div>
+      <div class="filters-row">
+        <div class="field"><label>Colaborador</label><select id="hist-colab" onchange="renderHistorico()"><option value="">Todos</option></select></div>
+        <div class="field"><label>Marketplace</label><select id="hist-mkt" onchange="renderHistorico()"><option value="">Todos</option></select></div>
+        <div class="field"><label>De</label><input type="date" id="hist-de" onchange="renderHistorico()"/></div>
+        <div class="field"><label>Até</label><input type="date" id="hist-ate" onchange="renderHistorico()"/></div>
+        <button class="btn btn-ghost btn-sm" onclick="limparFiltros()">Limpar</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportCSV('historico')">&#8595; CSV</button>
+      </div>
+      <div class="export-bar">
+        <span class="export-label" id="hist-label">0 registros</span>
+      </div>
+      <div class="table-wrap">
+        <div class="table-scroll-full">
+          <table class="data-table">
+            <thead><tr><th>Data</th><th>Hora</th><th>Etiqueta</th><th>Marketplace</th><th>Colaborador</th><th></th></tr></thead>
+            <tbody id="hist-tbody"><tr><td colspan="6" class="empty-state">Nenhum registro.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- COLABORADORES -->
+    <div class="panel" id="panel-colaboradores">
+      <div class="bip-title" style="margin-bottom:1rem;">Colaboradores</div>
+      <div class="add-form">
+        <div class="add-form-title">Cadastrar novo</div>
+        <div class="add-row">
+          <div class="field"><label>Nome</label><input type="text" id="colab-nome" placeholder="Nome" onkeydown="if(event.key==='Enter')addColab()"/></div>
+          <div class="field"><label>Setor</label><input type="text" id="colab-setor" placeholder="Ex: separação"/></div>
+          <button class="btn btn-primary" onclick="addColab()">+ Adicionar</button>
+        </div>
+      </div>
+      <div class="config-grid" id="colab-grid"></div>
+    </div>
+
+    <!-- MARKETPLACES -->
+    <div class="panel" id="panel-marketplaces">
+      <div class="bip-title" style="margin-bottom:1rem;">Marketplaces</div>
+      <div class="add-form">
+        <div class="add-form-title">Adicionar marketplace</div>
+        <div class="add-row" style="margin-bottom:.75rem;">
+          <div class="field"><label>Nome</label><input type="text" id="mkt-nome" placeholder="Ex: Shopee" onkeydown="if(event.key==='Enter')addMkt()"/></div>
+          <button class="btn btn-primary" onclick="addMkt()">+ Adicionar</button>
+        </div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;">Cor</div>
+        <div class="color-pick-row" id="color-picks"></div>
+      </div>
+      <div class="config-grid" id="mkt-config-grid"></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast-area" id="toast-area"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────
+let S = { colaboradores:[], marketplaces:[], bipagens:[], pendencias:[], retornos:[] };
+let selectedColabId = parseInt(localStorage.getItem('sel_colab')) || null;
+let selectedColor = '#ff5722';
+let ws = null;
+let wsReconnectTimer = null;
+
+// ── Clock ─────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('relogio').textContent = now.toLocaleTimeString('pt-BR');
+  document.getElementById('data-full').textContent = now.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'2-digit',year:'numeric'});
+}
+updateClock(); setInterval(updateClock, 1000);
+
+// ── Toast ─────────────────────────────────────────────────────
+function toast(msg, type='ok', dur=3000) {
+  const area = document.getElementById('toast-area');
+  const el = document.createElement('div');
+  const icons = {ok:'✓',err:'✕',warn:'⚠',info:'ℹ'};
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span class="toast-icon">${icons[type]||'·'}</span><span>${msg}</span>`;
+  area.appendChild(el);
+  setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, dur);
+}
+
+// ── WebSocket ─────────────────────────────────────────────────
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
+
+  ws.onopen = () => {
+    document.getElementById('ws-dot').classList.add('connected');
+    document.getElementById('ws-label').textContent = 'online';
+    clearTimeout(wsReconnectTimer);
+  };
+
+  ws.onclose = () => {
+    document.getElementById('ws-dot').classList.remove('connected');
+    document.getElementById('ws-label').textContent = 'reconectando...';
+    wsReconnectTimer = setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (e) => {
+    const { event, data } = JSON.parse(e.data);
+    handleWSEvent(event, data);
+  };
+}
+
+function handleWSEvent(event, data) {
+  switch(event) {
+    case 'bipagem:add':
+      if (!S.bipagens.find(b=>b.id===data.id)) {
+        S.bipagens.unshift(data);
+        renderBipagem(); renderHistorico(); updateNavCounts();
+        toast(`↓ ${data.etiqueta} — ${data.marketplace_nome} (${data.colaborador_nome})`, 'info', 2500);
+      }
+      break;
+    case 'bipagem:del':
+      S.bipagens = S.bipagens.filter(b=>b.id!==data.id);
+      renderBipagem(); renderHistorico(); updateNavCounts();
+      break;
+    case 'pendencia:add':
+      if (!S.pendencias.find(p=>p.id===data.id)) { S.pendencias.unshift(data); renderPendencias(); updateNavCounts(); }
+      break;
+    case 'pendencia:del':
+      S.pendencias = S.pendencias.filter(p=>p.id!==data.id); renderPendencias(); updateNavCounts();
+      break;
+    case 'retorno:add':
+      if (!S.retornos.find(r=>r.id===data.id)) { S.retornos.unshift(data); renderRetornos(); updateNavCounts(); }
+      break;
+    case 'retorno:del':
+      S.retornos = S.retornos.filter(r=>r.id!==data.id); renderRetornos(); updateNavCounts();
+      break;
+    case 'colaborador:add':
+      if (!S.colaboradores.find(c=>c.id===data.id)) { S.colaboradores.push(data); populateSelects(); renderColabs(); }
+      break;
+    case 'colaborador:del':
+      S.colaboradores = S.colaboradores.filter(c=>c.id!==data.id); populateSelects(); renderColabs();
+      break;
+    case 'marketplace:add':
+      if (!S.marketplaces.find(m=>m.id===data.id)) { S.marketplaces.push(data); populateSelects(); renderMktConfig(); renderBipagem(); }
+      break;
+    case 'marketplace:del':
+      S.marketplaces = S.marketplaces.filter(m=>m.id!==data.id); populateSelects(); renderMktConfig(); renderBipagem();
+      break;
+  }
+}
+
+// ── API ───────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers:{'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  const json = await r.json();
+  if (!r.ok) throw json;
+  return json;
+}
+
+// ── Load ──────────────────────────────────────────────────────
+async function loadEstado() {
+  const estado = await api('GET', '/api/estado');
+  S = estado;
+  populateSelects();
+  renderAll();
+  if (selectedColabId) {
+    document.getElementById('sel-colab').value = selectedColabId;
+    selecionarColab(false);
+  }
+}
+
+// ── Nav ───────────────────────────────────────────────────────
+function switchPanel(name, el) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  if (el) el.classList.add('active');
+  if (name==='historico') renderHistorico();
+  if (name==='colaboradores') renderColabs();
+  if (name==='marketplaces') { renderMktConfig(); renderColorPicks(); }
+}
+
+// ── Selects ───────────────────────────────────────────────────
+function populateSelects() {
+  const colabs = S.colaboradores.sort((a,b)=>a.nome.localeCompare(b.nome));
+  const mkts   = S.marketplaces.sort((a,b)=>a.nome.localeCompare(b.nome));
+  const selColab = v => `<option value="">— selecionar —</option>`+colabs.map(c=>`<option value="${c.id}">${c.nome}${c.setor?' ('+c.setor+')':''}</option>`).join('');
+  const selMkt   = v => `<option value="">— selecionar —</option>`+mkts.map(m=>`<option value="${m.id}">${m.nome}</option>`).join('');
+
+  const sc = document.getElementById('sel-colab'); const prev = sc.value;
+  sc.innerHTML = selColab(); sc.value = prev;
+
+  const sc2 = document.getElementById('sel-colab2'); const prev2 = sc2.value;
+  sc2.innerHTML = selColab(); sc2.value = prev2;
+
+  const sm = document.getElementById('sel-mkt'); const prevm = sm.value;
+  sm.innerHTML = selMkt(); sm.value = prevm;
+
+  const pc = document.getElementById('pend-colab');
+  pc.innerHTML = `<option value="">— selecionar —</option>`+colabs.map(c=>`<option value="${c.nome}">${c.nome}</option>`).join('');
+
+  const hc = document.getElementById('hist-colab');
+  hc.innerHTML = `<option value="">Todos</option>`+colabs.map(c=>`<option value="${c.nome}">${c.nome}</option>`).join('');
+
+  const hm = document.getElementById('hist-mkt');
+  hm.innerHTML = `<option value="">Todos</option>`+mkts.map(m=>`<option value="${m.nome}">${m.nome}</option>`).join('');
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function isToday(dt) {
+  if (!dt) return false;
+  const d = new Date(dt); const t = new Date();
+  return d.getDate()===t.getDate()&&d.getMonth()===t.getMonth()&&d.getFullYear()===t.getFullYear();
+}
+function getMktColor(nome) { const m = S.marketplaces.find(m=>m.nome===nome); return m?m.cor:'var(--text2)'; }
+
+// ── Bipagem ───────────────────────────────────────────────────
+function selecionarColab(save=true) {
+  const id = parseInt(document.getElementById('sel-colab').value)||null;
+  selectedColabId = id;
+  if (save) localStorage.setItem('sel_colab', id||'');
+  const c = S.colaboradores.find(c=>c.id===id);
+  document.getElementById('bip-colab-name').textContent = c?c.nome:'Selecione um colaborador';
+  document.getElementById('sel-colab2').value = id||'';
+  renderBipagem();
+}
+
+async function bipar() {
+  const etiq    = document.getElementById('inp-etiq').value.trim().toUpperCase();
+  const mktId   = parseInt(document.getElementById('sel-mkt').value)||null;
+  const colabId = parseInt(document.getElementById('sel-colab2').value)||selectedColabId;
+  if (!etiq)    { toast('Informe a etiqueta.','warn'); return; }
+  if (!mktId)   { toast('Selecione o marketplace.','warn'); return; }
+  if (!colabId) { toast('Selecione o colaborador.','warn'); return; }
+
+  document.getElementById('inp-etiq').value = '';
+
+  try {
+    const bip = await api('POST','/api/bipagens',{etiqueta:etiq,marketplace_id:mktId,colaborador_id:colabId});
+    S.bipagens.unshift(bip);
+    flashCard('ok');
+    renderBipagem(); renderHistorico(); updateNavCounts();
+    toast(`✓ ${bip.etiqueta} — ${bip.marketplace_nome}`,'ok',1800);
+  } catch(err) {
+    flashCard('err');
+    if (err.duplicata) {
+      const d = err.duplicata;
+      toast(`ETIQUETA DUPLICADA!\n${d.etiqueta} já registrada por ${d.colaborador_nome} (${d.marketplace_nome}) em ${d.data} ${d.hora}`,'err',6000);
+    } else {
+      toast(err.erro||'Erro ao registrar.','err');
+    }
+  }
+  document.getElementById('inp-etiq').focus();
+}
+
+function flashCard(t) {
+  const c = document.getElementById('scan-card');
+  c.classList.remove('flash-ok','flash-err'); void c.offsetWidth;
+  c.classList.add(t==='ok'?'flash-ok':'flash-err');
+  setTimeout(()=>c.classList.remove('flash-ok','flash-err'),700);
+}
+
+function limparScan() {
+  document.getElementById('inp-etiq').value='';
+  document.getElementById('sel-mkt').value='';
+  document.getElementById('inp-etiq').focus();
+}
+
+function renderBipagem() {
+  const colabId = selectedColabId;
+  const hoje    = S.bipagens.filter(b=>isToday(b.criado_em));
+  const hojeC   = colabId ? hoje.filter(b=>b.colaborador_id===colabId) : hoje;
+
+  // Stats
+  let html = `<div class="stat-card total"><div class="stat-label">Total hoje</div><div class="stat-value">${hojeC.length}</div></div>`;
+  S.marketplaces.forEach(m=>{
+    const cnt = hojeC.filter(b=>b.marketplace_id===m.id).length;
+    html += `<div class="stat-card"><div class="stat-label" style="color:${m.cor}">${m.nome}</div><div class="stat-value" style="color:${m.cor}">${cnt}</div></div>`;
+  });
+  document.getElementById('stats-row').innerHTML = html;
+  document.getElementById('stat-total').textContent = hojeC.length;
+
+  // MKT Grid
+  document.getElementById('mkt-grid').innerHTML = S.marketplaces.map(m=>{
+    const bips = hojeC.filter(b=>b.marketplace_id===m.id);
+    const rows = bips.length
+      ? bips.map(b=>`<tr><td class="mono">${b.data}</td><td class="mono">${b.hora}</td><td class="mono etiq">${b.etiqueta}</td><td><button class="del-btn" onclick="delBip('${b.id}')">✕</button></td></tr>`).join('')
+      : `<tr><td colspan="4" class="mkt-empty">sem bipagens hoje</td></tr>`;
+    return `<div class="mkt-card">
+      <div class="mkt-header">
+        <div style="display:flex;align-items:center;gap:8px;"><div class="mkt-dot" style="background:${m.cor}"></div><span class="mkt-name">${m.nome}</span></div>
+        <span class="mkt-count-badge">${bips.length}</span>
+      </div>
+      <div class="table-scroll"><table class="mkt-table"><thead><tr><th>Data</th><th>Hora</th><th>Etiqueta</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>`;
+  }).join('');
+}
+
+async function delBip(id) {
+  if (!confirm('Remover bipagem?')) return;
+  await api('DELETE',`/api/bipagens/${id}`);
+  S.bipagens = S.bipagens.filter(b=>b.id!==id);
+  renderBipagem(); renderHistorico(); updateNavCounts();
+  toast('Bipagem removida.','warn');
+}
+
+// ── Pendências ────────────────────────────────────────────────
+async function addPend() {
+  const etiq    = document.getElementById('pend-etiq').value.trim().toUpperCase();
+  const colab   = document.getElementById('pend-colab').value;
+  const transito= document.getElementById('pend-transito').value.trim();
+  const obs     = document.getElementById('pend-obs').value.trim();
+  if (!etiq) { toast('Informe a etiqueta.','warn'); return; }
+  const p = await api('POST','/api/pendencias',{etiqueta:etiq,colaborador_nome:colab,transito,obs});
+  S.pendencias.unshift(p);
+  document.getElementById('pend-etiq').value='';
+  document.getElementById('pend-obs').value='';
+  renderPendencias(); updateNavCounts();
+  toast('Pendência registrada.','ok');
+}
+
+function renderPendencias() {
+  const tb = document.getElementById('pend-tbody');
+  document.getElementById('pend-label').textContent = S.pendencias.length+' pendência'+(S.pendencias.length!==1?'s':'');
+  if (!S.pendencias.length) { tb.innerHTML='<tr><td colspan="7" class="empty-state">Nenhuma pendência.</td></tr>'; return; }
+  tb.innerHTML = S.pendencias.map(p=>`<tr>
+    <td class="mono">${p.data}</td><td class="mono">${p.hora}</td>
+    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${p.etiqueta}</td>
+    <td>${p.colaborador_nome||'—'}</td>
+    <td>${p.transito||'—'}</td>
+    <td>${p.obs||'—'}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="delPend('${p.id}')">✕</button></td>
+  </tr>`).join('');
+}
+
+async function delPend(id) {
+  if (!confirm('Remover pendência?')) return;
+  await api('DELETE',`/api/pendencias/${id}`);
+  S.pendencias = S.pendencias.filter(p=>p.id!==id);
+  renderPendencias(); updateNavCounts();
+}
+
+// ── Retornos ──────────────────────────────────────────────────
+async function addRetorno() {
+  const etiq   = document.getElementById('ret-etiq').value.trim().toUpperCase();
+  const motivo = document.getElementById('ret-motivo').value.trim();
+  if (!etiq) { toast('Informe a etiqueta.','warn'); return; }
+  const r = await api('POST','/api/retornos',{etiqueta:etiq,motivo});
+  S.retornos.unshift(r);
+  document.getElementById('ret-etiq').value='';
+  document.getElementById('ret-motivo').value='';
+  renderRetornos(); updateNavCounts();
+  toast('Retorno registrado.','ok');
+}
+
+function renderRetornos() {
+  const tb = document.getElementById('ret-tbody');
+  document.getElementById('ret-label').textContent = S.retornos.length+' retorno'+(S.retornos.length!==1?'s':'');
+  if (!S.retornos.length) { tb.innerHTML='<tr><td colspan="5" class="empty-state">Nenhum retorno.</td></tr>'; return; }
+  tb.innerHTML = S.retornos.map(r=>`<tr>
+    <td class="mono">${r.data}</td><td class="mono">${r.hora}</td>
+    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${r.etiqueta}</td>
+    <td>${r.motivo||'—'}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="delRet('${r.id}')">✕</button></td>
+  </tr>`).join('');
+}
+
+async function delRet(id) {
+  await api('DELETE',`/api/retornos/${id}`);
+  S.retornos = S.retornos.filter(r=>r.id!==id);
+  renderRetornos(); updateNavCounts();
+}
+
+// ── Histórico ─────────────────────────────────────────────────
+function renderHistorico() {
+  const fC  = document.getElementById('hist-colab').value;
+  const fM  = document.getElementById('hist-mkt').value;
+  const fDe = document.getElementById('hist-de').value;
+  const fAt = document.getElementById('hist-ate').value;
+  let data = [...S.bipagens];
+  if (fC)  data = data.filter(b=>b.colaborador_nome===fC);
+  if (fM)  data = data.filter(b=>b.marketplace_nome===fM);
+  if (fDe) data = data.filter(b=>new Date(b.criado_em)>=new Date(fDe));
+  if (fAt) data = data.filter(b=>new Date(b.criado_em)<=new Date(fAt+'T23:59:59'));
+  document.getElementById('hist-label').textContent = data.length+' registro'+(data.length!==1?'s':'');
+  const tb = document.getElementById('hist-tbody');
+  if (!data.length) { tb.innerHTML='<tr><td colspan="6" class="empty-state">Nenhum registro.</td></tr>'; return; }
+  tb.innerHTML = data.map(b=>`<tr>
+    <td class="mono">${b.data}</td><td class="mono">${b.hora}</td>
+    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${b.etiqueta}</td>
+    <td><span style="color:${getMktColor(b.marketplace_nome)};font-size:12px;font-weight:600;">${b.marketplace_nome}</span></td>
+    <td>${b.colaborador_nome}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="delBipHist('${b.id}')">✕</button></td>
+  </tr>`).join('');
+}
+
+function limparFiltros() {
+  ['hist-colab','hist-mkt','hist-de','hist-ate'].forEach(id=>document.getElementById(id).value='');
+  renderHistorico();
+}
+
+async function delBipHist(id) {
+  if (!confirm('Remover registro?')) return;
+  await api('DELETE',`/api/bipagens/${id}`);
+  S.bipagens = S.bipagens.filter(b=>b.id!==id);
+  renderBipagem(); renderHistorico(); updateNavCounts();
+}
+
+// ── Colaboradores ─────────────────────────────────────────────
+async function addColab() {
+  const nome  = document.getElementById('colab-nome').value.trim();
+  const setor = document.getElementById('colab-setor').value.trim();
+  if (!nome) { toast('Informe o nome.','warn'); return; }
+  try {
+    const c = await api('POST','/api/colaboradores',{nome,setor});
+    S.colaboradores.push(c);
+    document.getElementById('colab-nome').value='';
+    document.getElementById('colab-setor').value='';
+    populateSelects(); renderColabs();
+    toast('Colaborador adicionado.','ok');
+  } catch(e) { toast(e.erro||'Erro.','err'); }
+}
+
+function renderColabs() {
+  const g = document.getElementById('colab-grid');
+  if (!S.colaboradores.length) { g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum colaborador.</div>'; return; }
+  g.innerHTML = S.colaboradores.sort((a,b)=>a.nome.localeCompare(b.nome)).map(c=>`
+    <div class="config-chip">
+      <div class="config-chip-left">
+        <span>👤</span>
+        <div><div style="font-size:13px;font-weight:500;">${c.nome}</div>${c.setor?`<div style="font-size:11px;color:var(--text3);">${c.setor}</div>`:''}</div>
+      </div>
+      <button class="config-chip-del" onclick="delColab(${c.id})">✕</button>
+    </div>`).join('');
+}
+
+async function delColab(id) {
+  if (!confirm('Remover colaborador?')) return;
+  await api('DELETE',`/api/colaboradores/${id}`);
+  S.colaboradores = S.colaboradores.filter(c=>c.id!==id);
+  if (selectedColabId===id) { selectedColabId=null; localStorage.removeItem('sel_colab'); }
+  populateSelects(); renderColabs(); renderBipagem();
+}
+
+// ── Marketplaces ──────────────────────────────────────────────
+const COLORS = ['#ff5722','#ffe600','#ff9900','#e91e8c','#4d9fff','#00e5a0','#a855f7','#f43f5e','#14b8a6','#f97316','#6366f1','#84cc16'];
+
+function renderColorPicks() {
+  document.getElementById('color-picks').innerHTML = COLORS.map(c=>`
+    <div class="color-swatch${c===selectedColor?' selected':''}" style="background:${c}" onclick="pickColor('${c}')"></div>`).join('');
+}
+
+function pickColor(c) { selectedColor=c; renderColorPicks(); }
+
+async function addMkt() {
+  const nome = document.getElementById('mkt-nome').value.trim();
+  if (!nome) { toast('Informe o nome.','warn'); return; }
+  try {
+    const m = await api('POST','/api/marketplaces',{nome,cor:selectedColor});
+    S.marketplaces.push(m);
+    document.getElementById('mkt-nome').value='';
+    populateSelects(); renderMktConfig(); renderBipagem();
+    toast('Marketplace adicionado.','ok');
+  } catch(e) { toast(e.erro||'Erro.','err'); }
+}
+
+function renderMktConfig() {
+  const g = document.getElementById('mkt-config-grid');
+  if (!S.marketplaces.length) { g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum marketplace.</div>'; return; }
+  g.innerHTML = S.marketplaces.map(m=>`
+    <div class="config-chip">
+      <div class="config-chip-left">
+        <div class="config-chip-dot" style="background:${m.cor}"></div>
+        <span style="font-size:13px;font-weight:500;">${m.nome}</span>
+      </div>
+      <button class="config-chip-del" onclick="delMkt(${m.id})">✕</button>
+    </div>`).join('');
+}
+
+async function delMkt(id) {
+  if (!confirm('Remover marketplace?')) return;
+  await api('DELETE',`/api/marketplaces/${id}`);
+  S.marketplaces = S.marketplaces.filter(m=>m.id!==id);
+  populateSelects(); renderMktConfig(); renderBipagem();
+}
+
+// ── Export CSV ────────────────────────────────────────────────
+function exportCSV(tipo) {
+  let header, rows, filename;
+  if (tipo==='pendencias') {
+    header=['Data','Hora','Etiqueta','Responsável','Trânsito','Pendência'];
+    rows=S.pendencias.map(p=>[p.data,p.hora,p.etiqueta,p.colaborador_nome,p.transito,p.obs]);
+    filename='pendencias_'+new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')+'.csv';
+  } else if (tipo==='retornos') {
+    header=['Data','Hora','Etiqueta','Motivo'];
+    rows=S.retornos.map(r=>[r.data,r.hora,r.etiqueta,r.motivo]);
+    filename='retornos_'+new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')+'.csv';
+  } else {
+    const fC=document.getElementById('hist-colab').value;
+    const fM=document.getElementById('hist-mkt').value;
+    let data=[...S.bipagens];
+    if(fC) data=data.filter(b=>b.colaborador_nome===fC);
+    if(fM) data=data.filter(b=>b.marketplace_nome===fM);
+    header=['Data','Hora','Etiqueta','Marketplace','Colaborador'];
+    rows=data.map(b=>[b.data,b.hora,b.etiqueta,b.marketplace_nome,b.colaborador_nome]);
+    filename='historico_'+new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')+'.csv';
+  }
+  const csv=[header,...rows].map(r=>r.map(v=>'"'+String(v||'').replace(/"/g,'""')+'"').join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);
+  a.download=filename; a.click();
+  toast('CSV exportado.','ok');
+}
+
+// ── Nav Counts ────────────────────────────────────────────────
+function updateNavCounts() {
+  const hoje = S.bipagens.filter(b=>isToday(b.criado_em));
+  const c = selectedColabId ? hoje.filter(b=>b.colaborador_id===selectedColabId) : hoje;
+  document.getElementById('nav-bip-count').textContent = c.length;
+  document.getElementById('nav-pend-count').textContent = S.pendencias.length;
+  document.getElementById('nav-ret-count').textContent = S.retornos.length;
+}
+
+// ── Render All ────────────────────────────────────────────────
+function renderAll() {
+  renderBipagem(); renderPendencias(); renderRetornos();
+  renderColabs(); renderMktConfig(); renderColorPicks();
+  updateNavCounts();
+}
+
+// ── Init ──────────────────────────────────────────────────────
+connectWS();
+loadEstado().catch(e => toast('Erro ao carregar dados do servidor.','err'));
+document.getElementById('inp-etiq').focus();
+</script>
+</body>
+</html>
