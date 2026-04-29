@@ -15,16 +15,7 @@
   --font:'IBM Plex Sans',sans-serif;--mono:'IBM Plex Mono',monospace;--r:6px;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background: url('logo.png') no-repeat center center;
-  background-size: 420px;
-  opacity: 0.04;
-  pointer-events: none;
-  z-index: 0;
-}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;}
 
 @keyframes scanFlash{0%{background:rgba(0,229,160,.18);}100%{background:transparent;}}
 @keyframes errorFlash{0%{background:rgba(255,77,77,.2);}100%{background:transparent;}}
@@ -33,7 +24,7 @@ body::before {
 @keyframes spin{to{transform:rotate(360deg);}}
 
 /* LOGIN */
-..login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg);position:relative;z-index:1;}
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg);}
 .login-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2.5rem;width:100%;max-width:360px;animation:fadeIn .3s ease;}
 .login-logo{font-family:var(--mono);font-size:28px;color:var(--accent);font-weight:600;margin-bottom:4px;}
 .login-title{font-size:18px;font-weight:600;margin-bottom:.25rem;}
@@ -46,22 +37,8 @@ body::before {
 .login-btn:hover{background:var(--accent2);}
 .login-err{color:var(--danger);font-size:12px;margin-top:.75rem;text-align:center;font-family:var(--mono);}
 
-body::before{
-  content:"";
-  position:fixed;
-  inset:0;
-  background:url('logo.png') no-repeat center center;
-  background-size:420px;
-  opacity:0.04;
-  pointer-events:none;
-  z-index:0;
-}
-  /* APP */
-.app{
-  display:none;
-  position:relative;
-  z-index:1;
-}
+/* APP */
+.app{display:none;}
 .app.visible{display:block;}
 .header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 1.5rem;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;}
 .brand{display:flex;align-items:center;gap:10px;}
