@@ -961,74 +961,30 @@ async function delRet(id) {
 }
 
 // ── Histórico ─────────────────────────────────────────────────
-function dataBRParaISO(dataBR) {
-  if (!dataBR) return '';
-  if (dataBR.includes('-')) return dataBR;
-
-  const partes = dataBR.split('/');
-  if (partes.length !== 3) return '';
-
-  const [dia, mes, ano] = partes;
-  return `${ano}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`;
-}
-
-function dataLocalISO(iso) {
-  const d = new Date(iso);
-  const y = d.toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric' });
-  const m = d.toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo', month: '2-digit' });
-  const day = d.toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo', day: '2-digit' });
-  return `${y}-${m}-${day}`;
-}
-
-function dataBRParaISO(dataBR) {
-  if (!dataBR) return '';
-
-  if (dataBR.includes('-')) return dataBR;
-
-  const [dia, mes, ano] = dataBR.split('/');
-  return `${ano}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
-}
-
 function renderHistorico() {
-  const fC = document.getElementById('hist-colab').value;
-  const fM = document.getElementById('hist-mkt').value;
-  const fD = document.getElementById('hist-de').value;
-  const fA = document.getElementById('hist-ate').value;
-
-  let data = [...S.bipagens];
-
-  if (fC) data = data.filter(b => b.colaborador_nome === fC);
-  if (fM) data = data.filter(b => b.marketplace_nome === fM);
-
-  if (fD) {
-    data = data.filter(b => dataBRParaISO(b.data) >= fD);
-  }
-
-  if (fA) {
-    data = data.filter(b => dataBRParaISO(b.data) <= fA);
-  }
-
-  document.getElementById('hist-label').textContent =
-    data.length + ' registro' + (data.length !== 1 ? 's' : '');
-
-  const tb = document.getElementById('hist-tbody');
-
-  if (!data.length) {
-    tb.innerHTML = '<tr><td colspan="7" class="empty-state">Nenhum registro.</td></tr>';
-    return;
-  }
-
-  tb.innerHTML = data.map(b => `<tr>
-    <td class="mono">${b.data}</td>
-    <td class="mono">${b.hora}</td>
+  const fC=document.getElementById('hist-colab').value;
+  const fM=document.getElementById('hist-mkt').value;
+  const fD=document.getElementById('hist-de').value;
+  const fA=document.getElementById('hist-ate').value;
+  let data=[...S.bipagens];
+  if(fC) data=data.filter(b=>b.colaborador_nome===fC);
+  if(fM) data=data.filter(b=>b.marketplace_nome===fM);
+  if(fD) data=data.filter(b=>new Date(b.criado_em)>=new Date(fD));
+  if(fA) data=data.filter(b=>new Date(b.criado_em)<=new Date(fA+'T23:59:59'));
+  document.getElementById('hist-label').textContent=data.length+' registro'+(data.length!==1?'s':'');
+  const tb=document.getElementById('hist-tbody');
+  if(!data.length){tb.innerHTML='<tr><td colspan="7" class="empty-state">Nenhum registro.</td></tr>';return;}
+  tb.innerHTML=data.map(b=>`<tr>
+    <td class="mono">${b.data}</td><td class="mono">${b.hora}</td>
     <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${b.etiqueta}</td>
     <td><span style="color:${getMktColor(b.marketplace_nome)};font-size:12px;font-weight:600;">${b.marketplace_nome}</span></td>
     <td>${b.colaborador_nome}</td>
-    <td style="font-size:11px;color:var(--text3);">${b.usuario_nome || '—'}</td>
+    <td style="font-size:11px;color:var(--text3);">${b.usuario_nome||'—'}</td>
     <td><button class="btn btn-danger-outline btn-sm" onclick="delBipHist('${b.id}')">✕</button></td>
   </tr>`).join('');
 }
-}{['hist-colab','hist-mkt','hist-de','hist-ate'].forEach(id=>document.getElementById(id).value='');renderHistorico();}
+
+function limparFiltros(){['hist-colab','hist-mkt','hist-de','hist-ate'].forEach(id=>document.getElementById(id).value='');renderHistorico();}
 
 async function delBipHist(id){
   if(!confirm('Remover?'))return;
