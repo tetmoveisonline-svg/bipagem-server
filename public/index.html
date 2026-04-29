@@ -672,6 +672,23 @@ function isToday(iso) {
   return d.getDate()===t.getDate()&&d.getMonth()===t.getMonth()&&d.getFullYear()===t.getFullYear();
 }
 function getMktColor(nome) { const m = S.marketplaces.find(m=>m.nome===nome); return m?m.cor:'var(--text2)'; }
+  function falar(texto) {
+  try {
+    if (!('speechSynthesis' in window)) return;
+
+    window.speechSynthesis.cancel();
+
+    const msg = new SpeechSynthesisUtterance(texto);
+    msg.lang = 'pt-BR';
+    msg.rate = 1.05;
+    msg.pitch = 1;
+    msg.volume = 1;
+
+    window.speechSynthesis.speak(msg);
+  } catch (e) {
+    console.log('Erro no áudio');
+  }
+}
 
 // ── Bipagem ───────────────────────────────────────────────────
 function selecionarColab(save=true) {
@@ -699,9 +716,13 @@ async function bipar() {
     toast(`✓ ${bip.etiqueta} — ${bip.marketplace_nome}`,'ok',1800);
   } catch(err) {
     flashCard('err');
-    if (err.duplicata) {
-      const d = err.duplicata;
-      toast(`ETIQUETA DUPLICADA!\n${d.etiqueta} — ${d.colaborador_nome} (${d.marketplace_nome}) em ${d.data} ${d.hora}`,'err',6000);
+  if (err.duplicata) {
+  const d = err.duplicata;
+
+  falar(`Etiqueta já bipada para ${d.colaborador_nome}`);
+
+  toast(`ETIQUETA DUPLICADA!\n${d.etiqueta} — ${d.colaborador_nome} (${d.marketplace_nome}) em ${d.data} ${d.hora}`,'err',6000);
+}
     } else toast(err.erro||'Erro ao registrar.','err');
   }
   document.getElementById('inp-etiq').focus();
