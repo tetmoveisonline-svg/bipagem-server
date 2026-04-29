@@ -118,14 +118,29 @@ async function initDB() {
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS retornos (
-      id TEXT PRIMARY KEY,
-      etiqueta TEXT NOT NULL,
-      motivo TEXT DEFAULT '',
-      data TEXT,
-      hora TEXT,
-      criado_em TIMESTAMPTZ DEFAULT NOW()
-    );
+    CREATE TABLE IF NOT EXISTS producao_pedidos (
+  id TEXT PRIMARY KEY,
+  produto TEXT NOT NULL,
+  quantidade INTEGER NOT NULL DEFAULT 0,
+  fabricante TEXT DEFAULT '',
+  produzido INTEGER NOT NULL DEFAULT 0,
+  status TEXT DEFAULT 'PENDENTE',
+  obs TEXT DEFAULT '',
+  data TEXT,
+  hora TEXT,
+  criado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS producao_entradas (
+  id TEXT PRIMARY KEY,
+  pedido_id TEXT,
+  produto TEXT,
+  quantidade INTEGER NOT NULL DEFAULT 0,
+  obs TEXT DEFAULT '',
+  data TEXT,
+  hora TEXT,
+  criado_em TIMESTAMPTZ DEFAULT NOW()
+);
   `);
 
   const admin = await pool.query(`SELECT id FROM usuarios WHERE role = 'admin' LIMIT 1`);
@@ -748,6 +763,123 @@ app.delete('/api/retornos/:id', autenticar, async (req, res) => {
   }
 });
 
+// ── Produção ────────────────────────────────────────────────
+app.get('/api/producao', autenticar, async (req, res) => {
+  try {
+    const pedidos = await pool.query(`
+      SELECT * FROM producao_pedidos
+      ORDER BY criado_em DESC
+    `);
+
+    const entradas = await pool.query(`
+      SELECT * FROM producao_entradas
+      ORDER BY criado_em DESC
+    `);
+
+    res.json({
+      pedidos: pedidos.rows.map(toISO),
+      entradas: entradas.rows.map(toISO)
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar produção.' });
+  }
+});
+
+app.post('/api/producao/pedidos', autenticar, async (req, res) => {
+  try {
+    const { produto, quantidade, fabricante = '', obs = '' } = req.body;
+
+    if (!produto || !quantidade) {
+      return res.status(400).json({ erro: 'Produto e quantidade são obrigatórios.' });
+    }
+
+    const { data, hora } = nowBR();
+
+    const result = await pool.query(`
+      INSERT INTO producao_pedidos
+      (id, produto, quantidade, fabricante, produzido, status, obs, data, hora)
+      VALUES ($1,$2,$3,$4,0,'PENDENTE',$5,$6,$7)
+      RETURNING *
+    `, [
+      uid(),
+      produto.trim().toUpperCase(),
+      parseInt(quantidade),
+      fabricante.trim().toUpperCase(),
+      obs,
+      data,
+      hora
+    ]);
+
+    const pedido = toISO(result.rows[0]);
+    broadcast('producao:pedido:add', pedido);
+    res.json(pedido);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao criar pedido de produção.' });
+  }
+});
+
+app.post('/api/producao/entradas', autenticar, async (req, res) => {
+  try {
+    const { pedido_id, quantidade, obs = '' } = req.body;
+
+    if (!pedido_id || !quantidade) {
+      return res.status(400).json({ erro: 'Pedido e quantidade são obrigatórios.' });
+    }
+
+    const pedidoResult = await pool.query(
+      `SELECT * FROM producao_pedidos WHERE id = $1`,
+      [pedido_id]
+    );
+
+    if (pedidoResult.rowCount === 0) {
+      return res.status(404).json({ erro: 'Pedido não encontrado.' });
+    }
+
+    const pedido = pedidoResult.rows[0];
+    const qtd = parseInt(quantidade);
+    const novoProduzido = Number(pedido.produzido || 0) + qtd;
+
+    let status = 'PARCIAL';
+    if (novoProduzido >= Number(pedido.quantidade)) status = 'FINALIZADO';
+
+    const { data, hora } = nowBR();
+
+    const entradaResult = await pool.query(`
+      INSERT INTO producao_entradas
+      (id, pedido_id, produto, quantidade, obs, data, hora)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      RETURNING *
+    `, [
+      uid(),
+      pedido_id,
+      pedido.produto,
+      qtd,
+      obs,
+      data,
+      hora
+    ]);
+
+    const pedidoAtualizado = await pool.query(`
+      UPDATE producao_pedidos
+      SET produzido = $1, status = $2
+      WHERE id = $3
+      RETURNING *
+    `, [novoProduzido, status, pedido_id]);
+
+    const entrada = toISO(entradaResult.rows[0]);
+    const pedidoFinal = toISO(pedidoAtualizado.rows[0]);
+
+    broadcast('producao:entrada:add', entrada);
+    broadcast('producao:pedido:update', pedidoFinal);
+
+    res.json({ entrada, pedido: pedidoFinal });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao registrar entrada.' });
+  }
+});
 // ── Health check / Railway ────────────────────────────────────
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
