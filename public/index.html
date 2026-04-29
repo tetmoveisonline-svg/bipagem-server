@@ -239,7 +239,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item active" onclick="switchPanel('bipagem',this)">&#9783; Bipagem <span class="count" id="nav-bip">0</span></div>
       <div class="nav-item" onclick="switchPanel('produtividade',this)">&#9685; Produtividade <span class="count" id="nav-prod">0</span></div>
       <div class="nav-item" onclick="switchPanel('pendencias',this)">&#9888; Pendências <span class="count" id="nav-pend">0</span></div>
-      <div class="nav-item" onclick="switchPanel('retorno',this)">&#8617; Retorno <span class="count" id="nav-ret">0</span></div>
+      <div class="nav-item" onclick="switchPanel('retorno',this)">&#8617; Retorno <span class="count" id="nav-ret">0</span></div>      
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Histórico</div>
       <div class="nav-item" onclick="switchPanel('historico',this)">&#9776; Histórico</div>
@@ -248,6 +248,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item" id="nav-usuarios" onclick="switchPanel('usuarios',this)" style="display:none;">&#128274; Usuários</div>
       <div class="nav-item" onclick="switchPanel('colaboradores',this)">&#128100; Colaboradores</div>
       <div class="nav-item" onclick="switchPanel('marketplaces',this)">&#128722; Marketplaces</div>
+      <div class="sidebar-divider"></div>
+<div class="sidebar-section">Produção</div>
+<div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
     </div>
 
     <div class="main">
@@ -391,7 +394,59 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           </table>
         </div></div>
       </div>
+<!-- PRODUÇÃO -->
+<div class="panel" id="panel-producao">
+  <div class="page-title">Controle de Produção</div>
 
+  <div class="add-form">
+    <div class="add-form-title">Criar Pedido de Produção</div>
+    <div class="add-row">
+      <div class="field">
+        <label>Produto</label>
+        <input type="text" id="prod-nome" placeholder="Ex: Penteadeira">
+      </div>
+
+      <div class="field">
+        <label>Quantidade</label>
+        <input type="number" id="prod-qtd" placeholder="Ex: 100">
+      </div>
+
+      <div class="field">
+        <label>Fabricante</label>
+        <input type="text" id="prod-fabricante" placeholder="Industrial / fabricante">
+      </div>
+
+      <div class="field">
+        <label>Observação</label>
+        <input type="text" id="prod-obs" placeholder="Opcional">
+      </div>
+
+      <button class="btn btn-primary" onclick="criarProducao()">Criar Pedido</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <div class="tbl-scroll-full">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Pedido</th>
+            <th>Produto</th>
+            <th>Fabricante</th>
+            <th>Qtd Pedido</th>
+            <th>Produzido</th>
+            <th>Falta</th>
+            <th>Status</th>
+            <th>Ação</th>
+          </tr>
+        </thead>
+        <tbody id="prod-tbody">
+          <tr><td colspan="8" class="empty-state">Nenhum pedido de produção.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
       <!-- USUÁRIOS -->
       <div class="panel" id="panel-usuarios">
         <div class="page-title">Gerenciar Usuários</div>
@@ -612,6 +667,23 @@ function handleWS(event, data) {
       if (!S.marketplaces.find(m=>m.id===data.id)) { S.marketplaces.push(data); populateSelects(); renderMktConfig(); renderBipagem(); } break;
     case 'marketplace:del':
       S.marketplaces = S.marketplaces.filter(m=>m.id!==data.id); populateSelects(); renderMktConfig(); renderBipagem(); break;
+      case 'producao:pedido:add':
+  if (!PRODUCAO.pedidos.find(p => p.id === data.id)) {
+    PRODUCAO.pedidos.unshift(data);
+    renderProducao();
+  }
+  break;
+
+case 'producao:pedido:update':
+  PRODUCAO.pedidos = PRODUCAO.pedidos.map(p => p.id === data.id ? data : p);
+  renderProducao();
+  break;
+
+case 'producao:entrada:add':
+  if (!PRODUCAO.entradas.find(e => e.id === data.id)) {
+    PRODUCAO.entradas.unshift(data);
+  }
+  break;
     case 'usuario:add': case 'usuario:del':
       if (document.getElementById('panel-usuarios').classList.contains('active')) carregarUsuarios(); break;
   }
@@ -647,6 +719,7 @@ function switchPanel(name, el) {
   if (name==='colaboradores') renderColabs();
   if (name==='marketplaces') { renderMktConfig(); renderColorPicks(); }
   if (name==='usuarios') carregarUsuarios();
+  if (name==='producao') carregarProducao();
 }
 
 // ── Selects ───────────────────────────────────────────────────
@@ -1120,7 +1193,106 @@ function pickColor(c){selectedColor=c;renderColorPicks();}
 async function addMkt(){const nome=document.getElementById('mkt-nome').value.trim();if(!nome){toast('Informe o nome.','warn');return;}try{const m=await api('POST','/api/marketplaces',{nome,cor:selectedColor});S.marketplaces.push(m);document.getElementById('mkt-nome').value='';populateSelects();renderMktConfig();renderBipagem();toast('Marketplace adicionado.','ok');}catch(e){toast(e.erro||'Erro.','err');}}
 function renderMktConfig(){const g=document.getElementById('mkt-config-grid');if(!S.marketplaces.length){g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum marketplace.</div>';return;}g.innerHTML=S.marketplaces.map(m=>`<div class="config-chip"><div class="config-chip-left"><div class="config-chip-dot" style="background:${m.cor}"></div><span style="font-size:13px;font-weight:500;">${m.nome}</span></div><button class="config-chip-del" onclick="delMkt(${m.id})">✕</button></div>`).join('');}
 async function delMkt(id){if(!confirm('Remover?'))return;await api('DELETE',`/api/marketplaces/${id}`);S.marketplaces=S.marketplaces.filter(m=>m.id!==id);populateSelects();renderMktConfig();renderBipagem();}
+// ── Produção ────────────────────────────────────────────────
+let PRODUCAO = { pedidos: [], entradas: [] };
 
+async function carregarProducao() {
+  try {
+    PRODUCAO = await api('GET', '/api/producao');
+    renderProducao();
+  } catch (e) {
+    toast(e.erro || 'Erro ao carregar produção.', 'err');
+  }
+}
+
+async function criarProducao() {
+  const produto = document.getElementById('prod-nome').value.trim();
+  const quantidade = parseInt(document.getElementById('prod-qtd').value);
+  const fabricante = document.getElementById('prod-fabricante').value.trim();
+  const obs = document.getElementById('prod-obs').value.trim();
+
+  if (!produto || !quantidade) {
+    toast('Informe produto e quantidade.', 'warn');
+    return;
+  }
+
+  try {
+    const pedido = await api('POST', '/api/producao/pedidos', {
+      produto,
+      quantidade,
+      fabricante,
+      obs
+    });
+
+    PRODUCAO.pedidos.unshift(pedido);
+
+    document.getElementById('prod-nome').value = '';
+    document.getElementById('prod-qtd').value = '';
+    document.getElementById('prod-fabricante').value = '';
+    document.getElementById('prod-obs').value = '';
+
+    renderProducao();
+    toast('Pedido de produção criado.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao criar pedido.', 'err');
+  }
+}
+
+async function receberProducao(id) {
+  const qtd = parseInt(prompt('Quantidade recebida do produto acabado:'));
+  if (!qtd) return;
+
+  const obs = prompt('Observação da entrada:') || '';
+
+  try {
+    const res = await api('POST', '/api/producao/entradas', {
+      pedido_id: id,
+      quantidade: qtd,
+      obs
+    });
+
+    PRODUCAO.entradas.unshift(res.entrada);
+
+    const idx = PRODUCAO.pedidos.findIndex(p => p.id === id);
+    if (idx >= 0) PRODUCAO.pedidos[idx] = res.pedido;
+
+    renderProducao();
+    toast('Entrada registrada.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao registrar entrada.', 'err');
+  }
+}
+
+function renderProducao() {
+  const tb = document.getElementById('prod-tbody');
+  if (!tb) return;
+
+  if (!PRODUCAO.pedidos.length) {
+    tb.innerHTML = '<tr><td colspan="8" class="empty-state">Nenhum pedido de produção.</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = PRODUCAO.pedidos.map(p => {
+    const falta = Math.max(0, Number(p.quantidade) - Number(p.produzido || 0));
+
+    return `
+      <tr>
+        <td class="mono">${p.id}</td>
+        <td>${p.produto}</td>
+        <td>${p.fabricante || '—'}</td>
+        <td class="mono">${p.quantidade}</td>
+        <td class="mono">${p.produzido || 0}</td>
+        <td class="mono">${falta}</td>
+        <td>${p.status}</td>
+        <td>
+          <button class="btn btn-primary btn-sm" onclick="receberProducao('${p.id}')">
+            + Receber
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
 // ── Export CSV ────────────────────────────────────────────────
 function exportCSV(tipo){
   let header,rows,filename;
