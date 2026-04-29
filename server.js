@@ -18,10 +18,11 @@ const pool = new Pool({
 
 // ── Helpers ──────────────────────────────────────────────────
 function uid() {
-  function codigoEEA() {
-  return 'EEA' + Math.floor(100 + Math.random() * 900);
-}
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function codigoEEA() {
+  return 'EEA' + Math.floor(100 + Math.random() * 900);
 }
 
 function nowBR() {
