@@ -771,94 +771,126 @@ async function delBip(id) {
 
 // ── Produtividade do dia ─────────────────────────────────────
 const PROD_COLORS=['#00e5a0','#4d9fff','#ffb547','#ff4d4d','#a855f7','#14b8a6','#f97316','#e91e8c','#84cc16','#6366f1','#ffe600','#ff9900'];
-function getProdutividadeHoje(){
-  const hoje=S.bipagens.filter(b=>isToday(b.criado_em));
-  const mapa=new Map();
-  hoje.forEach(b=>{
-    const key=b.colaborador_id||b.colaborador_nome;
-    const atual=mapa.get(key)||{id:b.colaborador_id,nome:b.colaborador_nome||'SEM NOME',qtd:0};
-    atual.qtd++;
-    mapa.set(key,atual);
-  });
-  const total=hoje.length;
-  const lista=[...mapa.values()].sort((a,b)=>b.qtd-a.qtd||a.nome.localeCompare(b.nome)).map((x,i)=>({
-    ...x,
-    perc:total?((x.qtd/total)*100):0,
-    cor:PROD_COLORS[i%PROD_COLORS.length]
-  }));
-  return {total,lista};
+function dataLocalISO(iso) {
+  const d = new Date(iso);
+  const y = d.toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric' });
+  const m = d.toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo', month: '2-digit' });
+  const day = d.toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo', day: '2-digit' });
+  return `${y}-${m}-${day}`;
 }
-  async function aplicarFiltroProdutividade() {
-  const dia = document.getElementById('filtroDia').value;
-  const mes = document.getElementById('filtroMes').value;
 
-  let url = '/api/produtividade';
-  const params = new URLSearchParams();
+function getProdutividadeFiltrada(){
+  const diaEl = document.getElementById('filtroDia');
+  const mesEl = document.getElementById('filtroMes');
+
+  const dia = diaEl ? diaEl.value : '';
+  const mes = mesEl ? mesEl.value : '';
+
+  let listaBase = [...S.bipagens];
 
   if (dia) {
-    params.append('dia', dia);
+    listaBase = listaBase.filter(b => dataLocalISO(b.criado_em) === dia);
   } else if (mes) {
-    params.append('mes', mes);
+    listaBase = listaBase.filter(b => dataLocalISO(b.criado_em).startsWith(mes));
+  } else {
+    const hoje = dataLocalISO(new Date().toISOString());
+    listaBase = listaBase.filter(b => dataLocalISO(b.criado_em) === hoje);
   }
 
-  if (params.toString()) {
-    url += '?' + params.toString();
-  }
+  const mapa = new Map();
 
-  try {
-    const res = await api('GET', url);
-    renderProdutividadeComDados(res);
-  } catch (e) {
-    toast(e.erro || 'Erro ao filtrar produtividade.', 'err');
-  }
+  listaBase.forEach(b => {
+    const key = b.colaborador_id || b.colaborador_nome;
+    const atual = mapa.get(key) || {
+      id: b.colaborador_id,
+      nome: b.colaborador_nome || 'SEM NOME',
+      qtd: 0
+    };
+    atual.qtd++;
+    mapa.set(key, atual);
+  });
+
+  const total = listaBase.length;
+
+  const lista = [...mapa.values()]
+    .sort((a,b) => b.qtd - a.qtd || a.nome.localeCompare(b.nome))
+    .map((x,i) => ({
+      ...x,
+      perc: total ? ((x.qtd / total) * 100) : 0,
+      cor: PROD_COLORS[i % PROD_COLORS.length]
+    }));
+
+  return { total, lista };
+}
+
+function aplicarFiltroProdutividade() {
+  renderProdutividade();
 }
 
 function limparFiltroProdutividade() {
-  document.getElementById('filtroDia').value = '';
-  document.getElementById('filtroMes').value = '';
+  const diaEl = document.getElementById('filtroDia');
+  const mesEl = document.getElementById('filtroMes');
+
+  if (diaEl) diaEl.value = '';
+  if (mesEl) mesEl.value = '';
+
   renderProdutividade();
 }
+
 function renderProdutividade(){
-  const totalEl=document.getElementById('prod-total');
-  if(!totalEl) return;
-  const {total,lista}=getProdutividadeHoje();
-  totalEl.textContent=total;
-  document.getElementById('nav-prod').textContent=total;
-  document.getElementById('prod-stats').innerHTML=`
-    <div class="stat-card total"><div class="stat-label">Total separado hoje</div><div class="stat-value">${total}</div></div>
+  const totalEl = document.getElementById('prod-total');
+  if (!totalEl) return;
+
+  const { total, lista } = getProdutividadeFiltrada();
+
+  totalEl.textContent = total;
+  document.getElementById('nav-prod').textContent = total;
+
+  document.getElementById('prod-stats').innerHTML = `
+    <div class="stat-card total"><div class="stat-label">Total separado</div><div class="stat-value">${total}</div></div>
     <div class="stat-card"><div class="stat-label">Colaboradores ativos</div><div class="stat-value">${lista.length}</div></div>
-    <div class="stat-card"><div class="stat-label">Maior separação</div><div class="stat-value">${lista[0]?.qtd||0}</div></div>
+    <div class="stat-card"><div class="stat-label">Maior separação</div><div class="stat-value">${lista[0]?.qtd || 0}</div></div>
   `;
-  const pie=document.getElementById('prod-pie');
-  if(!total){
-    pie.style.background='var(--surface2)';
-    document.getElementById('prod-legend').innerHTML='<div class="empty-state" style="padding:1rem;">Nenhuma bipagem hoje.</div>';
-    document.getElementById('prod-ranking').innerHTML='<div class="empty-state">Nenhuma bipagem hoje.</div>';
+
+  const pie = document.getElementById('prod-pie');
+
+  if (!total) {
+    pie.style.background = 'var(--surface2)';
+    document.getElementById('prod-legend').innerHTML = '<div class="empty-state" style="padding:1rem;">Nenhuma bipagem no período.</div>';
+    document.getElementById('prod-ranking').innerHTML = '<div class="empty-state">Nenhuma bipagem no período.</div>';
     return;
   }
-  let acc=0;
-  const partes=lista.map(item=>{
-    const ini=acc;
-    acc+=item.perc;
+
+  let acc = 0;
+  const partes = lista.map(item => {
+    const ini = acc;
+    acc += item.perc;
     return `${item.cor} ${ini.toFixed(2)}% ${acc.toFixed(2)}%`;
   });
-  pie.style.background=`conic-gradient(${partes.join(',')})`;
-  document.getElementById('prod-legend').innerHTML=lista.map(item=>`
+
+  pie.style.background = `conic-gradient(${partes.join(',')})`;
+
+  document.getElementById('prod-legend').innerHTML = lista.map(item => `
     <div class="prod-legend-item">
       <span class="prod-dot" style="background:${item.cor}"></span>
       <span class="prod-name">${item.nome}</span>
-      <span class="prod-meta">${item.qtd} · ${item.perc.toFixed(1).replace('.',',')}%</span>
-    </div>`).join('');
-  document.getElementById('prod-ranking').innerHTML=lista.map((item,i)=>`
+      <span class="prod-meta">${item.qtd} · ${item.perc.toFixed(1).replace('.', ',')}%</span>
+    </div>
+  `).join('');
+
+  document.getElementById('prod-ranking').innerHTML = lista.map((item, i) => `
     <div class="prod-row">
-      <div class="prod-pos">#${i+1}</div>
+      <div class="prod-pos">#${i + 1}</div>
       <div>
-        <div class="prod-name">${item.nome}</div>
-        <div class="prod-bar"><div class="prod-bar-fill" style="width:${item.perc}%;background:${item.cor}"></div></div>
+        <div style="font-weight:600;margin-bottom:5px;">${item.nome}</div>
+        <div class="prod-bar">
+          <div class="prod-bar-fill" style="width:${item.perc}%;background:${item.cor};"></div>
+        </div>
       </div>
       <div class="prod-qtd">${item.qtd} un.</div>
-      <div class="prod-perc">${item.perc.toFixed(1).replace('.',',')}%</div>
-    </div>`).join('');
+      <div class="prod-perc">${item.perc.toFixed(1).replace('.', ',')}%</div>
+    </div>
+  `).join('');
 }
 
 // ── Pendências ────────────────────────────────────────────────
