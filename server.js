@@ -627,6 +627,13 @@ app.get('/health', (req, res) => {
 });
 
 // ── Start ────────────────────────────────────────────────────
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    mensagem: 'API Bipagem funcionando',
+    data: new Date()
+  });
+});
 initDB()
   .then(() => {
     server.listen(PORT, '0.0.0.0', () => {
