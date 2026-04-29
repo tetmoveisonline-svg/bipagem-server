@@ -683,6 +683,11 @@ case 'producao:entrada:add':
   if (!PRODUCAO.entradas.find(e => e.id === data.id)) {
     PRODUCAO.entradas.unshift(data);
   }
+      case 'producao:pedido:del':
+  PRODUCAO.pedidos = PRODUCAO.pedidos.filter(p => p.id !== data.id);
+  PRODUCAO.entradas = PRODUCAO.entradas.filter(e => e.pedido_id !== data.id);
+  renderProducao();
+  break;
   break;
     case 'usuario:add': case 'usuario:del':
       if (document.getElementById('panel-usuarios').classList.contains('active')) carregarUsuarios(); break;
@@ -1262,7 +1267,21 @@ async function receberProducao(id) {
     toast(e.erro || 'Erro ao registrar entrada.', 'err');
   }
 }
+async function deletarProducao(id) {
+  if (!confirm('Deseja excluir este pedido de produção?')) return;
 
+  try {
+    await api('DELETE', `/api/producao/pedidos/${id}`);
+
+    PRODUCAO.pedidos = PRODUCAO.pedidos.filter(p => p.id !== id);
+    PRODUCAO.entradas = PRODUCAO.entradas.filter(e => e.pedido_id !== id);
+
+    renderProducao();
+    toast('Pedido excluído.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao excluir pedido.', 'err');
+  }
+}
 function renderProducao() {
   const tb = document.getElementById('prod-tbody');
   if (!tb) return;
@@ -1286,8 +1305,12 @@ function renderProducao() {
         <td>${p.status}</td>
         <td>
           <button class="btn btn-primary btn-sm" onclick="receberProducao('${p.id}')">
-            + Receber
-          </button>
+  + Receber
+</button>
+
+<button class="btn btn-danger-outline btn-sm" onclick="deletarProducao('${p.id}')">
+  Excluir
+</button>
         </td>
       </tr>
     `;
