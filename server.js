@@ -2,83 +2,201 @@ const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
+const { Pool } = require('pg');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const PORT = process.env.PORT || 3000;
 
-// ── JSON database ────────────────────────────────────────────
-const DB_DIR  = path.join(__dirname, 'db');
-const DB_FILE = path.join(DB_DIR, 'data.json');
-fs.mkdirSync(DB_DIR, { recursive: true });
-
-function readDB() {
-  try {
-    if (fs.existsSync(DB_FILE)) return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-  } catch(e) {}
-  return { colaboradores:[], marketplaces:[], bipagens:[], pendencias:[], retornos:[], usuarios:[], sessoes:{} };
-}
-
-function writeDB(data) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
-}
-
-// Seed defaults
-let db = readDB();
-if (!db.usuarios) db.usuarios = [];
-if (!db.sessoes)  db.sessoes  = {};
-
-if (!db.usuarios.find(u => u.role === 'admin')) {
-  db.usuarios.push({
-    id: 1, username: 'admin', senha: hashSenha('admin123'),
-    nome: 'Administrador', role: 'admin', criado_em: new Date().toISOString()
-  });
-}
-if (!db.colaboradores.length) {
-  db.colaboradores = ['PEDRO','VITOR','GEAN','KAUAN','GABRIEL','MURILO','LIEDSON','GUNTHER','LUIS','EDSON','EDINHO']
-    .map((nome, i) => ({ id: i+1, nome, criado_em: new Date().toISOString() }));
-}
-if (!db.marketplaces.length) {
-  db.marketplaces = [
-    { id:1, nome:'SHOPEE', cor:'#ff5722' },
-    { id:2, nome:'MERCADO LIVRE', cor:'#ffe600' },
-    { id:3, nome:'AMAZON', cor:'#ff9900' },
-    { id:4, nome:'SHEIN', cor:'#e91e8c' },
-  ].map(m => ({ ...m, criado_em: new Date().toISOString() }));
-}
-writeDB(db);
+// ── PostgreSQL database ───────────────────────────────────────
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+});
 
 // ── Helpers ──────────────────────────────────────────────────
-function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
 function nowBR() {
   const now = new Date();
   return {
     data: now.toLocaleDateString('pt-BR'),
-    hora: now.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+    hora: now.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
   };
 }
+
 function hashSenha(senha) {
   return crypto.createHash('sha256').update(senha + 'bipagem_salt_2024').digest('hex');
 }
+
 function gerarToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+function toISO(row) {
+  if (!row) return row;
+  if (row.criado_em instanceof Date) row.criado_em = row.criado_em.toISOString();
+  return row;
+}
+
+function toInt(v) {
+  const n = parseInt(v, 10);
+  return Number.isNaN(n) ? null : n;
+}
+
+// ── Init database ─────────────────────────────────────────────
+async function initDB() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL não encontrada. No Railway, conecte o Postgres ao serviço do app em Variables > Add Variable Reference.');
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id SERIAL PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      senha TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS sessoes (
+      token TEXT PRIMARY KEY,
+      usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS colaboradores (
+      id SERIAL PRIMARY KEY,
+      nome TEXT UNIQUE NOT NULL,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS marketplaces (
+      id SERIAL PRIMARY KEY,
+      nome TEXT UNIQUE NOT NULL,
+      cor TEXT NOT NULL DEFAULT '#00e5a0',
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS bipagens (
+      id TEXT PRIMARY KEY,
+      etiqueta TEXT UNIQUE NOT NULL,
+      marketplace_id INTEGER,
+      marketplace_nome TEXT,
+      colaborador_id INTEGER,
+      colaborador_nome TEXT,
+      usuario_id INTEGER,
+      usuario_nome TEXT,
+      data TEXT,
+      hora TEXT,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bipagens_etiqueta ON bipagens(etiqueta);
+    CREATE INDEX IF NOT EXISTS idx_bipagens_criado_em ON bipagens(criado_em);
+
+    CREATE TABLE IF NOT EXISTS pendencias (
+      id TEXT PRIMARY KEY,
+      etiqueta TEXT NOT NULL,
+      colaborador_nome TEXT DEFAULT '',
+      transito TEXT DEFAULT '',
+      obs TEXT DEFAULT '',
+      data TEXT,
+      hora TEXT,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS retornos (
+      id TEXT PRIMARY KEY,
+      etiqueta TEXT NOT NULL,
+      motivo TEXT DEFAULT '',
+      data TEXT,
+      hora TEXT,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  const admin = await pool.query(`SELECT id FROM usuarios WHERE role = 'admin' LIMIT 1`);
+  if (admin.rowCount === 0) {
+    await pool.query(
+      `INSERT INTO usuarios (username, senha, nome, role) VALUES ($1, $2, $3, $4)`,
+      ['admin', hashSenha('admin123'), 'Administrador', 'admin']
+    );
+  }
+
+  const colabs = await pool.query(`SELECT id FROM colaboradores LIMIT 1`);
+  if (colabs.rowCount === 0) {
+    const nomes = ['PEDRO','VITOR','GEAN','KAUAN','GABRIEL','MURILO','LIEDSON','GUNTHER','LUIS','EDSON','EDINHO'];
+    for (const nome of nomes) {
+      await pool.query(`INSERT INTO colaboradores (nome) VALUES ($1) ON CONFLICT (nome) DO NOTHING`, [nome]);
+    }
+  }
+
+  const mkts = await pool.query(`SELECT id FROM marketplaces LIMIT 1`);
+  if (mkts.rowCount === 0) {
+    const lista = [
+      { nome: 'SHOPEE', cor: '#ff5722' },
+      { nome: 'MERCADO LIVRE', cor: '#ffe600' },
+      { nome: 'AMAZON', cor: '#ff9900' },
+      { nome: 'SHEIN', cor: '#e91e8c' }
+    ];
+    for (const m of lista) {
+      await pool.query(
+        `INSERT INTO marketplaces (nome, cor) VALUES ($1, $2) ON CONFLICT (nome) DO NOTHING`,
+        [m.nome, m.cor]
+      );
+    }
+  }
+
+  console.log('✅ PostgreSQL conectado e tabelas prontas');
+}
+
+// ── WebSocket broadcast ──────────────────────────────────────
+function broadcast(event, data) {
+  const msg = JSON.stringify({ event, data });
+  wss.clients.forEach(c => {
+    if (c.readyState === 1) c.send(msg);
+  });
+}
+
+wss.on('connection', ws => ws.on('error', console.error));
+
+// ── Middleware ───────────────────────────────────────────────
+app.use(express.json({ limit: '2mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
 // ── Auth middleware ──────────────────────────────────────────
-function autenticar(req, res, next) {
-  const token = req.headers['authorization'] || req.query.token;
-  if (!token) return res.status(401).json({ erro: 'Não autenticado.' });
-  db = readDB();
-  const sessao = db.sessoes[token];
-  if (!sessao) return res.status(401).json({ erro: 'Sessão inválida.' });
-  const usuario = db.usuarios.find(u => u.id === sessao.usuarioId);
-  if (!usuario) return res.status(401).json({ erro: 'Usuário não encontrado.' });
-  req.usuario = usuario;
-  req.token = token;
-  next();
+async function autenticar(req, res, next) {
+  try {
+    const token = req.headers['authorization'] || req.query.token;
+    if (!token) return res.status(401).json({ erro: 'Não autenticado.' });
+
+    const result = await pool.query(`
+      SELECT u.id, u.username, u.nome, u.role
+      FROM sessoes s
+      JOIN usuarios u ON u.id = s.usuario_id
+      WHERE s.token = $1
+      LIMIT 1
+    `, [token]);
+
+    if (result.rowCount === 0) return res.status(401).json({ erro: 'Sessão inválida.' });
+
+    req.usuario = result.rows[0];
+    req.token = token;
+    next();
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro interno de autenticação.' });
+  }
 }
 
 function apenasAdmin(req, res, next) {
@@ -86,242 +204,429 @@ function apenasAdmin(req, res, next) {
   next();
 }
 
-// ── WebSocket broadcast ──────────────────────────────────────
-function broadcast(event, data) {
-  const msg = JSON.stringify({ event, data });
-  wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
-}
-wss.on('connection', ws => ws.on('error', console.error));
-
-// ── Middleware ───────────────────────────────────────────────
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
 // ── AUTH ROUTES ──────────────────────────────────────────────
-app.post('/api/login', (req, res) => {
-  const { username, senha } = req.body;
-  if (!username || !senha) return res.status(400).json({ erro: 'Usuário e senha obrigatórios.' });
-  db = readDB();
-  const usuario = db.usuarios.find(u => u.username === username.trim().toLowerCase());
-  if (!usuario || usuario.senha !== hashSenha(senha))
-    return res.status(401).json({ erro: 'Usuário ou senha incorretos.' });
-  const token = gerarToken();
-  if (!db.sessoes) db.sessoes = {};
-  db.sessoes[token] = { usuarioId: usuario.id, criado_em: new Date().toISOString() };
-  writeDB(db);
-  res.json({ token, usuario: { id: usuario.id, username: usuario.username, nome: usuario.nome, role: usuario.role } });
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, senha } = req.body;
+    if (!username || !senha) return res.status(400).json({ erro: 'Usuário e senha obrigatórios.' });
+
+    const userFmt = username.trim().toLowerCase();
+    const result = await pool.query(`SELECT * FROM usuarios WHERE username = $1 LIMIT 1`, [userFmt]);
+    const usuario = result.rows[0];
+
+    if (!usuario || usuario.senha !== hashSenha(senha)) {
+      return res.status(401).json({ erro: 'Usuário ou senha incorretos.' });
+    }
+
+    const token = gerarToken();
+    await pool.query(`INSERT INTO sessoes (token, usuario_id) VALUES ($1, $2)`, [token, usuario.id]);
+
+    res.json({
+      token,
+      usuario: { id: usuario.id, username: usuario.username, nome: usuario.nome, role: usuario.role }
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao fazer login.' });
+  }
 });
 
-app.post('/api/logout', autenticar, (req, res) => {
-  db = readDB();
-  delete db.sessoes[req.token];
-  writeDB(db);
-  res.json({ ok: true });
+app.post('/api/logout', autenticar, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM sessoes WHERE token = $1`, [req.token]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao sair.' });
+  }
 });
 
 app.get('/api/me', autenticar, (req, res) => {
-  res.json({ id: req.usuario.id, username: req.usuario.username, nome: req.usuario.nome, role: req.usuario.role });
-});
-
-// ── USUÁRIOS (admin only) ────────────────────────────────────
-app.get('/api/usuarios', autenticar, apenasAdmin, (req, res) => {
-  db = readDB();
-  res.json(db.usuarios.map(u => ({ id: u.id, username: u.username, nome: u.nome, role: u.role, criado_em: u.criado_em })));
-});
-
-app.post('/api/usuarios', autenticar, apenasAdmin, (req, res) => {
-  const { username, senha, nome, role = 'user' } = req.body;
-  if (!username || !senha) return res.status(400).json({ erro: 'Usuário e senha obrigatórios.' });
-  db = readDB();
-  const userFmt = username.trim().toLowerCase();
-  if (db.usuarios.find(u => u.username === userFmt))
-    return res.status(409).json({ erro: 'Usuário já existe.' });
-  const novo = { id: Date.now(), username: userFmt, senha: hashSenha(senha), nome: nome || userFmt, role, criado_em: new Date().toISOString() };
-  db.usuarios.push(novo);
-  writeDB(db);
-  const { senha: _, ...sem } = novo;
-  broadcast('usuario:add', sem);
-  res.json(sem);
-});
-
-app.put('/api/usuarios/:id/senha', autenticar, apenasAdmin, (req, res) => {
-  const { senha } = req.body;
-  if (!senha) return res.status(400).json({ erro: 'Nova senha obrigatória.' });
-  db = readDB();
-  const u = db.usuarios.find(u => u.id === parseInt(req.params.id));
-  if (!u) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-  u.senha = hashSenha(senha);
-  writeDB(db);
-  res.json({ ok: true });
-});
-
-app.delete('/api/usuarios/:id', autenticar, apenasAdmin, (req, res) => {
-  db = readDB();
-  const id = parseInt(req.params.id);
-  const u = db.usuarios.find(u => u.id === id);
-  if (u && u.role === 'admin' && db.usuarios.filter(u => u.role === 'admin').length <= 1)
-    return res.status(400).json({ erro: 'Não é possível remover o único administrador.' });
-  db.usuarios = db.usuarios.filter(u => u.id !== id);
-  // Remover sessões do usuário
-  Object.keys(db.sessoes).forEach(t => { if (db.sessoes[t].usuarioId === id) delete db.sessoes[t]; });
-  writeDB(db);
-  broadcast('usuario:del', { id });
-  res.json({ ok: true });
-});
-
-// ── Estado inicial ───────────────────────────────────────────
-app.get('/api/estado', autenticar, (req, res) => {
-  db = readDB();
   res.json({
-    colaboradores: db.colaboradores,
-    marketplaces:  db.marketplaces,
-    bipagens:      db.bipagens,
-    pendencias:    db.pendencias,
-    retornos:      db.retornos,
+    id: req.usuario.id,
+    username: req.usuario.username,
+    nome: req.usuario.nome,
+    role: req.usuario.role
   });
 });
 
-// ── Colaboradores ────────────────────────────────────────────
-app.post('/api/colaboradores', autenticar, apenasAdmin, (req, res) => {
-  const { nome } = req.body;
-  if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
-  db = readDB();
-  const nomeFmt = nome.trim().toUpperCase();
-  if (db.colaboradores.find(c => c.nome === nomeFmt))
-    return res.status(409).json({ erro: 'Colaborador já existe.' });
-  const colab = { id: Date.now(), nome: nomeFmt, criado_em: new Date().toISOString() };
-  db.colaboradores.push(colab);
-  writeDB(db);
-  broadcast('colaborador:add', colab);
-  res.json(colab);
+// ── USUÁRIOS ─────────────────────────────────────────────────
+app.get('/api/usuarios', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, username, nome, role, criado_em
+      FROM usuarios
+      ORDER BY nome ASC
+    `);
+    res.json(result.rows.map(toISO));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar usuários.' });
+  }
 });
 
-app.delete('/api/colaboradores/:id', autenticar, apenasAdmin, (req, res) => {
-  db = readDB();
-  const id = parseInt(req.params.id);
-  db.colaboradores = db.colaboradores.filter(c => c.id !== id);
-  writeDB(db);
-  broadcast('colaborador:del', { id });
-  res.json({ ok: true });
+app.post('/api/usuarios', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const { username, senha, nome, role = 'user' } = req.body;
+    if (!username || !senha) return res.status(400).json({ erro: 'Usuário e senha obrigatórios.' });
+
+    const userFmt = username.trim().toLowerCase();
+    const nomeFmt = (nome || userFmt).trim();
+
+    const result = await pool.query(`
+      INSERT INTO usuarios (username, senha, nome, role)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, username, nome, role, criado_em
+    `, [userFmt, hashSenha(senha), nomeFmt, role]);
+
+    const novo = toISO(result.rows[0]);
+    broadcast('usuario:add', novo);
+    res.json(novo);
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ erro: 'Usuário já existe.' });
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao criar usuário.' });
+  }
+});
+
+app.put('/api/usuarios/:id/senha', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const { senha } = req.body;
+    const id = toInt(req.params.id);
+    if (!senha) return res.status(400).json({ erro: 'Nova senha obrigatória.' });
+
+    const result = await pool.query(
+      `UPDATE usuarios SET senha = $1 WHERE id = $2 RETURNING id`,
+      [hashSenha(senha), id]
+    );
+
+    if (result.rowCount === 0) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    await pool.query(`DELETE FROM sessoes WHERE usuario_id = $1`, [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao redefinir senha.' });
+  }
+});
+
+app.delete('/api/usuarios/:id', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+
+    const alvo = await pool.query(`SELECT id, role FROM usuarios WHERE id = $1`, [id]);
+    if (alvo.rowCount === 0) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+
+    if (alvo.rows[0].role === 'admin') {
+      const admins = await pool.query(`SELECT COUNT(*)::int AS total FROM usuarios WHERE role = 'admin'`);
+      if (admins.rows[0].total <= 1) {
+        return res.status(400).json({ erro: 'Não é possível remover o único administrador.' });
+      }
+    }
+
+    await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
+    broadcast('usuario:del', { id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao remover usuário.' });
+  }
+});
+
+// ── Estado inicial ───────────────────────────────────────────
+app.get('/api/estado', autenticar, async (req, res) => {
+  try {
+    const [colaboradores, marketplaces, bipagens, pendencias, retornos] = await Promise.all([
+      pool.query(`SELECT id, nome, criado_em FROM colaboradores ORDER BY nome ASC`),
+      pool.query(`SELECT id, nome, cor, criado_em FROM marketplaces ORDER BY nome ASC`),
+      pool.query(`SELECT * FROM bipagens ORDER BY criado_em DESC`),
+      pool.query(`SELECT * FROM pendencias ORDER BY criado_em DESC`),
+      pool.query(`SELECT * FROM retornos ORDER BY criado_em DESC`)
+    ]);
+
+    res.json({
+      colaboradores: colaboradores.rows.map(toISO),
+      marketplaces: marketplaces.rows.map(toISO),
+      bipagens: bipagens.rows.map(toISO),
+      pendencias: pendencias.rows.map(toISO),
+      retornos: retornos.rows.map(toISO)
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar estado inicial.' });
+  }
+});
+
+// ── Colaboradores ────────────────────────────────────────────
+app.post('/api/colaboradores', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const { nome } = req.body;
+    if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
+
+    const nomeFmt = nome.trim().toUpperCase();
+    const result = await pool.query(`
+      INSERT INTO colaboradores (nome)
+      VALUES ($1)
+      RETURNING id, nome, criado_em
+    `, [nomeFmt]);
+
+    const colab = toISO(result.rows[0]);
+    broadcast('colaborador:add', colab);
+    res.json(colab);
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ erro: 'Colaborador já existe.' });
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao criar colaborador.' });
+  }
+});
+
+app.delete('/api/colaboradores/:id', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    await pool.query(`DELETE FROM colaboradores WHERE id = $1`, [id]);
+    broadcast('colaborador:del', { id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao remover colaborador.' });
+  }
 });
 
 // ── Marketplaces ─────────────────────────────────────────────
-app.post('/api/marketplaces', autenticar, apenasAdmin, (req, res) => {
-  const { nome, cor = '#00e5a0' } = req.body;
-  if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
-  db = readDB();
-  const nomeFmt = nome.trim().toUpperCase();
-  if (db.marketplaces.find(m => m.nome === nomeFmt))
-    return res.status(409).json({ erro: 'Marketplace já existe.' });
-  const mkt = { id: Date.now(), nome: nomeFmt, cor, criado_em: new Date().toISOString() };
-  db.marketplaces.push(mkt);
-  writeDB(db);
-  broadcast('marketplace:add', mkt);
-  res.json(mkt);
+app.post('/api/marketplaces', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const { nome, cor = '#00e5a0' } = req.body;
+    if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
+
+    const nomeFmt = nome.trim().toUpperCase();
+    const result = await pool.query(`
+      INSERT INTO marketplaces (nome, cor)
+      VALUES ($1, $2)
+      RETURNING id, nome, cor, criado_em
+    `, [nomeFmt, cor]);
+
+    const mkt = toISO(result.rows[0]);
+    broadcast('marketplace:add', mkt);
+    res.json(mkt);
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ erro: 'Marketplace já existe.' });
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao criar marketplace.' });
+  }
 });
 
-app.delete('/api/marketplaces/:id', autenticar, apenasAdmin, (req, res) => {
-  db = readDB();
-  const id = parseInt(req.params.id);
-  db.marketplaces = db.marketplaces.filter(m => m.id !== id);
-  writeDB(db);
-  broadcast('marketplace:del', { id });
-  res.json({ ok: true });
+app.delete('/api/marketplaces/:id', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    await pool.query(`DELETE FROM marketplaces WHERE id = $1`, [id]);
+    broadcast('marketplace:del', { id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao remover marketplace.' });
+  }
 });
 
 // ── Bipagens ─────────────────────────────────────────────────
-app.get('/api/bipagens', autenticar, (req, res) => {
-  db = readDB();
-  let list = [...db.bipagens];
-  const { colab, mkt, de, ate } = req.query;
-  if (colab) list = list.filter(b => b.colaborador_nome === colab);
-  if (mkt)   list = list.filter(b => b.marketplace_nome === mkt);
-  if (de)    list = list.filter(b => new Date(b.criado_em) >= new Date(de));
-  if (ate)   list = list.filter(b => new Date(b.criado_em) <= new Date(ate + 'T23:59:59'));
-  res.json(list.sort((a,b) => new Date(b.criado_em) - new Date(a.criado_em)));
+app.get('/api/bipagens', autenticar, async (req, res) => {
+  try {
+    const { colab, mkt, de, ate } = req.query;
+    const where = [];
+    const vals = [];
+
+    if (colab) {
+      vals.push(colab);
+      where.push(`colaborador_nome = $${vals.length}`);
+    }
+    if (mkt) {
+      vals.push(mkt);
+      where.push(`marketplace_nome = $${vals.length}`);
+    }
+    if (de) {
+      vals.push(de);
+      where.push(`criado_em >= $${vals.length}::date`);
+    }
+    if (ate) {
+      vals.push(ate);
+      where.push(`criado_em < ($${vals.length}::date + interval '1 day')`);
+    }
+
+    const sql = `SELECT * FROM bipagens ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY criado_em DESC`;
+    const result = await pool.query(sql, vals);
+    res.json(result.rows.map(toISO));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar bipagens.' });
+  }
 });
 
-app.post('/api/bipagens', autenticar, (req, res) => {
-  const { etiqueta, marketplace_id, colaborador_id } = req.body;
-  if (!etiqueta || !marketplace_id || !colaborador_id)
-    return res.status(400).json({ erro: 'Etiqueta, marketplace e colaborador são obrigatórios.' });
-  db = readDB();
-  const etiqFmt = etiqueta.trim().toUpperCase();
-  if (etiqFmt.length < 5) return res.status(400).json({ erro: 'Etiqueta inválida.' });
-  const dup = db.bipagens.find(b => b.etiqueta === etiqFmt);
-  if (dup) return res.status(409).json({ erro: 'ETIQUETA DUPLICADA', duplicata: dup });
-  const mkt   = db.marketplaces.find(m => m.id === parseInt(marketplace_id));
-  const colab = db.colaboradores.find(c => c.id === parseInt(colaborador_id));
-  if (!mkt || !colab) return res.status(400).json({ erro: 'Marketplace ou colaborador inválido.' });
-  const { data, hora } = nowBR();
-  const bip = {
-    id: uid(), etiqueta: etiqFmt,
-    marketplace_id: mkt.id, marketplace_nome: mkt.nome,
-    colaborador_id: colab.id, colaborador_nome: colab.nome,
-    usuario_id: req.usuario.id, usuario_nome: req.usuario.nome,
-    data, hora, criado_em: new Date().toISOString()
-  };
-  db.bipagens.unshift(bip);
-  writeDB(db);
-  broadcast('bipagem:add', bip);
-  res.json(bip);
+app.post('/api/bipagens', autenticar, async (req, res) => {
+  try {
+    const { etiqueta, marketplace_id, colaborador_id } = req.body;
+    if (!etiqueta || !marketplace_id || !colaborador_id) {
+      return res.status(400).json({ erro: 'Etiqueta, marketplace e colaborador são obrigatórios.' });
+    }
+
+    const etiqFmt = etiqueta.trim().toUpperCase();
+    if (etiqFmt.length < 5) return res.status(400).json({ erro: 'Etiqueta inválida.' });
+
+    const dup = await pool.query(`SELECT * FROM bipagens WHERE etiqueta = $1 LIMIT 1`, [etiqFmt]);
+    if (dup.rowCount > 0) {
+      return res.status(409).json({ erro: 'ETIQUETA DUPLICADA', duplicata: toISO(dup.rows[0]) });
+    }
+
+    const [mktResult, colabResult] = await Promise.all([
+      pool.query(`SELECT id, nome, cor FROM marketplaces WHERE id = $1`, [toInt(marketplace_id)]),
+      pool.query(`SELECT id, nome FROM colaboradores WHERE id = $1`, [toInt(colaborador_id)])
+    ]);
+
+    const mkt = mktResult.rows[0];
+    const colab = colabResult.rows[0];
+
+    if (!mkt || !colab) return res.status(400).json({ erro: 'Marketplace ou colaborador inválido.' });
+
+    const { data, hora } = nowBR();
+    const bip = {
+      id: uid(),
+      etiqueta: etiqFmt,
+      marketplace_id: mkt.id,
+      marketplace_nome: mkt.nome,
+      colaborador_id: colab.id,
+      colaborador_nome: colab.nome,
+      usuario_id: req.usuario.id,
+      usuario_nome: req.usuario.nome,
+      data,
+      hora
+    };
+
+    const result = await pool.query(`
+      INSERT INTO bipagens (
+        id, etiqueta, marketplace_id, marketplace_nome,
+        colaborador_id, colaborador_nome, usuario_id, usuario_nome,
+        data, hora
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      RETURNING *
+    `, [
+      bip.id, bip.etiqueta, bip.marketplace_id, bip.marketplace_nome,
+      bip.colaborador_id, bip.colaborador_nome, bip.usuario_id, bip.usuario_nome,
+      bip.data, bip.hora
+    ]);
+
+    const salvo = toISO(result.rows[0]);
+    broadcast('bipagem:add', salvo);
+    res.json(salvo);
+  } catch (e) {
+    if (e.code === '23505') {
+      const etiqueta = (req.body.etiqueta || '').trim().toUpperCase();
+      const dup = await pool.query(`SELECT * FROM bipagens WHERE etiqueta = $1 LIMIT 1`, [etiqueta]);
+      return res.status(409).json({ erro: 'ETIQUETA DUPLICADA', duplicata: toISO(dup.rows[0]) });
+    }
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao registrar bipagem.' });
+  }
 });
 
-app.delete('/api/bipagens/:id', autenticar, (req, res) => {
-  db = readDB();
-  db.bipagens = db.bipagens.filter(b => b.id !== req.params.id);
-  writeDB(db);
-  broadcast('bipagem:del', { id: req.params.id });
-  res.json({ ok: true });
+app.delete('/api/bipagens/:id', autenticar, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM bipagens WHERE id = $1`, [req.params.id]);
+    broadcast('bipagem:del', { id: req.params.id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao remover bipagem.' });
+  }
 });
 
 // ── Pendências ───────────────────────────────────────────────
-app.post('/api/pendencias', autenticar, (req, res) => {
-  const { etiqueta, colaborador_nome = '', transito = '', obs = '' } = req.body;
-  if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
-  db = readDB();
-  const { data, hora } = nowBR();
-  const pend = { id: uid(), etiqueta: etiqueta.trim().toUpperCase(), colaborador_nome, transito, obs, data, hora, criado_em: new Date().toISOString() };
-  db.pendencias.unshift(pend);
-  writeDB(db);
-  broadcast('pendencia:add', pend);
-  res.json(pend);
+app.post('/api/pendencias', autenticar, async (req, res) => {
+  try {
+    const { etiqueta, colaborador_nome = '', transito = '', obs = '' } = req.body;
+    if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
+
+    const { data, hora } = nowBR();
+    const result = await pool.query(`
+      INSERT INTO pendencias (id, etiqueta, colaborador_nome, transito, obs, data, hora)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      RETURNING *
+    `, [
+      uid(),
+      etiqueta.trim().toUpperCase(),
+      colaborador_nome,
+      transito,
+      obs,
+      data,
+      hora
+    ]);
+
+    const pend = toISO(result.rows[0]);
+    broadcast('pendencia:add', pend);
+    res.json(pend);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao criar pendência.' });
+  }
 });
 
-app.delete('/api/pendencias/:id', autenticar, (req, res) => {
-  db = readDB();
-  db.pendencias = db.pendencias.filter(p => p.id !== req.params.id);
-  writeDB(db);
-  broadcast('pendencia:del', { id: req.params.id });
-  res.json({ ok: true });
+app.delete('/api/pendencias/:id', autenticar, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM pendencias WHERE id = $1`, [req.params.id]);
+    broadcast('pendencia:del', { id: req.params.id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao remover pendência.' });
+  }
 });
 
 // ── Retornos (remove da bipagem automaticamente) ─────────────
-app.post('/api/retornos', autenticar, (req, res) => {
-  const { etiqueta, motivo = '' } = req.body;
-  if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
-  const etiqFmt = etiqueta.trim().toUpperCase();
-  if (etiqFmt.length < 5) return res.status(400).json({ erro: 'Etiqueta inválida.' });
-  db = readDB();
-  const { data, hora } = nowBR();
-  const ret = { id: uid(), etiqueta: etiqFmt, motivo, data, hora, criado_em: new Date().toISOString() };
-  db.retornos.unshift(ret);
-  // Remove da bipagem automaticamente
-  const bipRemovida = db.bipagens.find(b => b.etiqueta === etiqFmt);
-  db.bipagens = db.bipagens.filter(b => b.etiqueta !== etiqFmt);
-  writeDB(db);
-  broadcast('retorno:add', ret);
-  if (bipRemovida) broadcast('bipagem:del', { id: bipRemovida.id });
-  res.json({ ret, bipagem_removida: bipRemovida || null });
+app.post('/api/retornos', autenticar, async (req, res) => {
+  try {
+    const { etiqueta, motivo = '' } = req.body;
+    if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
+
+    const etiqFmt = etiqueta.trim().toUpperCase();
+    if (etiqFmt.length < 5) return res.status(400).json({ erro: 'Etiqueta inválida.' });
+
+    const { data, hora } = nowBR();
+
+    const retResult = await pool.query(`
+      INSERT INTO retornos (id, etiqueta, motivo, data, hora)
+      VALUES ($1,$2,$3,$4,$5)
+      RETURNING *
+    `, [uid(), etiqFmt, motivo, data, hora]);
+
+    const bipResult = await pool.query(`DELETE FROM bipagens WHERE etiqueta = $1 RETURNING *`, [etiqFmt]);
+
+    const ret = toISO(retResult.rows[0]);
+    const bipRemovida = bipResult.rows[0] ? toISO(bipResult.rows[0]) : null;
+
+    broadcast('retorno:add', ret);
+    if (bipRemovida) broadcast('bipagem:del', { id: bipRemovida.id });
+
+    res.json({ ret, bipagem_removida: bipRemovida });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao registrar retorno.' });
+  }
 });
 
-app.delete('/api/retornos/:id', autenticar, (req, res) => {
-  db = readDB();
-  db.retornos = db.retornos.filter(r => r.id !== req.params.id);
-  writeDB(db);
-  broadcast('retorno:del', { id: req.params.id });
-  res.json({ ok: true });
+app.delete('/api/retornos/:id', autenticar, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM retornos WHERE id = $1`, [req.params.id]);
+    broadcast('retorno:del', { id: req.params.id });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao remover retorno.' });
+  }
 });
 
 // ── Start ────────────────────────────────────────────────────
-server.listen(PORT, () => console.log(`✓ Servidor na porta ${PORT}`));
+initDB()
+  .then(() => {
+    server.listen(PORT, () => console.log(`✓ Servidor na porta ${PORT}`));
+  })
+  .catch(err => {
+    console.error('❌ Erro ao iniciar banco:', err);
+    process.exit(1);
+  });
