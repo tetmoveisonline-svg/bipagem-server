@@ -686,12 +686,22 @@ function falar(texto) {
     window.speechSynthesis.cancel();
 
     const msg = new SpeechSynthesisUtterance(texto);
+
+    const vozes = speechSynthesis.getVoices();
+
+    const vozBoa =
+      vozes.find(v => v.name.includes('Google') && v.lang === 'pt-BR') ||
+      vozes.find(v => v.lang === 'pt-BR');
+
+    if (vozBoa) msg.voice = vozBoa;
+
     msg.lang = 'pt-BR';
     msg.rate = 1.05;
     msg.pitch = 1;
     msg.volume = 1;
 
-    window.speechSynthesis.speak(msg);
+    speechSynthesis.speak(msg);
+
   } catch (e) {
     console.log('Erro no áudio');
   }
