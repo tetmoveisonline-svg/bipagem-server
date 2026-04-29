@@ -23,16 +23,19 @@ function uid() {
 
 function nowBR() {
   const now = new Date();
+
   return {
-    data: now.toLocaleDateString('pt-BR'),
+    data: now.toLocaleDateString('pt-BR', {
+      timeZone: 'America/Sao_Paulo'
+    }),
     hora: now.toLocaleTimeString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit'
     })
   };
 }
-
 function hashSenha(senha) {
   return crypto.createHash('sha256').update(senha + 'bipagem_salt_2024').digest('hex');
 }
