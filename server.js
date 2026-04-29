@@ -444,14 +444,20 @@ app.get('/api/bipagens', autenticar, async (req, res) => {
       vals.push(mkt);
       where.push(`marketplace_nome = $${vals.length}`);
     }
-    if (de) {
-      vals.push(de);
-      where.push(`criado_em >= $${vals.length}::date`);
-    }
-    if (ate) {
-      vals.push(ate);
-      where.push(`criado_em < ($${vals.length}::date + interval '1 day')`);
-    }
+    if (de && !ate) {
+  // filtro por DIA
+  vals.push(de);
+  where.push(`DATE(criado_em) = $${vals.length}::date`);
+}
+
+if (de && ate) {
+  // filtro por PERÍODO (ex: mês)
+  vals.push(de);
+  where.push(`criado_em >= $${vals.length}::date`);
+
+  vals.push(ate);
+  where.push(`criado_em < ($${vals.length}::date + interval '1 day')`);
+}
 
     const sql = `SELECT * FROM bipagens ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY criado_em DESC`;
     const result = await pool.query(sql, vals);
