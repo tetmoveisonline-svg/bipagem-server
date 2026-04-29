@@ -565,7 +565,7 @@ app.get('/api/bipagens', autenticar, async (req, res) => {
     if (de && !ate) {
   // filtro por DIA
   vals.push(de);
-  where.push(`DATE(criado_em) = $${vals.length}::date`);
+  where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = $${vals.length}`);
 }
 
 if (de && ate) {
