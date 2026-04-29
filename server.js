@@ -621,10 +621,17 @@ app.delete('/api/retornos/:id', autenticar, async (req, res) => {
   }
 });
 
+// ── Health check / Railway ────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 // ── Start ────────────────────────────────────────────────────
 initDB()
   .then(() => {
-    server.listen(PORT, () => console.log(`✓ Servidor na porta ${PORT}`));
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`✓ Servidor rodando na porta ${PORT}`);
+    });
   })
   .catch(err => {
     console.error('❌ Erro ao iniciar banco:', err);
