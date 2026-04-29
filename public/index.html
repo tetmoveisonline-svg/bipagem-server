@@ -1229,7 +1229,9 @@ async function criarProducao() {
       obs
     });
 
-    PRODUCAO.pedidos.unshift(pedido);
+    if (!PRODUCAO.pedidos.find(p => p.id === pedido.id)) {
+  PRODUCAO.pedidos.unshift(pedido);
+}
 
     document.getElementById('prod-nome').value = '';
     document.getElementById('prod-qtd').value = '';
