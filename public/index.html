@@ -161,6 +161,31 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .btn-export:hover{background:rgba(77,159,255,.1);}
 
 .empty-state{text-align:center;padding:2.5rem;color:var(--text3);font-size:12px;font-family:var(--mono);}
+
+
+/* RELATÓRIO DO DIA */
+.prod-layout{display:grid;grid-template-columns:minmax(260px,360px) 1fr;gap:1rem;align-items:start;}
+.prod-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem;}
+.prod-chart-wrap{display:flex;justify-content:center;align-items:center;min-height:330px;}
+.prod-pie{width:280px;height:280px;border-radius:50%;background:var(--surface2);position:relative;box-shadow:inset 0 0 0 1px var(--border);}
+.prod-pie::after{content:'';position:absolute;inset:62px;background:var(--surface);border-radius:50%;border:1px solid var(--border);}
+.prod-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:2;text-align:center;pointer-events:none;}
+.prod-center-total{font-family:var(--mono);font-size:34px;font-weight:600;color:var(--accent);line-height:1;}
+.prod-center-label{font-size:10px;color:var(--text3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-top:6px;}
+.prod-legend{display:flex;flex-direction:column;gap:8px;margin-top:1rem;}
+.prod-legend-item{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:12px;}
+.prod-dot{width:10px;height:10px;border-radius:50%;}
+.prod-name{font-weight:600;}
+.prod-meta{font-family:var(--mono);font-size:11px;color:var(--text2);}
+.prod-bar{height:9px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;overflow:hidden;min-width:120px;}
+.prod-bar-fill{height:100%;border-radius:20px;}
+.prod-ranking{display:flex;flex-direction:column;gap:8px;}
+.prod-row{display:grid;grid-template-columns:34px 1fr 120px 80px;gap:10px;align-items:center;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:9px 10px;}
+.prod-pos{font-family:var(--mono);color:var(--text3);font-size:12px;}
+.prod-qtd{font-family:var(--mono);font-size:13px;color:var(--text);text-align:right;}
+.prod-perc{font-family:var(--mono);font-size:13px;color:var(--accent);text-align:right;font-weight:600;}
+@media(max-width:900px){.prod-layout{grid-template-columns:1fr}.prod-row{grid-template-columns:28px 1fr 70px 60px}.prod-pie{width:230px;height:230px}.prod-pie::after{inset:50px}}
+
 </style>
 </head>
 <body>
@@ -210,6 +235,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     <div class="sidebar">
       <div class="sidebar-section">Operação</div>
       <div class="nav-item active" onclick="switchPanel('bipagem',this)">&#9783; Bipagem <span class="count" id="nav-bip">0</span></div>
+      <div class="nav-item" onclick="switchPanel('produtividade',this)">&#9685; Produtividade <span class="count" id="nav-prod">0</span></div>
       <div class="nav-item" onclick="switchPanel('pendencias',this)">&#9888; Pendências <span class="count" id="nav-pend">0</span></div>
       <div class="nav-item" onclick="switchPanel('retorno',this)">&#8617; Retorno <span class="count" id="nav-ret">0</span></div>
       <div class="sidebar-divider"></div>
@@ -251,6 +277,34 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div class="scan-hint">ENTER para registrar &nbsp;·&nbsp; detecção automática de duplicatas em tempo real</div>
         </div>
         <div class="mkt-grid" id="mkt-grid"></div>
+      </div>
+
+
+
+      <!-- PRODUTIVIDADE -->
+      <div class="panel" id="panel-produtividade">
+        <div class="page-title">Produtividade do dia</div>
+        <div class="stats-row" id="prod-stats">
+          <div class="stat-card total"><div class="stat-label">Total separado hoje</div><div class="stat-value">0</div></div>
+        </div>
+        <div class="prod-layout">
+          <div class="prod-card">
+            <div class="add-form-title">Gráfico por colaborador</div>
+            <div class="prod-chart-wrap">
+              <div class="prod-pie" id="prod-pie">
+                <div class="prod-center">
+                  <div class="prod-center-total" id="prod-total">0</div>
+                  <div class="prod-center-label">etiquetas hoje</div>
+                </div>
+              </div>
+            </div>
+            <div class="prod-legend" id="prod-legend"></div>
+          </div>
+          <div class="prod-card">
+            <div class="add-form-title">Ranking do dia</div>
+            <div class="prod-ranking" id="prod-ranking"></div>
+          </div>
+        </div>
       </div>
 
       <!-- PENDÊNCIAS -->
@@ -481,14 +535,14 @@ function handleWS(event, data) {
     case 'bipagem:add':
       if (!S.bipagens.find(b=>b.id===data.id)) {
         S.bipagens.unshift(data);
-        renderBipagem(); renderHistorico(); updateCounts();
+        renderBipagem(); renderHistorico(); renderProdutividade(); updateCounts();
         if (data.usuario_id !== usuarioLogado?.id)
           toast(`↓ ${data.etiqueta} — ${data.marketplace_nome} (${data.colaborador_nome})`, 'info', 2500);
       }
       break;
     case 'bipagem:del':
       S.bipagens = S.bipagens.filter(b=>b.id!==data.id);
-      renderBipagem(); renderHistorico(); updateCounts(); break;
+      renderBipagem(); renderHistorico(); renderProdutividade(); updateCounts(); break;
     case 'pendencia:add':
       if (!S.pendencias.find(p=>p.id===data.id)) { S.pendencias.unshift(data); renderPendencias(); updateCounts(); } break;
     case 'pendencia:del':
@@ -536,6 +590,7 @@ function switchPanel(name, el) {
   document.getElementById('panel-'+name).classList.add('active');
   if (el) el.classList.add('active');
   if (name==='historico') renderHistorico();
+  if (name==='produtividade') renderProdutividade();
   if (name==='colaboradores') renderColabs();
   if (name==='marketplaces') { renderMktConfig(); renderColorPicks(); }
   if (name==='usuarios') carregarUsuarios();
@@ -657,7 +712,71 @@ async function delBip(id) {
   if (!confirm('Remover bipagem?')) return;
   await api('DELETE',`/api/bipagens/${id}`);
   S.bipagens = S.bipagens.filter(b=>b.id!==id);
-  renderBipagem(); renderHistorico(); updateCounts();
+  renderBipagem(); renderHistorico(); renderProdutividade(); updateCounts();
+}
+
+
+
+// ── Produtividade do dia ─────────────────────────────────────
+const PROD_COLORS=['#00e5a0','#4d9fff','#ffb547','#ff4d4d','#a855f7','#14b8a6','#f97316','#e91e8c','#84cc16','#6366f1','#ffe600','#ff9900'];
+function getProdutividadeHoje(){
+  const hoje=S.bipagens.filter(b=>isToday(b.criado_em));
+  const mapa=new Map();
+  hoje.forEach(b=>{
+    const key=b.colaborador_id||b.colaborador_nome;
+    const atual=mapa.get(key)||{id:b.colaborador_id,nome:b.colaborador_nome||'SEM NOME',qtd:0};
+    atual.qtd++;
+    mapa.set(key,atual);
+  });
+  const total=hoje.length;
+  const lista=[...mapa.values()].sort((a,b)=>b.qtd-a.qtd||a.nome.localeCompare(b.nome)).map((x,i)=>({
+    ...x,
+    perc:total?((x.qtd/total)*100):0,
+    cor:PROD_COLORS[i%PROD_COLORS.length]
+  }));
+  return {total,lista};
+}
+function renderProdutividade(){
+  const totalEl=document.getElementById('prod-total');
+  if(!totalEl) return;
+  const {total,lista}=getProdutividadeHoje();
+  totalEl.textContent=total;
+  document.getElementById('nav-prod').textContent=total;
+  document.getElementById('prod-stats').innerHTML=`
+    <div class="stat-card total"><div class="stat-label">Total separado hoje</div><div class="stat-value">${total}</div></div>
+    <div class="stat-card"><div class="stat-label">Colaboradores ativos</div><div class="stat-value">${lista.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Maior separação</div><div class="stat-value">${lista[0]?.qtd||0}</div></div>
+  `;
+  const pie=document.getElementById('prod-pie');
+  if(!total){
+    pie.style.background='var(--surface2)';
+    document.getElementById('prod-legend').innerHTML='<div class="empty-state" style="padding:1rem;">Nenhuma bipagem hoje.</div>';
+    document.getElementById('prod-ranking').innerHTML='<div class="empty-state">Nenhuma bipagem hoje.</div>';
+    return;
+  }
+  let acc=0;
+  const partes=lista.map(item=>{
+    const ini=acc;
+    acc+=item.perc;
+    return `${item.cor} ${ini.toFixed(2)}% ${acc.toFixed(2)}%`;
+  });
+  pie.style.background=`conic-gradient(${partes.join(',')})`;
+  document.getElementById('prod-legend').innerHTML=lista.map(item=>`
+    <div class="prod-legend-item">
+      <span class="prod-dot" style="background:${item.cor}"></span>
+      <span class="prod-name">${item.nome}</span>
+      <span class="prod-meta">${item.qtd} · ${item.perc.toFixed(1).replace('.',',')}%</span>
+    </div>`).join('');
+  document.getElementById('prod-ranking').innerHTML=lista.map((item,i)=>`
+    <div class="prod-row">
+      <div class="prod-pos">#${i+1}</div>
+      <div>
+        <div class="prod-name">${item.nome}</div>
+        <div class="prod-bar"><div class="prod-bar-fill" style="width:${item.perc}%;background:${item.cor}"></div></div>
+      </div>
+      <div class="prod-qtd">${item.qtd} un.</div>
+      <div class="prod-perc">${item.perc.toFixed(1).replace('.',',')}%</div>
+    </div>`).join('');
 }
 
 // ── Pendências ────────────────────────────────────────────────
@@ -757,7 +876,7 @@ async function delBipHist(id){
   if(!confirm('Remover?'))return;
   await api('DELETE',`/api/bipagens/${id}`);
   S.bipagens=S.bipagens.filter(b=>b.id!==id);
-  renderBipagem();renderHistorico();updateCounts();
+  renderBipagem();renderHistorico();renderProdutividade(); updateCounts();
 }
 
 // ── Usuários ──────────────────────────────────────────────────
@@ -850,11 +969,12 @@ function updateCounts(){
   const hoje=S.bipagens.filter(b=>isToday(b.criado_em));
   const c=selectedColabId?hoje.filter(b=>b.colaborador_id===selectedColabId):hoje;
   document.getElementById('nav-bip').textContent=c.length;
+  document.getElementById('nav-prod').textContent=hoje.length;
   document.getElementById('nav-pend').textContent=S.pendencias.length;
   document.getElementById('nav-ret').textContent=S.retornos.length;
 }
 
-function renderAll(){renderBipagem();renderPendencias();renderRetornos();renderColabs();renderMktConfig();renderColorPicks();updateCounts();}
+function renderAll(){renderBipagem();renderProdutividade();renderPendencias();renderRetornos();renderColabs();renderMktConfig();renderColorPicks();updateCounts();}
 
 // ── Boot ──────────────────────────────────────────────────────
 (async()=>{
