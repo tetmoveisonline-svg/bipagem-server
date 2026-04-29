@@ -980,6 +980,15 @@ function dataLocalISO(iso) {
   return `${y}-${m}-${day}`;
 }
 
+function dataBRParaISO(dataBR) {
+  if (!dataBR) return '';
+
+  if (dataBR.includes('-')) return dataBR;
+
+  const [dia, mes, ano] = dataBR.split('/');
+  return `${ano}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+}
+
 function renderHistorico() {
   const fC = document.getElementById('hist-colab').value;
   const fM = document.getElementById('hist-mkt').value;
@@ -992,11 +1001,11 @@ function renderHistorico() {
   if (fM) data = data.filter(b => b.marketplace_nome === fM);
 
   if (fD) {
-    data = data.filter(b => dataLocalISO(b.criado_em) >= fD);
+    data = data.filter(b => dataBRParaISO(b.data) >= fD);
   }
 
   if (fA) {
-    data = data.filter(b => dataLocalISO(b.criado_em) <= fA);
+    data = data.filter(b => dataBRParaISO(b.data) <= fA);
   }
 
   document.getElementById('hist-label').textContent =
@@ -1018,6 +1027,7 @@ function renderHistorico() {
     <td style="font-size:11px;color:var(--text3);">${b.usuario_nome || '—'}</td>
     <td><button class="btn btn-danger-outline btn-sm" onclick="delBipHist('${b.id}')">✕</button></td>
   </tr>`).join('');
+}
 }{['hist-colab','hist-mkt','hist-de','hist-ate'].forEach(id=>document.getElementById(id).value='');renderHistorico();}
 
 async function delBipHist(id){
