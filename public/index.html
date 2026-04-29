@@ -709,29 +709,44 @@ function selecionarColab(save=true) {
 }
 
 async function bipar() {
-  const etiq    = document.getElementById('inp-etiq').value.trim().toUpperCase();
-  const mktId   = parseInt(document.getElementById('sel-mkt').value)||null;
-  const colabId = parseInt(document.getElementById('sel-colab2').value)||selectedColabId;
-  if (!etiq)    { toast('Informe a etiqueta.','warn'); return; }
-  if (!mktId)   { toast('Selecione o marketplace.','warn'); return; }
-  if (!colabId) { toast('Selecione o colaborador.','warn'); return; }
+  const etiq = document.getElementById('inp-etiq').value.trim().toUpperCase();
+  const mktId = parseInt(document.getElementById('sel-mkt').value) || null;
+  const colabId = parseInt(document.getElementById('sel-colab2').value) || selectedColabId;
+
+  if (!etiq) { toast('Informe a etiqueta.', 'warn'); return; }
+  if (!mktId) { toast('Selecione o marketplace.', 'warn'); return; }
+  if (!colabId) { toast('Selecione o colaborador.', 'warn'); return; }
+
   document.getElementById('inp-etiq').value = '';
+
   try {
-    const bip = await api('POST','/api/bipagens',{etiqueta:etiq,marketplace_id:mktId,colaborador_id:colabId});
-    // Não adiciona ao state local aqui — o WebSocket fará isso para todos os clientes
+    const bip = await api('POST', '/api/bipagens', {
+      etiqueta: etiq,
+      marketplace_id: mktId,
+      colaborador_id: colabId
+    });
+
     flashCard('ok');
-    toast(`✓ ${bip.etiqueta} — ${bip.marketplace_nome}`,'ok',1800);
-  } catch(err) {
+    toast(`✓ ${bip.etiqueta} — ${bip.marketplace_nome}`, 'ok', 1800);
+
+  } catch (err) {
     flashCard('err');
-  if (err.duplicata) {
-  const d = err.duplicata;
 
-  falar(`Etiqueta já bipada para ${d.colaborador_nome}`);
+    if (err.duplicata) {
+      const d = err.duplicata;
 
-  toast(`ETIQUETA DUPLICADA!\n${d.etiqueta} — ${d.colaborador_nome} (${d.marketplace_nome}) em ${d.data} ${d.hora}`,'err',6000);
-}
-    } else toast(err.erro||'Erro ao registrar.','err');
+      falar(`Etiqueta já bipada para ${d.colaborador_nome}`);
+
+      toast(
+        `ETIQUETA DUPLICADA!\n${d.etiqueta} — ${d.colaborador_nome} (${d.marketplace_nome}) em ${d.data} ${d.hora}`,
+        'err',
+        6000
+      );
+    } else {
+      toast(err.erro || 'Erro ao registrar.', 'err');
+    }
   }
+
   document.getElementById('inp-etiq').focus();
 }
 
