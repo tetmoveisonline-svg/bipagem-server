@@ -250,6 +250,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item" onclick="switchPanel('marketplaces',this)">&#128722; Marketplaces</div>
       <div class="sidebar-divider"></div>
 <div class="sidebar-section">Produção</div>
+      <div class="sidebar-section">Produção</div>
+<div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
+<div class="nav-item" onclick="switchPanel('prod-fornecedores',this)">🏢 Fornecedores</div>
+<div class="nav-item" onclick="switchPanel('prod-insumos',this)">📦 Insumos</div>
 <div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
     </div>
 
@@ -394,6 +398,96 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           </table>
         </div></div>
       </div>
+      <!-- FORNECEDORES PRODUÇÃO -->
+<div class="panel" id="panel-prod-fornecedores">
+  <div class="page-title">Fornecedores de Produção</div>
+
+  <div class="add-form">
+    <div class="add-form-title">Cadastrar Fornecedor</div>
+    <div class="add-row">
+      <div class="field">
+        <label>Fornecedor</label>
+        <input type="text" id="forn-nome" placeholder="Ex: Madeireira X">
+      </div>
+      <div class="field">
+        <label>Contato</label>
+        <input type="text" id="forn-contato" placeholder="Opcional">
+      </div>
+      <div class="field">
+        <label>Observação</label>
+        <input type="text" id="forn-obs" placeholder="Opcional">
+      </div>
+      <button class="btn btn-primary" onclick="criarFornecedor()">Cadastrar</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Fornecedor</th>
+          <th>Contato</th>
+          <th>Obs</th>
+          <th>Ação</th>
+        </tr>
+      </thead>
+      <tbody id="forn-tbody">
+        <tr><td colspan="4" class="empty-state">Nenhum fornecedor cadastrado.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- INSUMOS PRODUÇÃO -->
+<div class="panel" id="panel-prod-insumos">
+  <div class="page-title">Cadastro de Insumos</div>
+
+  <div class="add-form">
+    <div class="add-form-title">Cadastrar Insumo</div>
+    <div class="add-row">
+      <div class="field">
+        <label>Insumo</label>
+        <input type="text" id="ins-nome" placeholder="Ex: Chapa MDF 15mm">
+      </div>
+
+      <div class="field">
+        <label>Fornecedor</label>
+        <select id="ins-fornecedor">
+          <option value="">— selecionar —</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Unidade</label>
+        <input type="text" id="ins-unidade" placeholder="UN / CHAPA / M² / KIT">
+      </div>
+
+      <div class="field">
+        <label>Valor unitário</label>
+        <input type="number" step="0.01" id="ins-valor" placeholder="Ex: 85.50">
+      </div>
+
+      <button class="btn btn-primary" onclick="criarInsumo()">Cadastrar</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Insumo</th>
+          <th>Fornecedor</th>
+          <th>Unidade</th>
+          <th>Valor</th>
+          <th>Ação</th>
+        </tr>
+      </thead>
+      <tbody id="ins-tbody">
+        <tr><td colspan="5" class="empty-state">Nenhum insumo cadastrado.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
 <!-- PRODUÇÃO -->
 <div class="panel" id="panel-producao">
   <div class="page-title">Controle de Produção</div>
@@ -445,6 +539,49 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         </tbody>
       </table>
     </div>
+  </div>
+</div>
+      <!-- INSUMOS DO PEDIDO -->
+<div class="add-form" id="pedido-insumos-box" style="display:none;margin-top:1rem;">
+  <div class="add-form-title" id="pedido-insumos-title">Insumos do pedido</div>
+
+  <div class="add-row">
+    <div class="field">
+      <label>Insumo</label>
+      <select id="pedido-insumo-select">
+        <option value="">— selecionar —</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Quantidade</label>
+      <input type="number" step="0.01" id="pedido-insumo-qtd" placeholder="Quantidade">
+    </div>
+
+    <button class="btn btn-primary" onclick="adicionarInsumoPedido()">Adicionar Insumo</button>
+  </div>
+
+  <div class="export-bar" style="margin-top:1rem;">
+    <span class="export-label" id="pedido-insumos-total">Total: R$ 0,00</span>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Insumo</th>
+          <th>Fornecedor</th>
+          <th>Qtd</th>
+          <th>Unidade</th>
+          <th>Valor Unit.</th>
+          <th>Total</th>
+          <th>Ação</th>
+        </tr>
+      </thead>
+      <tbody id="pedido-insumos-tbody">
+        <tr><td colspan="7" class="empty-state">Nenhum insumo neste pedido.</td></tr>
+      </tbody>
+    </table>
   </div>
 </div>
       <!-- USUÁRIOS -->
@@ -725,6 +862,8 @@ function switchPanel(name, el) {
   if (name==='marketplaces') { renderMktConfig(); renderColorPicks(); }
   if (name==='usuarios') carregarUsuarios();
   if (name==='producao') carregarProducao();
+  if (name==='prod-fornecedores') carregarCadastrosProducao();
+if (name==='prod-insumos') carregarCadastrosProducao();
 }
 
 // ── Selects ───────────────────────────────────────────────────
@@ -1309,7 +1448,9 @@ function renderProducao() {
           <button class="btn btn-primary btn-sm" onclick="receberProducao('${p.id}')">
   + Receber
 </button>
-
+<button class="btn btn-ghost btn-sm" onclick="abrirInsumosPedido('${p.id}')">
+  Insumos
+</button>
 <button class="btn btn-danger-outline btn-sm" onclick="deletarProducao('${p.id}')">
   Excluir
 </button>
@@ -1317,6 +1458,273 @@ function renderProducao() {
       </tr>
     `;
   }).join('');
+}
+  // ── Cadastros Produção: fornecedores e insumos ───────────────
+let CAD_PROD = { fornecedores: [], insumos: [] };
+let pedidoInsumosAtual = null;
+let PEDIDO_INSUMOS = [];
+
+function dinheiro(v) {
+  return Number(v || 0).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL'
+  });
+}
+
+async function carregarCadastrosProducao() {
+  try {
+    CAD_PROD = await api('GET', '/api/producao/cadastros');
+    renderFornecedores();
+    renderInsumos();
+    popularSelectsInsumos();
+  } catch (e) {
+    toast(e.erro || 'Erro ao carregar cadastros.', 'err');
+  }
+}
+
+function popularSelectsInsumos() {
+  const fornSel = document.getElementById('ins-fornecedor');
+  if (fornSel) {
+    fornSel.innerHTML = '<option value="">— selecionar —</option>' +
+      CAD_PROD.fornecedores.map(f => `<option value="${f.id}">${f.nome}</option>`).join('');
+  }
+
+  const insSel = document.getElementById('pedido-insumo-select');
+  if (insSel) {
+    insSel.innerHTML = '<option value="">— selecionar —</option>' +
+      CAD_PROD.insumos.map(i => `
+        <option value="${i.id}">
+          ${i.nome} | ${i.fornecedor_nome} | ${dinheiro(i.valor_unitario)}
+        </option>
+      `).join('');
+  }
+}
+
+async function criarFornecedor() {
+  const nome = document.getElementById('forn-nome').value.trim();
+  const contato = document.getElementById('forn-contato').value.trim();
+  const obs = document.getElementById('forn-obs').value.trim();
+
+  if (!nome) {
+    toast('Informe o fornecedor.', 'warn');
+    return;
+  }
+
+  try {
+    const f = await api('POST', '/api/producao/fornecedores', { nome, contato, obs });
+    CAD_PROD.fornecedores.push(f);
+
+    document.getElementById('forn-nome').value = '';
+    document.getElementById('forn-contato').value = '';
+    document.getElementById('forn-obs').value = '';
+
+    renderFornecedores();
+    popularSelectsInsumos();
+    toast('Fornecedor cadastrado.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao cadastrar fornecedor.', 'err');
+  }
+}
+
+function renderFornecedores() {
+  const tb = document.getElementById('forn-tbody');
+  if (!tb) return;
+
+  if (!CAD_PROD.fornecedores.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="empty-state">Nenhum fornecedor cadastrado.</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = CAD_PROD.fornecedores.map(f => `
+    <tr>
+      <td>${f.nome}</td>
+      <td>${f.contato || '—'}</td>
+      <td>${f.obs || '—'}</td>
+      <td>
+        <button class="btn btn-danger-outline btn-sm" onclick="deletarFornecedor('${f.id}')">Excluir</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function deletarFornecedor(id) {
+  if (!confirm('Excluir fornecedor?')) return;
+
+  try {
+    await api('DELETE', `/api/producao/fornecedores/${id}`);
+    CAD_PROD.fornecedores = CAD_PROD.fornecedores.filter(f => f.id !== id);
+    renderFornecedores();
+    popularSelectsInsumos();
+    toast('Fornecedor excluído.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao excluir fornecedor.', 'err');
+  }
+}
+
+async function criarInsumo() {
+  const nome = document.getElementById('ins-nome').value.trim();
+  const fornecedor_id = document.getElementById('ins-fornecedor').value;
+  const unidade = document.getElementById('ins-unidade').value.trim() || 'UN';
+  const valor_unitario = parseFloat(document.getElementById('ins-valor').value || '0');
+
+  if (!nome || !fornecedor_id) {
+    toast('Informe insumo e fornecedor.', 'warn');
+    return;
+  }
+
+  try {
+    const ins = await api('POST', '/api/producao/insumos', {
+      nome,
+      fornecedor_id,
+      unidade,
+      valor_unitario
+    });
+
+    CAD_PROD.insumos.push(ins);
+
+    document.getElementById('ins-nome').value = '';
+    document.getElementById('ins-fornecedor').value = '';
+    document.getElementById('ins-unidade').value = '';
+    document.getElementById('ins-valor').value = '';
+
+    renderInsumos();
+    popularSelectsInsumos();
+    toast('Insumo cadastrado.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao cadastrar insumo.', 'err');
+  }
+}
+
+function renderInsumos() {
+  const tb = document.getElementById('ins-tbody');
+  if (!tb) return;
+
+  if (!CAD_PROD.insumos.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty-state">Nenhum insumo cadastrado.</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = CAD_PROD.insumos.map(i => `
+    <tr>
+      <td>${i.nome}</td>
+      <td>${i.fornecedor_nome || '—'}</td>
+      <td>${i.unidade || 'UN'}</td>
+      <td>${dinheiro(i.valor_unitario)}</td>
+      <td>
+        <button class="btn btn-danger-outline btn-sm" onclick="deletarInsumo('${i.id}')">Excluir</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function deletarInsumo(id) {
+  if (!confirm('Excluir insumo?')) return;
+
+  try {
+    await api('DELETE', `/api/producao/insumos/${id}`);
+    CAD_PROD.insumos = CAD_PROD.insumos.filter(i => i.id !== id);
+    renderInsumos();
+    popularSelectsInsumos();
+    toast('Insumo excluído.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao excluir insumo.', 'err');
+  }
+}
+
+async function abrirInsumosPedido(id) {
+  pedidoInsumosAtual = id;
+
+  await carregarCadastrosProducao();
+
+  const pedido = PRODUCAO.pedidos.find(p => p.id === id);
+  document.getElementById('pedido-insumos-box').style.display = 'block';
+  document.getElementById('pedido-insumos-title').textContent =
+    `Insumos do pedido ${id} — ${pedido ? pedido.produto : ''}`;
+
+  try {
+    PEDIDO_INSUMOS = await api('GET', `/api/producao/pedidos/${id}/insumos`);
+    renderPedidoInsumos();
+  } catch (e) {
+    toast(e.erro || 'Erro ao carregar insumos do pedido.', 'err');
+  }
+}
+
+async function adicionarInsumoPedido() {
+  const insumo_id = document.getElementById('pedido-insumo-select').value;
+  const quantidade = parseFloat(document.getElementById('pedido-insumo-qtd').value || '0');
+
+  if (!pedidoInsumosAtual) {
+    toast('Selecione um pedido.', 'warn');
+    return;
+  }
+
+  if (!insumo_id || !quantidade) {
+    toast('Informe insumo e quantidade.', 'warn');
+    return;
+  }
+
+  try {
+    const item = await api('POST', `/api/producao/pedidos/${pedidoInsumosAtual}/insumos`, {
+      insumo_id,
+      quantidade
+    });
+
+    PEDIDO_INSUMOS.unshift(item);
+    document.getElementById('pedido-insumo-select').value = '';
+    document.getElementById('pedido-insumo-qtd').value = '';
+
+    renderPedidoInsumos();
+    toast('Insumo vinculado ao pedido.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao vincular insumo.', 'err');
+  }
+}
+
+function renderPedidoInsumos() {
+  const tb = document.getElementById('pedido-insumos-tbody');
+  const totalEl = document.getElementById('pedido-insumos-total');
+
+  if (!tb || !totalEl) return;
+
+  const total = PEDIDO_INSUMOS.reduce((s, i) => s + Number(i.valor_total || 0), 0);
+  const pedido = PRODUCAO.pedidos.find(p => p.id === pedidoInsumosAtual);
+  const custoUnit = pedido && Number(pedido.quantidade)
+    ? total / Number(pedido.quantidade)
+    : 0;
+
+  totalEl.textContent = `Total: ${dinheiro(total)} | Custo unitário: ${dinheiro(custoUnit)}`;
+
+  if (!PEDIDO_INSUMOS.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="empty-state">Nenhum insumo neste pedido.</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = PEDIDO_INSUMOS.map(i => `
+    <tr>
+      <td>${i.insumo_nome}</td>
+      <td>${i.fornecedor_nome || '—'}</td>
+      <td class="mono">${Number(i.quantidade)}</td>
+      <td>${i.unidade}</td>
+      <td>${dinheiro(i.valor_unitario)}</td>
+      <td>${dinheiro(i.valor_total)}</td>
+      <td>
+        <button class="btn btn-danger-outline btn-sm" onclick="removerInsumoPedido('${i.id}')">Excluir</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function removerInsumoPedido(itemId) {
+  if (!confirm('Remover este insumo do pedido?')) return;
+
+  try {
+    await api('DELETE', `/api/producao/pedidos/${pedidoInsumosAtual}/insumos/${itemId}`);
+    PEDIDO_INSUMOS = PEDIDO_INSUMOS.filter(i => i.id !== itemId);
+    renderPedidoInsumos();
+    toast('Insumo removido.', 'ok');
+  } catch (e) {
+    toast(e.erro || 'Erro ao remover insumo.', 'err');
+  }
 }
 // ── Export CSV ────────────────────────────────────────────────
 function exportCSV(tipo){
