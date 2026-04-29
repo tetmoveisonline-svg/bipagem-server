@@ -379,8 +379,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div class="field"><label>Marketplace</label><select id="hist-mkt" onchange="renderHistorico()"><option value="">Todos</option></select></div>
           <div class="field"><label>De</label><input type="date" id="hist-de" onchange="renderHistorico()"/></div>
           <div class="field"><label>Até</label><input type="date" id="hist-ate" onchange="renderHistorico()"/></div>
-          <button class="btn btn-ghost btn-sm" onclick="limparFiltros()">Limpar</button>
-          <button class="btn-export" onclick="exportCSV('historico')">&#8595; CSV</button>
+          <button class="btn btn-primary btn-sm" onclick="renderHistorico()">Filtrar</button>
+<button class="btn btn-ghost btn-sm" onclick="limparFiltros()">Limpar</button>
+<button class="btn btn-export" onclick="exportCSV('historico')">↓ CSV</button>
         </div>
         <div class="export-bar"><span class="export-label" id="hist-label">0 registros</span></div>
         <div class="table-wrap"><div class="tbl-scroll-full">
