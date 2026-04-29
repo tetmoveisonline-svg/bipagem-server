@@ -430,6 +430,45 @@ app.delete('/api/marketplaces/:id', autenticar, apenasAdmin, async (req, res) =>
 });
 
 // ── Bipagens ─────────────────────────────────────────────────
+app.get('/api/produtividade', autenticar, async (req, res) => {
+  try {
+    const { dia, mes } = req.query;
+
+    let where = [];
+    let valores = [];
+
+    if (dia) {
+      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 1}`);
+      valores.push(dia);
+    } else if (mes) {
+      const [ano, mesNum] = mes.split('-');
+
+      where.push(`
+        EXTRACT(YEAR FROM criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 1}
+        AND EXTRACT(MONTH FROM criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 2}
+      `);
+
+      valores.push(ano, mesNum);
+    } else {
+      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE`);
+    }
+
+    const whereSQL = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    const result = await pool.query(`
+      SELECT colaborador_nome, COUNT(*)::int AS total
+      FROM bipagens
+      ${whereSQL}
+      GROUP BY colaborador_nome
+      ORDER BY total DESC
+    `, valores);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao buscar produtividade' });
+  }
+});
 app.get('/api/bipagens', autenticar, async (req, res) => {
   try {
     const { colab, mkt, de, ate } = req.query;
