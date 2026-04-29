@@ -136,6 +136,7 @@ async function initDB() {
 );
 
 CREATE TABLE IF NOT EXISTS producao_entradas (
+
   id TEXT PRIMARY KEY,
   pedido_id TEXT,
   produto TEXT,
@@ -143,6 +144,38 @@ CREATE TABLE IF NOT EXISTS producao_entradas (
   obs TEXT DEFAULT '',
   data TEXT,
   hora TEXT,
+  criado_em TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS producao_fornecedores (
+  id TEXT PRIMARY KEY,
+  nome TEXT UNIQUE NOT NULL,
+  contato TEXT DEFAULT '',
+  obs TEXT DEFAULT '',
+  data TEXT,
+  hora TEXT,
+  criado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS producao_insumos (
+  id TEXT PRIMARY KEY,
+  nome TEXT NOT NULL,
+  fornecedor_id TEXT REFERENCES producao_fornecedores(id) ON DELETE SET NULL,
+  fornecedor_nome TEXT DEFAULT '',
+  unidade TEXT DEFAULT 'UN',
+  valor_unitario NUMERIC(12,2) DEFAULT 0,
+  criado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS producao_pedido_insumos (
+  id TEXT PRIMARY KEY,
+  pedido_id TEXT REFERENCES producao_pedidos(id) ON DELETE CASCADE,
+  insumo_id TEXT REFERENCES producao_insumos(id) ON DELETE SET NULL,
+  insumo_nome TEXT DEFAULT '',
+  fornecedor_nome TEXT DEFAULT '',
+  unidade TEXT DEFAULT 'UN',
+  quantidade NUMERIC(12,2) DEFAULT 0,
+  valor_unitario NUMERIC(12,2) DEFAULT 0,
+  valor_total NUMERIC(12,2) DEFAULT 0,
   criado_em TIMESTAMPTZ DEFAULT NOW()
 );
   `);
@@ -905,6 +938,196 @@ app.delete('/api/producao/pedidos/:id', autenticar, async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ erro: 'Erro ao excluir pedido.' });
+  }
+});
+// ── Cadastros Produção: fornecedores e insumos ───────────────
+app.get('/api/producao/cadastros', autenticar, async (req, res) => {
+  try {
+    const fornecedores = await pool.query(`
+      SELECT * FROM producao_fornecedores ORDER BY nome ASC
+    `);
+
+    const insumos = await pool.query(`
+      SELECT * FROM producao_insumos ORDER BY nome ASC, fornecedor_nome ASC
+    `);
+
+    res.json({
+      fornecedores: fornecedores.rows.map(toISO),
+      insumos: insumos.rows.map(toISO)
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar cadastros de produção.' });
+  }
+});
+
+app.post('/api/producao/fornecedores', autenticar, async (req, res) => {
+  try {
+    const { nome, contato = '', obs = '' } = req.body;
+    if (!nome) return res.status(400).json({ erro: 'Nome do fornecedor é obrigatório.' });
+
+    const { data, hora } = nowBR();
+
+    const result = await pool.query(`
+      INSERT INTO producao_fornecedores (id, nome, contato, obs, data, hora)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      RETURNING *
+    `, [
+      uid(),
+      nome.trim().toUpperCase(),
+      contato.trim(),
+      obs.trim(),
+      data,
+      hora
+    ]);
+
+    res.json(toISO(result.rows[0]));
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ erro: 'Fornecedor já cadastrado.' });
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao cadastrar fornecedor.' });
+  }
+});
+
+app.delete('/api/producao/fornecedores/:id', autenticar, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM producao_fornecedores WHERE id = $1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao excluir fornecedor.' });
+  }
+});
+
+app.post('/api/producao/insumos', autenticar, async (req, res) => {
+  try {
+    const { nome, fornecedor_id, unidade = 'UN', valor_unitario = 0 } = req.body;
+
+    if (!nome) return res.status(400).json({ erro: 'Nome do insumo é obrigatório.' });
+    if (!fornecedor_id) return res.status(400).json({ erro: 'Fornecedor é obrigatório.' });
+
+    const forn = await pool.query(
+      `SELECT id, nome FROM producao_fornecedores WHERE id = $1`,
+      [fornecedor_id]
+    );
+
+    if (forn.rowCount === 0) {
+      return res.status(404).json({ erro: 'Fornecedor não encontrado.' });
+    }
+
+    const result = await pool.query(`
+      INSERT INTO producao_insumos
+      (id, nome, fornecedor_id, fornecedor_nome, unidade, valor_unitario)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      RETURNING *
+    `, [
+      uid(),
+      nome.trim().toUpperCase(),
+      fornecedor_id,
+      forn.rows[0].nome,
+      unidade.trim().toUpperCase(),
+      Number(valor_unitario || 0)
+    ]);
+
+    res.json(toISO(result.rows[0]));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao cadastrar insumo.' });
+  }
+});
+
+app.delete('/api/producao/insumos/:id', autenticar, async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM producao_insumos WHERE id = $1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao excluir insumo.' });
+  }
+});
+
+// ── Insumos dentro do pedido ─────────────────────────────────
+app.get('/api/producao/pedidos/:id/insumos', autenticar, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM producao_pedido_insumos
+      WHERE pedido_id = $1
+      ORDER BY criado_em DESC
+    `, [req.params.id]);
+
+    res.json(result.rows.map(toISO));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar insumos do pedido.' });
+  }
+});
+
+app.post('/api/producao/pedidos/:id/insumos', autenticar, async (req, res) => {
+  try {
+    const { insumo_id, quantidade } = req.body;
+
+    if (!insumo_id || !quantidade) {
+      return res.status(400).json({ erro: 'Insumo e quantidade são obrigatórios.' });
+    }
+
+    const pedido = await pool.query(
+      `SELECT id FROM producao_pedidos WHERE id = $1`,
+      [req.params.id]
+    );
+
+    if (pedido.rowCount === 0) {
+      return res.status(404).json({ erro: 'Pedido não encontrado.' });
+    }
+
+    const insumo = await pool.query(
+      `SELECT * FROM producao_insumos WHERE id = $1`,
+      [insumo_id]
+    );
+
+    if (insumo.rowCount === 0) {
+      return res.status(404).json({ erro: 'Insumo não encontrado.' });
+    }
+
+    const i = insumo.rows[0];
+    const qtd = Number(quantidade);
+    const valorUnit = Number(i.valor_unitario || 0);
+    const total = qtd * valorUnit;
+
+    const result = await pool.query(`
+      INSERT INTO producao_pedido_insumos
+      (id, pedido_id, insumo_id, insumo_nome, fornecedor_nome, unidade, quantidade, valor_unitario, valor_total)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      RETURNING *
+    `, [
+      uid(),
+      req.params.id,
+      i.id,
+      i.nome,
+      i.fornecedor_nome,
+      i.unidade,
+      qtd,
+      valorUnit,
+      total
+    ]);
+
+    res.json(toISO(result.rows[0]));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao vincular insumo ao pedido.' });
+  }
+});
+
+app.delete('/api/producao/pedidos/:id/insumos/:itemId', autenticar, async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM producao_pedido_insumos WHERE id = $1 AND pedido_id = $2`,
+      [req.params.itemId, req.params.id]
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao remover insumo do pedido.' });
   }
 });
 // ── Health check / Railway ────────────────────────────────────
