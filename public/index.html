@@ -295,6 +295,20 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <!-- PRODUTIVIDADE -->
       <div class="panel" id="panel-produtividade">
         <div class="page-title">Produtividade do dia</div>
+        <div class="filters-row" style="margin-bottom:1rem;">
+  <div class="field">
+    <label>Dia</label>
+    <input type="date" id="filtroDia">
+  </div>
+
+  <div class="field">
+    <label>Mês</label>
+    <input type="month" id="filtroMes">
+  </div>
+
+  <button class="btn btn-primary btn-sm" onclick="aplicarFiltroProdutividade()">Filtrar</button>
+  <button class="btn btn-ghost btn-sm" onclick="limparFiltroProdutividade()">Limpar</button>
+</div>
         <div class="stats-row" id="prod-stats">
           <div class="stat-card total"><div class="stat-label">Total separado hoje</div><div class="stat-value">0</div></div>
         </div>
@@ -782,6 +796,36 @@ function getProdutividadeHoje(){
     cor:PROD_COLORS[i%PROD_COLORS.length]
   }));
   return {total,lista};
+}
+  async function aplicarFiltroProdutividade() {
+  const dia = document.getElementById('filtroDia').value;
+  const mes = document.getElementById('filtroMes').value;
+
+  let url = '/api/produtividade';
+  const params = new URLSearchParams();
+
+  if (dia) {
+    params.append('dia', dia);
+  } else if (mes) {
+    params.append('mes', mes);
+  }
+
+  if (params.toString()) {
+    url += '?' + params.toString();
+  }
+
+  try {
+    const res = await api('GET', url);
+    renderProdutividadeComDados(res);
+  } catch (e) {
+    toast(e.erro || 'Erro ao filtrar produtividade.', 'err');
+  }
+}
+
+function limparFiltroProdutividade() {
+  document.getElementById('filtroDia').value = '';
+  document.getElementById('filtroMes').value = '';
+  renderProdutividade();
 }
 function renderProdutividade(){
   const totalEl=document.getElementById('prod-total');
