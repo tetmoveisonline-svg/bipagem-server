@@ -9,8 +9,7 @@
   "dependencies": {
     "express": "^4.18.3",
     "ws": "^8.16.0",
-    "sql.js": "^1.10.3",
-    "lowdb": "^1.0.0"
+    "pg": "^8.11.5"
   },
   "engines": {
     "node": ">=18.0.0"
