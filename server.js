@@ -18,6 +18,9 @@ const pool = new Pool({
 
 // ── Helpers ──────────────────────────────────────────────────
 function uid() {
+  function codigoEEA() {
+  return 'EEA' + Math.floor(100 + Math.random() * 900);
+}
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
@@ -802,7 +805,7 @@ app.post('/api/producao/pedidos', autenticar, async (req, res) => {
       VALUES ($1,$2,$3,$4,0,'PENDENTE',$5,$6,$7)
       RETURNING *
     `, [
-      uid(),
+      codigoEEA(),
       produto.trim().toUpperCase(),
       parseInt(quantidade),
       fabricante.trim().toUpperCase(),
@@ -878,6 +881,29 @@ app.post('/api/producao/entradas', autenticar, async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ erro: 'Erro ao registrar entrada.' });
+  }
+});
+app.delete('/api/producao/pedidos/:id', autenticar, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    await pool.query(`DELETE FROM producao_entradas WHERE pedido_id = $1`, [id]);
+
+    const result = await pool.query(
+      `DELETE FROM producao_pedidos WHERE id = $1 RETURNING id`,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ erro: 'Pedido não encontrado.' });
+    }
+
+    broadcast('producao:pedido:del', { id });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao excluir pedido.' });
   }
 });
 // ── Health check / Railway ────────────────────────────────────
