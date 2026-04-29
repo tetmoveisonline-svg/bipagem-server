@@ -1,3 +1,14 @@
+<div style="display:flex; gap:10px; margin-bottom:15px;">
+  
+  <input type="date" id="filtroDia" />
+
+  <input type="month" id="filtroMes" />
+
+  <button onclick="aplicarFiltro()">Filtrar</button>
+
+  <button onclick="limparFiltro()">Limpar</button>
+
+</div>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -431,6 +442,42 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <div class="toast-area" id="toast-area"></div>
 
 <script>
+  async function aplicarFiltro() {
+  const dia = document.getElementById('filtroDia').value;
+  const mes = document.getElementById('filtroMes').value;
+
+  let url = '/api/bipagens?';
+
+  if (dia) {
+    url += `de=${dia}`;
+  }
+
+  if (mes) {
+    const [ano, m] = mes.split('-');
+
+    const primeiroDia = `${ano}-${m}-01`;
+    const ultimoDia = new Date(ano, m, 0).toISOString().split('T')[0];
+
+    url += `de=${primeiroDia}&ate=${ultimoDia}`;
+  }
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: localStorage.getItem('token')
+    }
+  });
+
+  const dados = await res.json();
+
+  renderizarProdutividade(dados);
+}
+
+function limparFiltro() {
+  document.getElementById('filtroDia').value = '';
+  document.getElementById('filtroMes').value = '';
+
+  carregarDadosNormal();
+}
 // ── State ─────────────────────────────────────────────────────
 let S = { colaboradores:[], marketplaces:[], bipagens:[], pendencias:[], retornos:[] };
 let usuarioLogado = null;
