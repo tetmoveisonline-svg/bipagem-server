@@ -543,7 +543,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 </div>
       <!-- INSUMOS DO PEDIDO -->
 <div class="add-form" id="pedido-insumos-box" style="display:none;margin-top:1rem;">
-  <div class="add-form-title" id="pedido-insumos-title">Insumos do pedido</div>
+  <<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;">
+  <div class="add-form-title" id="pedido-insumos-title" style="margin-bottom:0;">Insumos do pedido</div>
+  <button class="btn btn-ghost btn-sm" onclick="fecharInsumosPedido()">Fechar</button>
+</div>
 
   <div class="add-row">
     <div class="field">
@@ -1630,7 +1633,13 @@ async function deletarInsumo(id) {
     toast(e.erro || 'Erro ao excluir insumo.', 'err');
   }
 }
+function fecharInsumosPedido() {
+  pedidoInsumosAtual = null;
+  PEDIDO_INSUMOS = [];
 
+  const box = document.getElementById('pedido-insumos-box');
+  if (box) box.style.display = 'none';
+}
 async function abrirInsumosPedido(id) {
   pedidoInsumosAtual = id;
 
