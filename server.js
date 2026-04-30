@@ -1130,328 +1130,164 @@ app.delete('/api/producao/pedidos/:id/insumos/:itemId', autenticar, async (req, 
     res.status(500).json({ erro: 'Erro ao remover insumo do pedido.' });
   }
 });
-// ── Health check / Railway ────────────────────────────────────
 
-// ── LOTES ─────────────────────────────────────────────────────
+// ── LOTES v2 (multi-produto) ──────────────────────────────────
 async function initLotes() {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS estoque_lotes (
+    CREATE TABLE IF NOT EXISTS pedidos_lote (
       id TEXT PRIMARY KEY,
-      numero INTEGER NOT NULL,
+      numero INTEGER NOT NULL UNIQUE,
+      obs TEXT DEFAULT '',
+      status TEXT DEFAULT 'aberto',
+      usuario_nome TEXT,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS lote_itens (
+      id TEXT PRIMARY KEY,
+      pedido_id TEXT REFERENCES pedidos_lote(id) ON DELETE CASCADE,
+      produto_id TEXT REFERENCES estoque_produtos(id) ON DELETE SET NULL,
       produto_nome TEXT NOT NULL,
       variante TEXT NOT NULL,
-      produto_id TEXT REFERENCES estoque_produtos(id) ON DELETE SET NULL,
-      qtd_pedida INTEGER NOT NULL,
-      qtd_recebida INTEGER DEFAULT 0,
+      qtd_pedida INTEGER NOT NULL DEFAULT 0,
+      qtd_recebida INTEGER NOT NULL DEFAULT 0,
       status TEXT DEFAULT 'aberto',
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS lote_insumos (
+      id TEXT PRIMARY KEY,
+      pedido_id TEXT REFERENCES pedidos_lote(id) ON DELETE CASCADE,
+      insumo_id TEXT REFERENCES insumos(id) ON DELETE SET NULL,
+      insumo_nome TEXT NOT NULL,
+      fornecedor TEXT DEFAULT '',
+      valor_unitario NUMERIC(10,2) DEFAULT 0,
+      quantidade NUMERIC(10,2) DEFAULT 1,
+      valor_total NUMERIC(10,2) DEFAULT 0,
+      data_entrega_fab DATE,
       obs TEXT DEFAULT '',
-      criado_em TIMESTAMPTZ DEFAULT NOW(),
-      usuario_nome TEXT,
-      UNIQUE(numero, produto_nome, variante)
+      criado_em TIMESTAMPTZ DEFAULT NOW()
     );
   `);
 }
 
-// Listar lotes
+function calcStatusPedido(itens) {
+  if (!itens.length) return 'aberto';
+  const todos = itens.every(i => parseInt(i.qtd_recebida) >= parseInt(i.qtd_pedida));
+  if (todos) return 'completo';
+  const algum = itens.some(i => parseInt(i.qtd_recebida) > 0);
+  const algumExc = itens.some(i => parseInt(i.qtd_recebida) > parseInt(i.qtd_pedida));
+  if (algumExc && todos) return 'excedente';
+  if (algumExc) return 'parcial';
+  if (algum) return 'parcial';
+  return 'aberto';
+}
+
+function calcStatusItem(item) {
+  const rec = parseInt(item.qtd_recebida);
+  const ped = parseInt(item.qtd_pedida);
+  if (rec === 0) return 'aberto';
+  if (rec > ped) return 'excedente';
+  if (rec === ped) return 'completo';
+  return 'parcial';
+}
+
+// Listar pedidos/lotes com itens
 app.get('/api/estoque/lotes', autenticar, async (req, res) => {
   try {
-    const { status, produto_id } = req.query;
-    let q = `SELECT l.*, p.saldo_atual FROM estoque_lotes l
-             LEFT JOIN estoque_produtos p ON l.produto_id = p.id WHERE 1=1`;
-    const params = [];
-    if (status)     { q += ` AND l.status = $${params.length+1}`; params.push(status); }
-    if (produto_id) { q += ` AND l.produto_id = $${params.length+1}`; params.push(produto_id); }
-    q += ' ORDER BY l.numero DESC';
-    const result = await pool.query(q, params);
-    res.json(result.rows);
+    const pedidos = await pool.query('SELECT * FROM pedidos_lote ORDER BY numero DESC');
+    const itens   = await pool.query('SELECT * FROM lote_itens ORDER BY produto_nome, variante');
+    const result  = pedidos.rows.map(p => ({
+      ...p,
+      itens: itens.rows.filter(i => i.pedido_id === p.id)
+    }));
+    res.json(result);
   } catch(e) { res.status(500).json({ erro: e.message }); }
 });
 
-// Criar lote
+// Criar pedido/lote com múltiplos itens
 app.post('/api/estoque/lotes', autenticar, async (req, res) => {
   try {
-    const { numero, produto_id, qtd_pedida, obs } = req.body;
-    if (!numero || !produto_id || !qtd_pedida)
-      return res.status(400).json({ erro: 'Número, produto e quantidade pedida são obrigatórios.' });
-    const prod = await pool.query('SELECT * FROM estoque_produtos WHERE id=$1', [produto_id]);
-    if (!prod.rows.length) return res.status(404).json({ erro: 'Produto não encontrado.' });
-    const p = prod.rows[0];
+    const { numero, obs = '', itens = [] } = req.body;
+    if (!numero) return res.status(400).json({ erro: 'Número do lote obrigatório.' });
+    if (!itens.length) return res.status(400).json({ erro: 'Adicione ao menos um produto.' });
 
-    // Calcular qtd já recebida neste lote (movimentos de entrada com este lote)
-    const recRes = await pool.query(`
-      SELECT COALESCE(SUM(quantidade),0)::int as total
-      FROM estoque_movimentos WHERE lote=$1 AND produto_id=$2 AND tipo='entrada'
-    `, [parseInt(numero), produto_id]);
-    const qtd_recebida = recRes.rows[0].total;
-    const status = calcStatus(parseInt(qtd_pedida), qtd_recebida);
+    // Verificar duplicata de número
+    const dup = await pool.query('SELECT id FROM pedidos_lote WHERE numero=$1', [parseInt(numero)]);
+    if (dup.rows.length) return res.status(409).json({ erro: `Lote #${numero} já existe.` });
 
-    const result = await pool.query(`
-      INSERT INTO estoque_lotes (id, numero, produto_nome, variante, produto_id, qtd_pedida, qtd_recebida, status, obs, usuario_nome)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *
-    `, [uid(), parseInt(numero), p.nome, p.variante, produto_id, parseInt(qtd_pedida), qtd_recebida, status, obs||'', req.usuario.nome]);
+    const pedidoId = uid();
+    await pool.query(
+      'INSERT INTO pedidos_lote (id,numero,obs,status,usuario_nome) VALUES ($1,$2,$3,$4,$5)',
+      [pedidoId, parseInt(numero), obs, 'aberto', req.usuario.nome]
+    );
 
-    const lote = result.rows[0];
-    broadcast('estoque:lote_add', lote);
-    res.json(lote);
-  } catch(e) {
-    if (e.code==='23505') return res.status(409).json({ erro: 'Lote já cadastrado para este produto/variante.' });
-    res.status(500).json({ erro: e.message });
-  }
-});
+    const itemsCreated = [];
+    for (const item of itens) {
+      const prod = await pool.query('SELECT * FROM estoque_produtos WHERE id=$1', [item.produto_id]);
+      if (!prod.rows.length) continue;
+      const p = prod.rows[0];
+      const itemId = uid();
+      const row = await pool.query(
+        'INSERT INTO lote_itens (id,pedido_id,produto_id,produto_nome,variante,qtd_pedida,qtd_recebida,status) VALUES ($1,$2,$3,$4,$5,$6,0,$7) RETURNING *',
+        [itemId, pedidoId, item.produto_id, p.nome, p.variante, parseInt(item.qtd_pedida), 'aberto']
+      );
+      itemsCreated.push(row.rows[0]);
+    }
 
-// Atualizar lote
-app.put('/api/estoque/lotes/:id', autenticar, async (req, res) => {
-  try {
-    const { qtd_pedida, obs } = req.body;
-    const lote = await pool.query('SELECT * FROM estoque_lotes WHERE id=$1', [req.params.id]);
-    if (!lote.rows.length) return res.status(404).json({ erro: 'Lote não encontrado.' });
-    const l = lote.rows[0];
-    const novaQtd = parseInt(qtd_pedida) || l.qtd_pedida;
-    const status = calcStatus(novaQtd, l.qtd_recebida);
-    const result = await pool.query(`
-      UPDATE estoque_lotes SET qtd_pedida=$1, obs=$2, status=$3 WHERE id=$4 RETURNING *
-    `, [novaQtd, obs!==undefined?obs:l.obs, status, req.params.id]);
-    broadcast('estoque:lote_update', result.rows[0]);
-    res.json(result.rows[0]);
+    const pedido = await pool.query('SELECT * FROM pedidos_lote WHERE id=$1', [pedidoId]);
+    const full = { ...pedido.rows[0], itens: itemsCreated };
+    broadcast('estoque:lote_add', full);
+    res.json(full);
   } catch(e) { res.status(500).json({ erro: e.message }); }
 });
 
 // Deletar lote
 app.delete('/api/estoque/lotes/:id', autenticar, apenasAdmin, async (req, res) => {
   try {
-    await pool.query('DELETE FROM estoque_lotes WHERE id=$1', [req.params.id]);
+    await pool.query('DELETE FROM pedidos_lote WHERE id=$1', [req.params.id]);
     broadcast('estoque:lote_del', { id: req.params.id });
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ erro: e.message }); }
 });
 
-// Recalcular lotes ao registrar movimento
+// Recalcular lote ao registrar movimento
 async function recalcularLotes(produto_id, lote_numero) {
   if (!lote_numero) return;
   try {
+    const pedido = await pool.query('SELECT * FROM pedidos_lote WHERE numero=$1', [parseInt(lote_numero)]);
+    if (!pedido.rows.length) return;
+    const p = pedido.rows[0];
+
+    const item = await pool.query(
+      'SELECT * FROM lote_itens WHERE pedido_id=$1 AND produto_id=$2',
+      [p.id, produto_id]
+    );
+    if (!item.rows.length) return;
+    const it = item.rows[0];
+
+    // Somar entradas deste produto neste lote
     const recRes = await pool.query(`
       SELECT COALESCE(SUM(quantidade),0)::int as total
       FROM estoque_movimentos WHERE lote=$1 AND produto_id=$2 AND tipo='entrada'
-    `, [lote_numero, produto_id]);
+    `, [parseInt(lote_numero), produto_id]);
     const qtd_recebida = recRes.rows[0].total;
-    const loteRow = await pool.query(
-      'SELECT * FROM estoque_lotes WHERE numero=$1 AND produto_id=$2',
-      [lote_numero, produto_id]
+    const statusItem = calcStatusItem({ qtd_pedida: it.qtd_pedida, qtd_recebida });
+
+    await pool.query(
+      'UPDATE lote_itens SET qtd_recebida=$1, status=$2 WHERE id=$3',
+      [qtd_recebida, statusItem, it.id]
     );
-    if (!loteRow.rows.length) return;
-    const l = loteRow.rows[0];
-    const status = calcStatus(l.qtd_pedida, qtd_recebida);
-    const updated = await pool.query(`
-      UPDATE estoque_lotes SET qtd_recebida=$1, status=$2 WHERE id=$3 RETURNING *
-    `, [qtd_recebida, status, l.id]);
-    broadcast('estoque:lote_update', updated.rows[0]);
+
+    // Recalcular status geral do pedido
+    const allItens = await pool.query('SELECT * FROM lote_itens WHERE pedido_id=$1', [p.id]);
+    const statusPedido = calcStatusPedido(allItens.rows);
+    await pool.query('UPDATE pedidos_lote SET status=$1 WHERE id=$2', [statusPedido, p.id]);
+
+    const updated = await pool.query('SELECT * FROM pedidos_lote WHERE id=$1', [p.id]);
+    broadcast('estoque:lote_update', { ...updated.rows[0], itens: allItens.rows });
   } catch(e) { console.error('recalcularLotes:', e.message); }
 }
-
-function calcStatus(pedida, recebida) {
-  if (recebida === 0)          return 'aberto';
-  if (recebida < pedida)       return 'parcial';
-  if (recebida === pedida)     return 'completo';
-  return 'excedente';
-}
-
-
-// ── MÓDULO DE ESTOQUE ─────────────────────────────────────────
-
-// Criar tabelas de estoque
-async function initEstoque() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS estoque_produtos (
-      id TEXT PRIMARY KEY,
-      nome TEXT NOT NULL,
-      variante TEXT NOT NULL,
-      saldo_atual INTEGER DEFAULT 0,
-      criado_em TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(nome, variante)
-    );
-
-    CREATE TABLE IF NOT EXISTS estoque_movimentos (
-      id TEXT PRIMARY KEY,
-      produto_id TEXT REFERENCES estoque_produtos(id) ON DELETE CASCADE,
-      produto_nome TEXT NOT NULL,
-      variante TEXT NOT NULL,
-      tipo TEXT NOT NULL CHECK(tipo IN ('entrada','saida')),
-      quantidade INTEGER NOT NULL,
-      saldo_apos INTEGER NOT NULL,
-      lote INTEGER,
-      obs TEXT DEFAULT '',
-      data TEXT NOT NULL,
-      data_iso DATE NOT NULL,
-      usuario_nome TEXT,
-      criado_em TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-
-  // Seed produtos
-  const produtosBase = [
-    { nome: "COMBO E&A (DULCE)",          variante: "BRANCO" },
-    { nome: "COMBO E&A (DULCE)",          variante: "OFF WHITE" },
-    { nome: "COMBO E&A (DULCE)",          variante: "NATURE PRETO" },
-    { nome: "BALCÃO COOKTOP FLÓRIDA",     variante: "BRANCO" },
-    { nome: "BALCÃO COOKTOP FLÓRIDA",     variante: "PRETO" },
-    { nome: "BALCÃO COOKTOP NEW (MONACO)",variante: "BRANCO" },
-    { nome: "BALCÃO COOKTOP NEW (MONACO)",variante: "PRETO" },
-    { nome: "COMBO 2 MÓDULOS",            variante: "BRANCO" },
-    { nome: "COMBO 2 MÓDULOS",            variante: "PRETO / NATURE" },
-    { nome: "COMBO 2 MÓDULOS",            variante: "NATURE / OFF" },
-    { nome: "PENTEADEIRA NEW",            variante: "BRANCA" },
-    { nome: "PENTEADEIRA NEW",            variante: "OFF / NATURE" },
-    { nome: "PENTEADEIRA NEW",            variante: "PRETA / NATURE" },
-  ];
-
-  for (const p of produtosBase) {
-    await pool.query(`
-      INSERT INTO estoque_produtos (id, nome, variante, saldo_atual)
-      VALUES ($1, $2, $3, 0)
-      ON CONFLICT (nome, variante) DO NOTHING
-    `, [uid(), p.nome, p.variante]);
-  }
-
-  // Seed movimentos da planilha
-  const movSeed = [{"data": "20/10/2025", "data_iso": "2025-10-20", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 300, "saida": 0, "saldo": 300, "lote": 1896, "obs": ""}, {"data": "20/10/2025", "data_iso": "2025-10-20", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 700, "saida": 0, "saldo": 700, "lote": 1896, "obs": ""}, {"data": "30/10/2025", "data_iso": "2025-10-30", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 350, "saida": 0, "saldo": 350, "lote": 1914, "obs": ""}, {"data": "30/10/2025", "data_iso": "2025-10-30", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 350, "saida": 0, "saldo": 350, "lote": 1914, "obs": ""}, {"data": "30/10/2025", "data_iso": "2025-10-30", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 350, "saida": 0, "saldo": 350, "lote": 1914, "obs": ""}, {"data": "10/11/2025", "data_iso": "2025-11-10", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 66, "saldo": 284, "lote": 1914, "obs": ""}, {"data": "10/11/2025", "data_iso": "2025-11-10", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 74, "saldo": 276, "lote": 1914, "obs": ""}, {"data": "10/11/2025", "data_iso": "2025-11-10", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 69, "saldo": 281, "lote": 1914, "obs": ""}, {"data": "13/11/2025", "data_iso": "2025-11-13", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 66, "saldo": 218, "lote": 1914, "obs": ""}, {"data": "13/11/2025", "data_iso": "2025-11-13", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 66, "saldo": 210, "lote": 1914, "obs": ""}, {"data": "13/11/2025", "data_iso": "2025-11-13", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 66, "saldo": 215, "lote": 1914, "obs": ""}, {"data": "18/11/2025", "data_iso": "2025-11-18", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 99, "saldo": 119, "lote": 1914, "obs": ""}, {"data": "24/11/2025", "data_iso": "2025-11-24", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 119, "saldo": 0, "lote": 1914, "obs": ""}, {"data": "24/11/2025", "data_iso": "2025-11-24", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 132, "saldo": 78, "lote": 1914, "obs": ""}, {"data": "25/11/2025", "data_iso": "2025-11-25", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 700, "saida": 0, "saldo": 700, "lote": 1971, "obs": ""}, {"data": "25/11/2025", "data_iso": "2025-11-25", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 300, "saida": 0, "saldo": 378, "lote": 1971, "obs": ""}, {"data": "26/11/2025", "data_iso": "2025-11-26", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 66, "saldo": 312, "lote": 1914, "obs": ""}, {"data": "28/11/2025", "data_iso": "2025-11-28", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 150, "saldo": 550, "lote": 1971, "obs": ""}, {"data": "28/11/2025", "data_iso": "2025-11-28", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 60, "saldo": 252, "lote": 1971, "obs": ""}, {"data": "28/11/2025", "data_iso": "2025-11-28", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 132, "saldo": 83, "lote": 1914, "obs": ""}, {"data": "28/11/2025", "data_iso": "2025-11-28", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 100, "saida": 0, "saldo": 100, "lote": 1982, "obs": ""}, {"data": "28/11/2025", "data_iso": "2025-11-28", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 100, "saida": 0, "saldo": 100, "lote": 1982, "obs": ""}, {"data": "28/11/2025", "data_iso": "2025-11-28", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 100, "saida": 0, "saldo": 100, "lote": 1982, "obs": ""}, {"data": "01/12/2025", "data_iso": "2025-12-01", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 264, "saldo": 286, "lote": 1971, "obs": ""}, {"data": "02/12/2025", "data_iso": "2025-12-02", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 66, "saldo": 220, "lote": 1971, "obs": ""}, {"data": "04/12/2025", "data_iso": "2025-12-04", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 159, "saldo": 61, "lote": 1971, "obs": ""}, {"data": "04/12/2025", "data_iso": "2025-12-04", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 159, "saldo": 93, "lote": 1971, "obs": ""}, {"data": "08/12/2025", "data_iso": "2025-12-08", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 150, "saida": 0, "saldo": 150, "lote": 1992, "obs": ""}, {"data": "08/12/2025", "data_iso": "2025-12-08", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 150, "saida": 0, "saldo": 150, "lote": 1992, "obs": ""}, {"data": "09/12/2025", "data_iso": "2025-12-09", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 1000, "saida": 0, "saldo": 1061, "lote": 1996, "obs": ""}, {"data": "09/12/2025", "data_iso": "2025-12-09", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 300, "saida": 0, "saldo": 393, "lote": 1996, "obs": ""}, {"data": "09/12/2025", "data_iso": "2025-12-09", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 300, "saida": 0, "saldo": 383, "lote": 1996, "obs": ""}, {"data": "10/12/2025", "data_iso": "2025-12-10", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 800, "saida": 0, "saldo": 1861, "lote": 1997, "obs": ""}, {"data": "10/12/2025", "data_iso": "2025-12-10", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 550, "saida": 0, "saldo": 943, "lote": 1997, "obs": ""}, {"data": "10/12/2025", "data_iso": "2025-12-10", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 250, "saida": 0, "saldo": 633, "lote": 1997, "obs": ""}, {"data": "12/12/2025", "data_iso": "2025-12-12", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 30, "saldo": 913, "lote": 1996, "obs": ""}, {"data": "12/12/2025", "data_iso": "2025-12-12", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 66, "saldo": 567, "lote": 1996, "obs": ""}, {"data": "12/12/2025", "data_iso": "2025-12-12", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 71, "saldo": 29, "lote": null, "obs": ""}, {"data": "12/12/2025", "data_iso": "2025-12-12", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 74, "saldo": 26, "lote": null, "obs": ""}, {"data": "12/12/2025", "data_iso": "2025-12-12", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 48, "saldo": 52, "lote": null, "obs": ""}, {"data": "15/12/2025", "data_iso": "2025-12-15", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 597, "saldo": 1264, "lote": 1996, "obs": ""}, {"data": "15/12/2025", "data_iso": "2025-12-15", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 90, "saldo": 823, "lote": 1996, "obs": ""}, {"data": "16/12/2025", "data_iso": "2025-12-16", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 90, "saldo": 1174, "lote": 1996, "obs": ""}, {"data": "16/12/2025", "data_iso": "2025-12-16", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 150, "saldo": 673, "lote": 1996, "obs": ""}, {"data": "16/12/2025", "data_iso": "2025-12-16", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 45, "saldo": 655, "lote": 1896, "obs": ""}, {"data": "16/12/2025", "data_iso": "2025-12-16", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 66, "saldo": 84, "lote": 1992, "obs": ""}, {"data": "16/12/2025", "data_iso": "2025-12-16", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 110, "saldo": 40, "lote": 1992, "obs": ""}, {"data": "17/12/2025", "data_iso": "2025-12-17", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 240, "saldo": 934, "lote": 1996, "obs": ""}, {"data": "17/12/2025", "data_iso": "2025-12-17", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 29, "saldo": 644, "lote": 1996, "obs": ""}, {"data": "18/12/2025", "data_iso": "2025-12-18", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 44, "saldo": 890, "lote": 1996, "obs": ""}, {"data": "18/12/2025", "data_iso": "2025-12-18", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 60, "saldo": 507, "lote": 1996, "obs": ""}, {"data": "18/12/2025", "data_iso": "2025-12-18", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 135, "saldo": 165, "lote": 1896, "obs": ""}, {"data": "18/12/2025", "data_iso": "2025-12-18", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 270, "saldo": 385, "lote": 1896, "obs": ""}, {"data": "18/12/2025", "data_iso": "2025-12-18", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 44, "saldo": 40, "lote": 1992, "obs": ""}, {"data": "19/12/2025", "data_iso": "2025-12-19", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 800, "saida": 0, "saldo": 1690, "lote": 2031, "obs": ""}, {"data": "20/12/2025", "data_iso": "2025-12-20", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 180, "saldo": 1510, "lote": 1997, "obs": ""}, {"data": "21/12/2025", "data_iso": "2025-12-21", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 32, "saldo": 8, "lote": 1992, "obs": ""}, {"data": "21/12/2025", "data_iso": "2025-12-21", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 212, "saldo": -172, "lote": 1992, "obs": ""}, {"data": "22/12/2025", "data_iso": "2025-12-22", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 182, "saldo": 203, "lote": 1896, "obs": ""}, {"data": "22/12/2025", "data_iso": "2025-12-22", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 400, "saida": 0, "saldo": 408, "lote": 1998, "obs": ""}, {"data": "22/12/2025", "data_iso": "2025-12-22", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 600, "saida": 0, "saldo": 428, "lote": 1998, "obs": ""}, {"data": "23/12/2025", "data_iso": "2025-12-23", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 60, "saldo": 1450, "lote": 1997, "obs": ""}, {"data": "23/12/2025", "data_iso": "2025-12-23", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 240, "saldo": 404, "lote": 1997, "obs": ""}, {"data": "23/12/2025", "data_iso": "2025-12-23", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 174, "saldo": 333, "lote": 1996, "obs": ""}, {"data": "23/12/2025", "data_iso": "2025-12-23", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 107, "saldo": 301, "lote": 1998, "obs": ""}, {"data": "23/12/2025", "data_iso": "2025-12-23", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 320, "saldo": 108, "lote": 1998, "obs": ""}, {"data": "24/12/2025", "data_iso": "2025-12-24", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 40, "saldo": 293, "lote": 1997, "obs": ""}, {"data": "26/12/2025", "data_iso": "2025-12-26", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 550, "saida": 0, "saldo": 954, "lote": 2037, "obs": ""}, {"data": "26/12/2025", "data_iso": "2025-12-26", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 250, "saida": 0, "saldo": 543, "lote": 2037, "obs": ""}, {"data": "28/12/2025", "data_iso": "2025-12-28", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 540, "saldo": 910, "lote": 1997, "obs": ""}, {"data": "29/12/2025", "data_iso": "2025-12-29", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 30, "saldo": 880, "lote": 1971, "obs": ""}, {"data": "29/12/2025", "data_iso": "2025-12-29", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 306, "saldo": 648, "lote": 1997, "obs": ""}, {"data": "29/12/2025", "data_iso": "2025-12-29", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 60, "saldo": 483, "lote": 1997, "obs": ""}, {"data": "30/12/2025", "data_iso": "2025-12-30", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 22, "saldo": 858, "lote": 1996, "obs": ""}, {"data": "30/12/2025", "data_iso": "2025-12-30", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 69, "saldo": 414, "lote": 1914, "obs": ""}, {"data": "30/12/2025", "data_iso": "2025-12-30", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 155, "saldo": 10, "lote": 1896, "obs": ""}, {"data": "30/12/2025", "data_iso": "2025-12-30", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 194, "saldo": 9, "lote": 1896, "obs": ""}, {"data": "30/12/2025", "data_iso": "2025-12-30", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 5, "lote": 1982, "obs": ""}, {"data": "30/12/2025", "data_iso": "2025-12-30", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 24, "saldo": 2, "lote": 1982, "obs": ""}, {"data": "30/12/2025", "data_iso": "2025-12-30", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 43, "saldo": 9, "lote": 1982, "obs": ""}, {"data": "08/01/2026", "data_iso": "2026-01-08", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 381, "saldo": 477, "lote": 2023, "obs": ""}, {"data": "08/01/2026", "data_iso": "2026-01-08", "produto": "PENTEADEIRA NEW", "variante": "BRANCA", "entrada": 400, "saida": 0, "saldo": 400, "lote": 2026, "obs": ""}, {"data": "08/01/2026", "data_iso": "2026-01-08", "produto": "PENTEADEIRA NEW", "variante": "OFF / NATURE", "entrada": 1000, "saida": 0, "saldo": 1000, "lote": 2026, "obs": ""}, {"data": "08/01/2026", "data_iso": "2026-01-08", "produto": "PENTEADEIRA NEW", "variante": "PRETA / NATURE", "entrada": 400, "saida": 0, "saldo": 400, "lote": 2026, "obs": ""}, {"data": "09/01/2026", "data_iso": "2026-01-09", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 600, "saida": 215, "saldo": 862, "lote": 2023, "obs": ""}, {"data": "09/01/2026", "data_iso": "2026-01-09", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 200, "saida": 198, "saldo": 650, "lote": 2023, "obs": ""}, {"data": "09/01/2026", "data_iso": "2026-01-09", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 200, "saida": 198, "saldo": 416, "lote": 2023, "obs": ""}, {"data": "09/01/2026", "data_iso": "2026-01-09", "produto": "PENTEADEIRA NEW", "variante": "BRANCA", "entrada": 0, "saida": 240, "saldo": 160, "lote": 2026, "obs": ""}, {"data": "12/01/2026", "data_iso": "2026-01-12", "produto": "PENTEADEIRA NEW", "variante": "BRANCA", "entrada": 0, "saida": 120, "saldo": 40, "lote": 2026, "obs": ""}, {"data": "12/01/2026", "data_iso": "2026-01-12", "produto": "PENTEADEIRA NEW", "variante": "OFF / NATURE", "entrada": 0, "saida": 880, "saldo": 120, "lote": 2026, "obs": ""}, {"data": "12/01/2026", "data_iso": "2026-01-12", "produto": "PENTEADEIRA NEW", "variante": "PRETA / NATURE", "entrada": 0, "saida": 240, "saldo": 160, "lote": 2026, "obs": ""}, {"data": "14/01/2026", "data_iso": "2026-01-14", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 144, "saldo": -139, "lote": 2022, "obs": ""}, {"data": "14/01/2026", "data_iso": "2026-01-14", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 96, "saldo": -87, "lote": 2022, "obs": ""}, {"data": "15/01/2026", "data_iso": "2026-01-15", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 600, "saida": 0, "saldo": 1462, "lote": 2024, "obs": ""}, {"data": "15/01/2026", "data_iso": "2026-01-15", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 26, "saida": 0, "saldo": 676, "lote": 2082, "obs": ""}, {"data": "15/01/2026", "data_iso": "2026-01-15", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 200, "saida": 0, "saldo": 616, "lote": 2024, "obs": ""}, {"data": "15/01/2026", "data_iso": "2026-01-15", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 400, "saida": 144, "saldo": 117, "lote": 2022, "obs": ""}, {"data": "15/01/2026", "data_iso": "2026-01-15", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 300, "saida": 0, "saldo": 302, "lote": null, "obs": ""}, {"data": "15/01/2026", "data_iso": "2026-01-15", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 300, "saida": 192, "saldo": 21, "lote": 2022, "obs": ""}, {"data": "16/01/2026", "data_iso": "2026-01-16", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 200, "saida": 0, "saldo": 876, "lote": 2024, "obs": ""}, {"data": "16/01/2026", "data_iso": "2026-01-16", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 264, "saldo": 38, "lote": 2022, "obs": ""}, {"data": "16/01/2026", "data_iso": "2026-01-16", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 72, "saldo": -51, "lote": 2022, "obs": ""}, {"data": "19/01/2026", "data_iso": "2026-01-19", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 168, "saldo": 1294, "lote": 2024, "obs": ""}, {"data": "19/01/2026", "data_iso": "2026-01-19", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 120, "saldo": 756, "lote": 2024, "obs": ""}, {"data": "20/01/2026", "data_iso": "2026-01-20", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 600, "saida": 192, "saldo": 1702, "lote": 2025, "obs": ""}, {"data": "20/01/2026", "data_iso": "2026-01-20", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 200, "saida": 0, "saldo": 956, "lote": 2025, "obs": ""}, {"data": "20/01/2026", "data_iso": "2026-01-20", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 200, "saida": 0, "saldo": 816, "lote": 2025, "obs": ""}, {"data": "20/01/2026", "data_iso": "2026-01-20", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 1, "saldo": 107, "lote": 1992, "obs": ""}, {"data": "21/01/2026", "data_iso": "2026-01-21", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 26, "saldo": 930, "lote": 2085, "obs": ""}, {"data": "21/01/2026", "data_iso": "2026-01-21", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 24, "saldo": 792, "lote": 1997, "obs": ""}, {"data": "22/01/2026", "data_iso": "2026-01-22", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 74, "saldo": 856, "lote": 2024, "obs": ""}, {"data": "23/01/2026", "data_iso": "2026-01-23", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 96, "saldo": 1606, "lote": 2025, "obs": ""}, {"data": "23/01/2026", "data_iso": "2026-01-23", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 72, "saldo": 784, "lote": 2025, "obs": ""}, {"data": "27/01/2026", "data_iso": "2026-01-27", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 400, "saida": 0, "saldo": 701, "lote": 2021, "obs": ""}, {"data": "27/01/2026", "data_iso": "2026-01-27", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 600, "saida": 0, "saldo": 707, "lote": 2021, "obs": ""}, {"data": "27/01/2026", "data_iso": "2026-01-27", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 400, "saida": 0, "saldo": 517, "lote": 2049, "obs": ""}, {"data": "29/01/2026", "data_iso": "2026-01-29", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 48, "saldo": 1558, "lote": 2025, "obs": ""}, {"data": "29/01/2026", "data_iso": "2026-01-29", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 48, "saldo": 736, "lote": 2025, "obs": ""}, {"data": "29/01/2026", "data_iso": "2026-01-29", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 120, "saldo": 397, "lote": 2049, "obs": ""}, {"data": "29/01/2026", "data_iso": "2026-01-29", "produto": "PENTEADEIRA NEW", "variante": "BRANCA", "entrada": 0, "saida": 37, "saldo": 3, "lote": 2026, "obs": ""}, {"data": "29/01/2026", "data_iso": "2026-01-29", "produto": "PENTEADEIRA NEW", "variante": "PRETA / NATURE", "entrada": 0, "saida": 34, "saldo": 126, "lote": 2026, "obs": ""}, {"data": "02/02/2026", "data_iso": "2026-02-02", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 72, "saldo": 629, "lote": 2021, "obs": ""}, {"data": "02/02/2026", "data_iso": "2026-02-02", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 144, "saldo": 563, "lote": 2021, "obs": ""}, {"data": "04/02/2026", "data_iso": "2026-02-04", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 500, "saida": 132, "saldo": 1926, "lote": 2086, "obs": ""}, {"data": "04/02/2026", "data_iso": "2026-02-04", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 200, "saida": 198, "saldo": 738, "lote": 2086, "obs": ""}, {"data": "04/02/2026", "data_iso": "2026-02-04", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 200, "saida": 66, "saldo": 926, "lote": 2086, "obs": ""}, {"data": "04/02/2026", "data_iso": "2026-02-04", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 200, "saida": 0, "saldo": 829, "lote": 2096, "obs": ""}, {"data": "04/02/2026", "data_iso": "2026-02-04", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 300, "saida": 0, "saldo": 863, "lote": 2096, "obs": ""}, {"data": "05/02/2026", "data_iso": "2026-02-05", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 132, "saldo": 1794, "lote": 2086, "obs": ""}, {"data": "05/02/2026", "data_iso": "2026-02-05", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 66, "saldo": 672, "lote": 2086, "obs": ""}, {"data": "06/02/2026", "data_iso": "2026-02-06", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 165, "saldo": 1629, "lote": 2086, "obs": ""}, {"data": "06/02/2026", "data_iso": "2026-02-06", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 144, "saldo": 685, "lote": 2096, "obs": ""}, {"data": "07/02/2026", "data_iso": "2026-02-07", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 1605, "lote": 2025, "obs": ""}, {"data": "07/02/2026", "data_iso": "2026-02-07", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 661, "lote": 2021, "obs": ""}, {"data": "09/02/2026", "data_iso": "2026-02-09", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 96, "saldo": 1509, "lote": 2025, "obs": ""}, {"data": "09/02/2026", "data_iso": "2026-02-09", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 300, "saida": 0, "saldo": 972, "lote": 2097, "obs": ""}, {"data": "09/02/2026", "data_iso": "2026-02-09", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 2, "saldo": 36, "lote": 2022, "obs": ""}, {"data": "09/02/2026", "data_iso": "2026-02-09", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 22, "saldo": -73, "lote": 2022, "obs": ""}, {"data": "10/02/2026", "data_iso": "2026-02-10", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 500, "saida": 10, "saldo": 1999, "lote": 2097, "obs": ""}, {"data": "10/02/2026", "data_iso": "2026-02-10", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 69, "saldo": 903, "lote": 2025, "obs": ""}, {"data": "10/02/2026", "data_iso": "2026-02-10", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 200, "saida": 0, "saldo": 1126, "lote": 2097, "obs": ""}, {"data": "10/02/2026", "data_iso": "2026-02-10", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 263, "saldo": 134, "lote": 2049, "obs": ""}, {"data": "11/02/2026", "data_iso": "2026-02-11", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 1975, "lote": 2024, "obs": ""}, {"data": "11/02/2026", "data_iso": "2026-02-11", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 3, "saldo": 900, "lote": 2024, "obs": ""}, {"data": "12/02/2026", "data_iso": "2026-02-12", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 120, "saldo": 1855, "lote": 2025, "obs": ""}, {"data": "12/02/2026", "data_iso": "2026-02-12", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 33, "saldo": 867, "lote": 2086, "obs": ""}, {"data": "12/02/2026", "data_iso": "2026-02-12", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 600, "saida": 0, "saldo": 734, "lote": 2078, "obs": ""}, {"data": "13/02/2026", "data_iso": "2026-02-13", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 47, "saldo": 1808, "lote": 2086, "obs": ""}, {"data": "13/02/2026", "data_iso": "2026-02-13", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 500, "saida": 0, "saldo": 510, "lote": 2090, "obs": ""}, {"data": "13/02/2026", "data_iso": "2026-02-13", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 500, "saida": 0, "saldo": 509, "lote": 2090, "obs": ""}, {"data": "13/02/2026", "data_iso": "2026-02-13", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 336, "saldo": 398, "lote": 2078, "obs": ""}, {"data": "14/02/2026", "data_iso": "2026-02-14", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 270, "saldo": 1538, "lote": 2097, "obs": ""}, {"data": "15/02/2026", "data_iso": "2026-02-15", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 192, "saldo": 1346, "lote": 2024, "obs": ""}, {"data": "17/02/2026", "data_iso": "2026-02-17", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 136, "saldo": 374, "lote": 2090, "obs": ""}, {"data": "17/02/2026", "data_iso": "2026-02-17", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 150, "saldo": 511, "lote": 2021, "obs": ""}, {"data": "17/02/2026", "data_iso": "2026-02-17", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 144, "saldo": 254, "lote": 2078, "obs": ""}, {"data": "18/02/2026", "data_iso": "2026-02-18", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 120, "saldo": 1226, "lote": 2097, "obs": ""}, {"data": "18/02/2026", "data_iso": "2026-02-18", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 150, "saldo": 717, "lote": 2097, "obs": ""}, {"data": "18/02/2026", "data_iso": "2026-02-18", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 49, "saldo": 462, "lote": 2021, "obs": ""}, {"data": "18/02/2026", "data_iso": "2026-02-18", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 600, "saida": 0, "saldo": 854, "lote": 2100, "obs": ""}, {"data": "18/02/2026", "data_iso": "2026-02-18", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 200, "saida": 0, "saldo": 236, "lote": 2100, "obs": ""}, {"data": "18/02/2026", "data_iso": "2026-02-18", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 200, "saida": 0, "saldo": 127, "lote": 2100, "obs": ""}, {"data": "18/02/2026", "data_iso": "2026-02-18", "produto": "PENTEADEIRA NEW", "variante": "OFF / NATURE", "entrada": 0, "saida": 60, "saldo": 60, "lote": 2026, "obs": ""}, {"data": "19/02/2026", "data_iso": "2026-02-19", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 500, "saida": 0, "saldo": 1726, "lote": 2099, "obs": ""}, {"data": "19/02/2026", "data_iso": "2026-02-19", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 300, "saida": 120, "saldo": 897, "lote": 2099, "obs": ""}, {"data": "19/02/2026", "data_iso": "2026-02-19", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 200, "saida": 0, "saldo": 1326, "lote": 2099, "obs": ""}, {"data": "19/02/2026", "data_iso": "2026-02-19", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 48, "saldo": 806, "lote": 2078, "obs": ""}, {"data": "19/02/2026", "data_iso": "2026-02-19", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 72, "saldo": 164, "lote": 2100, "obs": ""}, {"data": "19/02/2026", "data_iso": "2026-02-19", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 192, "saldo": -65, "lote": 2100, "obs": ""}, {"data": "20/02/2026", "data_iso": "2026-02-20", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 270, "saldo": 1456, "lote": 2099, "obs": ""}, {"data": "20/02/2026", "data_iso": "2026-02-20", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 150, "saldo": 747, "lote": 2097, "obs": ""}, {"data": "20/02/2026", "data_iso": "2026-02-20", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 68, "saldo": 441, "lote": 2090, "obs": ""}, {"data": "20/02/2026", "data_iso": "2026-02-20", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 49, "saldo": 413, "lote": 2021, "obs": ""}, {"data": "20/02/2026", "data_iso": "2026-02-20", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 24, "saldo": 839, "lote": 2021, "obs": ""}, {"data": "20/02/2026", "data_iso": "2026-02-20", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 782, "lote": 2100, "obs": ""}, {"data": "20/02/2026", "data_iso": "2026-02-20", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 21, "saldo": -86, "lote": 2022, "obs": ""}, {"data": "20/02/2026", "data_iso": "2026-02-20", "produto": "PENTEADEIRA NEW", "variante": "OFF / NATURE", "entrada": 0, "saida": 49, "saldo": 11, "lote": 2026, "obs": ""}, {"data": "21/02/2026", "data_iso": "2026-02-21", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 60, "saldo": 1396, "lote": 2097, "obs": ""}, {"data": "21/02/2026", "data_iso": "2026-02-21", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 136, "saldo": 747, "lote": 2099, "obs": ""}, {"data": "21/02/2026", "data_iso": "2026-02-21", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 96, "saldo": 686, "lote": 2100, "obs": ""}, {"data": "21/02/2026", "data_iso": "2026-02-21", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 48, "saldo": 116, "lote": 2100, "obs": ""}, {"data": "21/02/2026", "data_iso": "2026-02-21", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 7, "saldo": -93, "lote": 2100, "obs": ""}, {"data": "22/02/2026", "data_iso": "2026-02-22", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 72, "saldo": 1324, "lote": 2024, "obs": ""}, {"data": "22/02/2026", "data_iso": "2026-02-22", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 216, "saldo": 470, "lote": 2100, "obs": ""}, {"data": "23/02/2026", "data_iso": "2026-02-23", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 68, "saldo": 306, "lote": 2090, "obs": ""}, {"data": "23/02/2026", "data_iso": "2026-02-23", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 68, "saldo": 373, "lote": 2090, "obs": ""}, {"data": "25/02/2026", "data_iso": "2026-02-25", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 102, "saldo": 271, "lote": 2090, "obs": ""}, {"data": "25/02/2026", "data_iso": "2026-02-25", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 389, "lote": 2096, "obs": ""}, {"data": "25/02/2026", "data_iso": "2026-02-25", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 24, "saldo": 815, "lote": 2096, "obs": ""}, {"data": "25/02/2026", "data_iso": "2026-02-25", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 24, "saldo": 92, "lote": 2100, "obs": ""}, {"data": "26/02/2026", "data_iso": "2026-02-26", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 48, "saldo": 341, "lote": 2021, "obs": ""}, {"data": "26/02/2026", "data_iso": "2026-02-26", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 72, "saldo": 743, "lote": 2021, "obs": ""}, {"data": "26/02/2026", "data_iso": "2026-02-26", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 446, "lote": 2100, "obs": ""}, {"data": "26/02/2026", "data_iso": "2026-02-26", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 22, "saldo": 70, "lote": 2022, "obs": ""}, {"data": "27/02/2026", "data_iso": "2026-02-27", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 194, "saldo": 1130, "lote": 2099, "obs": ""}, {"data": "27/02/2026", "data_iso": "2026-02-27", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 60, "saldo": 551, "lote": 2099, "obs": ""}, {"data": "27/02/2026", "data_iso": "2026-02-27", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 13, "saldo": 328, "lote": 1998, "obs": ""}, {"data": "27/02/2026", "data_iso": "2026-02-27", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 77, "saldo": 666, "lote": 2096, "obs": ""}, {"data": "27/02/2026", "data_iso": "2026-02-27", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 24, "saldo": 46, "lote": 2100, "obs": ""}, {"data": "28/02/2026", "data_iso": "2026-02-28", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 90, "saldo": 1040, "lote": 2024, "obs": ""}, {"data": "28/02/2026", "data_iso": "2026-02-28", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 304, "lote": 2096, "obs": ""}, {"data": "28/02/2026", "data_iso": "2026-02-28", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 139, "saldo": 527, "lote": 2021, "obs": ""}, {"data": "01/03/2026", "data_iso": "2026-03-01", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 46, "saldo": 994, "lote": 2097, "obs": ""}, {"data": "01/03/2026", "data_iso": "2026-03-01", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 9, "saldo": 295, "lote": 2021, "obs": ""}, {"data": "02/03/2026", "data_iso": "2026-03-02", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 500, "saida": 0, "saldo": 1494, "lote": 2102, "obs": ""}, {"data": "02/03/2026", "data_iso": "2026-03-02", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 300, "saida": 0, "saldo": 851, "lote": 2102, "obs": ""}, {"data": "02/03/2026", "data_iso": "2026-03-02", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 200, "saida": 0, "saldo": 1526, "lote": 2102, "obs": ""}, {"data": "02/03/2026", "data_iso": "2026-03-02", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 238, "saldo": 33, "lote": 2090, "obs": ""}, {"data": "02/03/2026", "data_iso": "2026-03-02", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 250, "saida": 0, "saldo": 545, "lote": 2101, "obs": ""}, {"data": "02/03/2026", "data_iso": "2026-03-02", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 250, "saida": 0, "saldo": 777, "lote": 2101, "obs": ""}, {"data": "03/03/2026", "data_iso": "2026-03-03", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 210, "saldo": 1284, "lote": 2102, "obs": ""}, {"data": "03/03/2026", "data_iso": "2026-03-03", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 270, "saldo": 581, "lote": 2102, "obs": ""}, {"data": "03/03/2026", "data_iso": "2026-03-03", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 242, "saldo": 303, "lote": 2101, "obs": ""}, {"data": "03/03/2026", "data_iso": "2026-03-03", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 216, "saldo": 230, "lote": 2100, "obs": ""}, {"data": "04/03/2026", "data_iso": "2026-03-04", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 240, "saldo": 1044, "lote": 2102, "obs": ""}, {"data": "04/03/2026", "data_iso": "2026-03-04", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 180, "saldo": 1346, "lote": 2102, "obs": ""}, {"data": "04/03/2026", "data_iso": "2026-03-04", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 500, "saida": 0, "saldo": 806, "lote": 2085, "obs": ""}, {"data": "04/03/2026", "data_iso": "2026-03-04", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 500, "saida": 0, "saldo": 533, "lote": 2085, "obs": ""}, {"data": "04/03/2026", "data_iso": "2026-03-04", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 38, "saldo": 739, "lote": 2096, "obs": ""}, {"data": "04/03/2026", "data_iso": "2026-03-04", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 72, "saldo": 158, "lote": 2078, "obs": ""}, {"data": "05/03/2026", "data_iso": "2026-03-05", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 54, "saldo": 990, "lote": 2024, "obs": ""}, {"data": "05/03/2026", "data_iso": "2026-03-05", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 30, "saldo": 551, "lote": 2102, "obs": ""}, {"data": "05/03/2026", "data_iso": "2026-03-05", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 24, "saldo": 1322, "lote": 2024, "obs": ""}, {"data": "05/03/2026", "data_iso": "2026-03-05", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 250, "saldo": 489, "lote": 2101, "obs": ""}, {"data": "06/03/2026", "data_iso": "2026-03-06", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 18, "saldo": 972, "lote": 2099, "obs": ""}, {"data": "06/03/2026", "data_iso": "2026-03-06", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 200, "saldo": 1122, "lote": 2099, "obs": ""}, {"data": "07/03/2026", "data_iso": "2026-03-07", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 30, "saldo": 942, "lote": 2102, "obs": ""}, {"data": "07/03/2026", "data_iso": "2026-03-07", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 106, "saldo": 1016, "lote": 2025, "obs": ""}, {"data": "08/03/2026", "data_iso": "2026-03-08", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 120, "saldo": 896, "lote": 2097, "obs": ""}, {"data": "09/03/2026", "data_iso": "2026-03-09", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 145, "saldo": 751, "lote": 2024, "obs": ""}, {"data": "09/03/2026", "data_iso": "2026-03-09", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 134, "lote": 2100, "obs": ""}, {"data": "09/03/2026", "data_iso": "2026-03-09", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 31, "saldo": 15, "lote": 2100, "obs": ""}, {"data": "09/03/2026", "data_iso": "2026-03-09", "produto": "PENTEADEIRA NEW", "variante": "OFF / NATURE", "entrada": 0, "saida": 12, "saldo": -1, "lote": 2026, "obs": ""}, {"data": "10/03/2026", "data_iso": "2026-03-10", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 72, "saldo": 679, "lote": 2025, "obs": ""}, {"data": "10/03/2026", "data_iso": "2026-03-10", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 6, "saldo": 128, "lote": 2049, "obs": ""}, {"data": "10/03/2026", "data_iso": "2026-03-10", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 12, "saldo": 3, "lote": 2022, "obs": ""}, {"data": "11/03/2026", "data_iso": "2026-03-11", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 66, "saldo": 613, "lote": 2086, "obs": ""}, {"data": "11/03/2026", "data_iso": "2026-03-11", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 400, "saida": 0, "saldo": 528, "lote": 2172, "obs": ""}, {"data": "11/03/2026", "data_iso": "2026-03-11", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 1, "saldo": 2, "lote": 1982, "obs": ""}, {"data": "12/03/2026", "data_iso": "2026-03-12", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 22, "saldo": 920, "lote": 2097, "obs": ""}, {"data": "12/03/2026", "data_iso": "2026-03-12", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 8, "saldo": 543, "lote": 1971, "obs": ""}, {"data": "12/03/2026", "data_iso": "2026-03-12", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 64, "saldo": 549, "lote": 2086, "obs": ""}, {"data": "12/03/2026", "data_iso": "2026-03-12", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 170, "saldo": 636, "lote": 2090, "obs": ""}, {"data": "12/03/2026", "data_iso": "2026-03-12", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 120, "saldo": 408, "lote": 2172, "obs": ""}, {"data": "12/03/2026", "data_iso": "2026-03-12", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 48, "saldo": -46, "lote": 2172, "obs": ""}, {"data": "12/03/2026", "data_iso": "2026-03-12", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 120, "saldo": -213, "lote": 2172, "obs": ""}, {"data": "13/03/2026", "data_iso": "2026-03-13", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 30, "saldo": 890, "lote": 2102, "obs": ""}, {"data": "13/03/2026", "data_iso": "2026-03-13", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 9, "saldo": 534, "lote": 2025, "obs": ""}, {"data": "13/03/2026", "data_iso": "2026-03-13", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 24, "saldo": 525, "lote": 2025, "obs": ""}, {"data": "13/03/2026", "data_iso": "2026-03-13", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 144, "saldo": 264, "lote": 2172, "obs": ""}, {"data": "13/03/2026", "data_iso": "2026-03-13", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 200, "saida": 72, "saldo": 82, "lote": 2172, "obs": ""}, {"data": "13/03/2026", "data_iso": "2026-03-13", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 200, "saida": 70, "saldo": -83, "lote": 2172, "obs": ""}, {"data": "14/03/2026", "data_iso": "2026-03-14", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 10, "saldo": 880, "lote": 1996, "obs": ""}, {"data": "14/03/2026", "data_iso": "2026-03-14", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 24, "saldo": 501, "lote": 2024, "obs": ""}, {"data": "15/03/2026", "data_iso": "2026-03-15", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 10, "saldo": 870, "lote": 1997, "obs": ""}, {"data": "15/03/2026", "data_iso": "2026-03-15", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 90, "saldo": 411, "lote": 2097, "obs": ""}, {"data": "16/03/2026", "data_iso": "2026-03-16", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 7, "saldo": 404, "lote": 2024, "obs": ""}, {"data": "16/03/2026", "data_iso": "2026-03-16", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 72, "saldo": 417, "lote": 2096, "obs": ""}, {"data": "16/03/2026", "data_iso": "2026-03-16", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 109, "saldo": 155, "lote": 2172, "obs": ""}, {"data": "16/03/2026", "data_iso": "2026-03-16", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 79, "saldo": 3, "lote": 2172, "obs": ""}, {"data": "17/03/2026", "data_iso": "2026-03-17", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 48, "saldo": 369, "lote": 2021, "obs": ""}, {"data": "18/03/2026", "data_iso": "2026-03-18", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 20, "saldo": 135, "lote": 2172, "obs": ""}, {"data": "18/03/2026", "data_iso": "2026-03-18", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 10, "saldo": -93, "lote": 2172, "obs": ""}, {"data": "19/03/2026", "data_iso": "2026-03-19", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 4, "saldo": 866, "lote": 2023, "obs": ""}, {"data": "19/03/2026", "data_iso": "2026-03-19", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 2, "saldo": 402, "lote": 2023, "obs": ""}, {"data": "19/03/2026", "data_iso": "2026-03-19", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 1, "saldo": 635, "lote": 1896, "obs": ""}, {"data": "19/03/2026", "data_iso": "2026-03-19", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 66, "saldo": 467, "lote": 1717, "obs": ""}, {"data": "19/03/2026", "data_iso": "2026-03-19", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 72, "saldo": 297, "lote": 2021, "obs": ""}, {"data": "19/03/2026", "data_iso": "2026-03-19", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 3, "saldo": -96, "lote": 1982, "obs": ""}, {"data": "20/03/2026", "data_iso": "2026-03-20", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 300, "saldo": 566, "lote": 2176, "obs": ""}, {"data": "20/03/2026", "data_iso": "2026-03-20", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 4, "saldo": 631, "lote": 1715, "obs": ""}, {"data": "20/03/2026", "data_iso": "2026-03-20", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 24, "saldo": 273, "lote": 2096, "obs": ""}, {"data": "21/03/2026", "data_iso": "2026-03-21", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 24, "saldo": 249, "lote": 2101, "obs": ""}, {"data": "22/03/2026", "data_iso": "2026-03-22", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 500, "saida": 0, "saldo": 1066, "lote": 2178, "obs": ""}, {"data": "22/03/2026", "data_iso": "2026-03-22", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 300, "saida": 0, "saldo": 834, "lote": 2178, "obs": ""}, {"data": "22/03/2026", "data_iso": "2026-03-22", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 300, "saida": 0, "saldo": 435, "lote": 2179, "obs": ""}, {"data": "22/03/2026", "data_iso": "2026-03-22", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 100, "saida": 0, "saldo": 103, "lote": 2179, "obs": ""}, {"data": "22/03/2026", "data_iso": "2026-03-22", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 400, "saida": 0, "saldo": 304, "lote": 2179, "obs": ""}, {"data": "23/03/2026", "data_iso": "2026-03-23", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 600, "saida": 0, "saldo": 1666, "lote": 2176, "obs": ""}, {"data": "23/03/2026", "data_iso": "2026-03-23", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 200, "saida": 0, "saldo": 1034, "lote": 2176, "obs": ""}, {"data": "23/03/2026", "data_iso": "2026-03-23", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 49, "saldo": 54, "lote": 2179, "obs": ""}, {"data": "23/03/2026", "data_iso": "2026-03-23", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 288, "saldo": 16, "lote": 2179, "obs": ""}, {"data": "24/03/2026", "data_iso": "2026-03-24", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 180, "saldo": 1486, "lote": 2176, "obs": ""}, {"data": "24/03/2026", "data_iso": "2026-03-24", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 180, "saldo": 854, "lote": 2176, "obs": ""}, {"data": "24/03/2026", "data_iso": "2026-03-24", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 136, "saldo": 495, "lote": 2090, "obs": ""}, {"data": "24/03/2026", "data_iso": "2026-03-24", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 136, "saldo": 331, "lote": 2085, "obs": ""}, {"data": "24/03/2026", "data_iso": "2026-03-24", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 72, "saldo": 177, "lote": 2096, "obs": ""}, {"data": "24/03/2026", "data_iso": "2026-03-24", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 192, "saldo": 243, "lote": 2179, "obs": ""}, {"data": "24/03/2026", "data_iso": "2026-03-24", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 51, "saldo": 3, "lote": 2179, "obs": ""}, {"data": "25/03/2026", "data_iso": "2026-03-25", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 420, "saldo": 1066, "lote": 2178, "obs": ""}, {"data": "25/03/2026", "data_iso": "2026-03-25", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 24, "saldo": 219, "lote": 2179, "obs": ""}, {"data": "25/03/2026", "data_iso": "2026-03-25", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 24, "saldo": -8, "lote": 2179, "obs": ""}, {"data": "26/03/2026", "data_iso": "2026-03-26", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 20, "saldo": 1046, "lote": 2176, "obs": ""}, {"data": "26/03/2026", "data_iso": "2026-03-26", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 169, "saldo": 685, "lote": 2178, "obs": ""}, {"data": "26/03/2026", "data_iso": "2026-03-26", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 58, "saldo": 119, "lote": 2021, "obs": ""}, {"data": "26/03/2026", "data_iso": "2026-03-26", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 48, "saldo": 171, "lote": 2179, "obs": ""}, {"data": "27/03/2026", "data_iso": "2026-03-27", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 64, "saldo": 982, "lote": 2178, "obs": ""}, {"data": "27/03/2026", "data_iso": "2026-03-27", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 120, "saldo": 565, "lote": 2176, "obs": ""}, {"data": "27/03/2026", "data_iso": "2026-03-27", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 68, "saldo": 427, "lote": 2085, "obs": ""}, {"data": "27/03/2026", "data_iso": "2026-03-27", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 70, "saldo": 261, "lote": 2085, "obs": ""}, {"data": "27/03/2026", "data_iso": "2026-03-27", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 30, "saldo": 141, "lote": 2179, "obs": ""}, {"data": "27/03/2026", "data_iso": "2026-03-27", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 88, "saldo": -96, "lote": 2179, "obs": ""}, {"data": "28/03/2026", "data_iso": "2026-03-28", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 5, "saldo": 977, "lote": 2178, "obs": ""}, {"data": "28/03/2026", "data_iso": "2026-03-28", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 121, "saldo": 444, "lote": 2178, "obs": ""}, {"data": "30/03/2026", "data_iso": "2026-03-30", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 1000, "saida": 0, "saldo": 1977, "lote": 2187, "obs": ""}, {"data": "30/03/2026", "data_iso": "2026-03-30", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 600, "saida": 0, "saldo": 1044, "lote": 2187, "obs": ""}, {"data": "31/03/2026", "data_iso": "2026-03-31", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 420, "saldo": 1557, "lote": 2187, "obs": ""}, {"data": "31/03/2026", "data_iso": "2026-03-31", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 68, "saldo": 359, "lote": 2085, "obs": ""}, {"data": "31/03/2026", "data_iso": "2026-03-31", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 68, "saldo": 193, "lote": 2085, "obs": ""}, {"data": "31/03/2026", "data_iso": "2026-03-31", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 300, "saida": 0, "saldo": 441, "lote": 2177, "obs": ""}, {"data": "31/03/2026", "data_iso": "2026-03-31", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 200, "saida": 0, "saldo": 203, "lote": 2177, "obs": ""}, {"data": "31/03/2026", "data_iso": "2026-03-31", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 300, "saida": 0, "saldo": 204, "lote": null, "obs": ""}, {"data": "01/04/2026", "data_iso": "2026-04-01", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 30, "saldo": 1527, "lote": 2187, "obs": ""}, {"data": "01/04/2026", "data_iso": "2026-04-01", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 275, "saldo": 166, "lote": 2177, "obs": ""}, {"data": "01/04/2026", "data_iso": "2026-04-01", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 48, "saldo": 156, "lote": 2177, "obs": ""}, {"data": "02/04/2026", "data_iso": "2026-04-02", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 500, "saida": 0, "saldo": 803, "lote": 2183, "obs": ""}, {"data": "02/04/2026", "data_iso": "2026-04-02", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 250, "saida": 0, "saldo": 369, "lote": null, "obs": ""}, {"data": "02/04/2026", "data_iso": "2026-04-02", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 96, "saldo": 60, "lote": 2177, "obs": ""}, {"data": "03/04/2026", "data_iso": "2026-04-03", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 7, "saldo": 796, "lote": 2101, "obs": ""}, {"data": "04/04/2026", "data_iso": "2026-04-04", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 4, "saldo": 792, "lote": 1992, "obs": ""}, {"data": "05/04/2026", "data_iso": "2026-04-05", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 192, "saldo": 600, "lote": 2220, "obs": ""}, {"data": "06/04/2026", "data_iso": "2026-04-06", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 211, "saldo": 1316, "lote": 2187, "obs": ""}, {"data": "06/04/2026", "data_iso": "2026-04-06", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 185, "saldo": 415, "lote": 2220, "obs": ""}, {"data": "06/04/2026", "data_iso": "2026-04-06", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 21, "saldo": 145, "lote": 2177, "obs": ""}, {"data": "06/04/2026", "data_iso": "2026-04-06", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 168, "saldo": 35, "lote": 2177, "obs": ""}, {"data": "06/04/2026", "data_iso": "2026-04-06", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 146, "saldo": -86, "lote": 2177, "obs": ""}, {"data": "07/04/2026", "data_iso": "2026-04-07", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 270, "saldo": 774, "lote": 2187, "obs": ""}, {"data": "08/04/2026", "data_iso": "2026-04-08", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 213, "saldo": 1103, "lote": 2187, "obs": ""}, {"data": "08/04/2026", "data_iso": "2026-04-08", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 210, "saldo": 564, "lote": 2187, "obs": ""}, {"data": "08/04/2026", "data_iso": "2026-04-08", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 250, "saida": 0, "saldo": 665, "lote": 2184, "obs": ""}, {"data": "09/04/2026", "data_iso": "2026-04-09", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 122, "saldo": 981, "lote": 2187, "obs": ""}, {"data": "09/04/2026", "data_iso": "2026-04-09", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 120, "saldo": 444, "lote": 2187, "obs": ""}, {"data": "09/04/2026", "data_iso": "2026-04-09", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 110, "saldo": 555, "lote": 2220, "obs": ""}, {"data": "09/04/2026", "data_iso": "2026-04-09", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 250, "saida": 0, "saldo": 619, "lote": 2184, "obs": ""}, {"data": "09/04/2026", "data_iso": "2026-04-09", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 5, "saldo": 140, "lote": 1982, "obs": ""}, {"data": "10/04/2026", "data_iso": "2026-04-10", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 9, "saldo": 972, "lote": 2178, "obs": ""}, {"data": "10/04/2026", "data_iso": "2026-04-10", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 144, "saldo": 475, "lote": 2184, "obs": ""}, {"data": "10/04/2026", "data_iso": "2026-04-10", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 4, "saldo": 136, "lote": 2177, "obs": ""}, {"data": "10/04/2026", "data_iso": "2026-04-10", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 29, "saldo": 6, "lote": 2177, "obs": ""}, {"data": "11/04/2026", "data_iso": "2026-04-11", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 240, "saldo": -104, "lote": 2188, "obs": ""}, {"data": "11/04/2026", "data_iso": "2026-04-11", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 96, "saldo": -182, "lote": 2188, "obs": ""}, {"data": "12/04/2026", "data_iso": "2026-04-12", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 159, "saldo": -263, "lote": 2188, "obs": ""}, {"data": "12/04/2026", "data_iso": "2026-04-12", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 72, "saldo": -66, "lote": 2188, "obs": ""}, {"data": "12/04/2026", "data_iso": "2026-04-12", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 96, "saldo": -278, "lote": 2188, "obs": ""}, {"data": "13/04/2026", "data_iso": "2026-04-13", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 240, "saldo": 315, "lote": 2184, "obs": ""}, {"data": "13/04/2026", "data_iso": "2026-04-13", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 54, "saldo": 421, "lote": 2184, "obs": ""}, {"data": "13/04/2026", "data_iso": "2026-04-13", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 5, "saldo": -268, "lote": 2179, "obs": ""}, {"data": "13/04/2026", "data_iso": "2026-04-13", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 128, "saldo": -194, "lote": 2188, "obs": ""}, {"data": "13/04/2026", "data_iso": "2026-04-13", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 8, "saldo": -286, "lote": 2188, "obs": ""}, {"data": "14/04/2026", "data_iso": "2026-04-14", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 600, "saida": 0, "saldo": 332, "lote": 2188, "obs": ""}, {"data": "14/04/2026", "data_iso": "2026-04-14", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 400, "saida": 0, "saldo": 206, "lote": 2188, "obs": ""}, {"data": "14/04/2026", "data_iso": "2026-04-14", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 600, "saida": 0, "saldo": 314, "lote": 2188, "obs": ""}, {"data": "15/04/2026", "data_iso": "2026-04-15", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 2, "saldo": 970, "lote": 2099, "obs": ""}, {"data": "15/04/2026", "data_iso": "2026-04-15", "produto": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "entrada": 0, "saida": 3, "saldo": 399, "lote": 2102, "obs": ""}, {"data": "15/04/2026", "data_iso": "2026-04-15", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 2, "saldo": 191, "lote": 1896, "obs": ""}, {"data": "15/04/2026", "data_iso": "2026-04-15", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 288, "saldo": 44, "lote": 2188, "obs": ""}, {"data": "15/04/2026", "data_iso": "2026-04-15", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 4, "saldo": 202, "lote": 2177, "obs": ""}, {"data": "16/04/2026", "data_iso": "2026-04-16", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 500, "saida": 0, "saldo": 1470, "lote": 2182, "obs": ""}, {"data": "16/04/2026", "data_iso": "2026-04-16", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 203, "saldo": -159, "lote": 2188, "obs": ""}, {"data": "16/04/2026", "data_iso": "2026-04-16", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 2, "saldo": 200, "lote": 1982, "obs": ""}, {"data": "17/04/2026", "data_iso": "2026-04-17", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 420, "saldo": 1050, "lote": 2182, "obs": ""}, {"data": "17/04/2026", "data_iso": "2026-04-17", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 300, "saida": 0, "saldo": 744, "lote": 2182, "obs": ""}, {"data": "17/04/2026", "data_iso": "2026-04-17", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 3, "saldo": 197, "lote": 2100, "obs": ""}, {"data": "18/04/2026", "data_iso": "2026-04-18", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 1, "saldo": 1049, "lote": 1996, "obs": ""}, {"data": "18/04/2026", "data_iso": "2026-04-18", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 1, "saldo": 196, "lote": 2172, "obs": ""}, {"data": "19/04/2026", "data_iso": "2026-04-19", "produto": "COMBO E&A (DULCE)", "variante": "BRANCO", "entrada": 0, "saida": 80, "saldo": 969, "lote": 2182, "obs": ""}, {"data": "19/04/2026", "data_iso": "2026-04-19", "produto": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "entrada": 0, "saida": 300, "saldo": 444, "lote": 2182, "obs": ""}, {"data": "19/04/2026", "data_iso": "2026-04-19", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 100, "saldo": 96, "lote": 2188, "obs": ""}, {"data": "19/04/2026", "data_iso": "2026-04-19", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 200, "saldo": 114, "lote": 2188, "obs": ""}, {"data": "24/04/2026", "data_iso": "2026-04-24", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 72, "saldo": -231, "lote": 2264, "obs": ""}, {"data": "24/04/2026", "data_iso": "2026-04-24", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 264, "saldo": -150, "lote": 2264, "obs": ""}, {"data": "25/04/2026", "data_iso": "2026-04-25", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 48, "saldo": -279, "lote": 2264, "obs": ""}, {"data": "26/04/2026", "data_iso": "2026-04-26", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 174, "saldo": -453, "lote": 2264, "obs": ""}, {"data": "26/04/2026", "data_iso": "2026-04-26", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 120, "saldo": -24, "lote": 2264, "obs": ""}, {"data": "26/04/2026", "data_iso": "2026-04-26", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 33, "saldo": -183, "lote": 2264, "obs": ""}, {"data": "27/04/2026", "data_iso": "2026-04-27", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 102, "saldo": 257, "lote": 2085, "obs": ""}, {"data": "27/04/2026", "data_iso": "2026-04-27", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 170, "saldo": 21, "lote": 2085, "obs": ""}, {"data": "27/04/2026", "data_iso": "2026-04-27", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 120, "saldo": 195, "lote": 2269, "obs": ""}, {"data": "27/04/2026", "data_iso": "2026-04-27", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 120, "saldo": 301, "lote": 2269, "obs": ""}, {"data": "27/04/2026", "data_iso": "2026-04-27", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 6, "saldo": -459, "lote": 2264, "obs": ""}, {"data": "27/04/2026", "data_iso": "2026-04-27", "produto": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "entrada": 0, "saida": 80, "saldo": -104, "lote": 2264, "obs": ""}, {"data": "27/04/2026", "data_iso": "2026-04-27", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 3, "saldo": -186, "lote": 2264, "obs": ""}, {"data": "27/04/2026", "data_iso": "2026-04-27", "produto": "PENTEADEIRA NEW", "variante": "PRETA / NATURE", "entrada": 0, "saida": 120, "saldo": 6, "lote": 2026, "obs": ""}, {"data": "28/04/2026", "data_iso": "2026-04-28", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 120, "saldo": 75, "lote": 2269, "obs": ""}, {"data": "28/04/2026", "data_iso": "2026-04-28", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 120, "saldo": 181, "lote": 2269, "obs": ""}, {"data": "29/04/2026", "data_iso": "2026-04-29", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 138, "saldo": 119, "lote": 2085, "obs": ""}, {"data": "29/04/2026", "data_iso": "2026-04-29", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "entrada": 0, "saida": 9, "saldo": 12, "lote": 2085, "obs": ""}, {"data": "29/04/2026", "data_iso": "2026-04-29", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 10, "saldo": 65, "lote": 2184, "obs": ""}, {"data": "29/04/2026", "data_iso": "2026-04-29", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 51, "saldo": 130, "lote": 2184, "obs": ""}, {"data": "29/04/2026", "data_iso": "2026-04-29", "produto": "COMBO 2 MÓDULOS", "variante": "BRANCO", "entrada": 0, "saida": 1, "saldo": -460, "lote": 2179, "obs": ""}, {"data": "29/04/2026", "data_iso": "2026-04-29", "produto": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "entrada": 0, "saida": 1, "saldo": -187, "lote": 2087, "obs": ""}, {"data": "30/04/2026", "data_iso": "2026-04-30", "produto": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "entrada": 0, "saida": 117, "saldo": 2, "lote": 2085, "obs": ""}, {"data": "30/04/2026", "data_iso": "2026-04-30", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 6, "saldo": 59, "lote": 2220, "obs": ""}, {"data": "01/05/2026", "data_iso": "2026-05-01", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "entrada": 0, "saida": 10, "saldo": 49, "lote": 2269, "obs": ""}, {"data": "01/05/2026", "data_iso": "2026-05-01", "produto": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "entrada": 0, "saida": 10, "saldo": 120, "lote": 2269, "obs": ""}];
-  const countRes = await pool.query('SELECT COUNT(*) FROM estoque_movimentos');
-  if (parseInt(countRes.rows[0].count) === 0 && movSeed.length > 0) {
-    console.log(`Importando ${movSeed.length} movimentos da planilha...`);
-    for (const m of movSeed) {
-      const prod = await pool.query(
-        'SELECT id FROM estoque_produtos WHERE nome=$1 AND variante=$2',
-        [m.produto, m.variante]
-      );
-      if (!prod.rows.length) continue;
-      const pid = prod.rows[0].id;
-      if (m.entrada > 0) {
-        await pool.query(`
-          INSERT INTO estoque_movimentos (id,produto_id,produto_nome,variante,tipo,quantidade,saldo_apos,lote,obs,data,data_iso,usuario_nome)
-          VALUES ($1,$2,$3,$4,'entrada',$5,$6,$7,$8,$9,$10,'Importado da planilha')
-          ON CONFLICT DO NOTHING
-        `, [uid(),pid,m.produto,m.variante,m.entrada,m.saldo,m.lote||null,m.obs||'',m.data,m.data_iso]);
-      }
-      if (m.saida > 0) {
-        await pool.query(`
-          INSERT INTO estoque_movimentos (id,produto_id,produto_nome,variante,tipo,quantidade,saldo_apos,lote,obs,data,data_iso,usuario_nome)
-          VALUES ($1,$2,$3,$4,'saida',$5,$6,$7,$8,$9,$10,'Importado da planilha')
-          ON CONFLICT DO NOTHING
-        `, [uid(),pid,m.produto,m.variante,m.saida,m.saldo,m.lote||null,m.obs||'',m.data,m.data_iso]);
-      }
-    }
-    // Atualizar saldos atuais
-    const movs = await pool.query(`
-      SELECT DISTINCT ON (produto_id) produto_id, saldo_apos
-      FROM estoque_movimentos
-      ORDER BY produto_id, criado_em DESC
-    `);
-    for (const row of movs.rows) {
-      await pool.query('UPDATE estoque_produtos SET saldo_atual=$1 WHERE id=$2', [row.saldo_apos, row.produto_id]);
-    }
-    console.log('Importação concluída.');
-  }
-}
-
-// ── ROTAS ESTOQUE ─────────────────────────────────────────────
-
-// Listar produtos com saldo
-app.get('/api/estoque/produtos', autenticar, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT * FROM estoque_produtos ORDER BY nome, variante
-    `);
-    res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
-});
-
-// Adicionar produto
-app.post('/api/estoque/produtos', autenticar, apenasAdmin, async (req, res) => {
-  try {
-    const { nome, variante } = req.body;
-    if (!nome || !variante) return res.status(400).json({ erro: 'Nome e variante obrigatórios.' });
-    const result = await pool.query(`
-      INSERT INTO estoque_produtos (id, nome, variante, saldo_atual)
-      VALUES ($1,$2,$3,0) RETURNING *
-    `, [uid(), nome.trim().toUpperCase(), variante.trim().toUpperCase()]);
-    const prod = result.rows[0];
-    broadcast('estoque:produto_add', prod);
-    res.json(prod);
-  } catch(e) {
-    if (e.code === '23505') return res.status(409).json({ erro: 'Produto/variante já existe.' });
-    res.status(500).json({ erro: e.message });
-  }
-});
-
-// Remover produto
-app.delete('/api/estoque/produtos/:id', autenticar, apenasAdmin, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM estoque_produtos WHERE id=$1', [req.params.id]);
-    broadcast('estoque:produto_del', { id: req.params.id });
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
-});
-
-// Registrar movimento (entrada ou saída)
-app.post('/api/estoque/movimentos', autenticar, async (req, res) => {
-  try {
-    const { produto_id, tipo, quantidade, lote, obs } = req.body;
-    if (!produto_id || !tipo || !quantidade) return res.status(400).json({ erro: 'Produto, tipo e quantidade obrigatórios.' });
-    if (!['entrada','saida'].includes(tipo)) return res.status(400).json({ erro: 'Tipo deve ser entrada ou saida.' });
-    const qtd = parseInt(quantidade);
-    if (qtd <= 0) return res.status(400).json({ erro: 'Quantidade deve ser maior que zero.' });
-
-    const prod = await pool.query('SELECT * FROM estoque_produtos WHERE id=$1', [produto_id]);
-    if (!prod.rows.length) return res.status(404).json({ erro: 'Produto não encontrado.' });
-    const p = prod.rows[0];
-
-    const novoSaldo = tipo === 'entrada' ? p.saldo_atual + qtd : p.saldo_atual - qtd;
-    const { data, hora } = nowBR();
-    const data_iso = new Date().toISOString().slice(0,10);
-
-    await pool.query('UPDATE estoque_produtos SET saldo_atual=$1 WHERE id=$2', [novoSaldo, produto_id]);
-
-    const result = await pool.query(`
-      INSERT INTO estoque_movimentos
-      (id, produto_id, produto_nome, variante, tipo, quantidade, saldo_apos, lote, obs, data, data_iso, usuario_nome)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *
-    `, [uid(), produto_id, p.nome, p.variante, tipo, qtd, novoSaldo, lote||null, obs||'', data, data_iso, req.usuario.nome]);
-
-    const mov = result.rows[0];
-    
-    res.json({ movimento: mov, saldo_atual: novoSaldo });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
-});
-
-// Listar movimentos com filtros
-app.get('/api/estoque/movimentos', autenticar, async (req, res) => {
-  try {
-    const { produto_id, tipo, de, ate } = req.query;
-    let q = 'SELECT * FROM estoque_movimentos WHERE 1=1';
-    const params = [];
-    if (produto_id) { q += ` AND produto_id=${params.length+1}`; params.push(produto_id); }
-    if (tipo)       { q += ` AND tipo=${params.length+1}`; params.push(tipo); }
-    if (de)         { q += ` AND data_iso >= ${params.length+1}`; params.push(de); }
-    if (ate)        { q += ` AND data_iso <= ${params.length+1}`; params.push(ate); }
-    q += ' ORDER BY criado_em DESC LIMIT 1000';
-    const result = await pool.query(q, params);
-    res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
-});
-
-// Excluir movimento (e recalcular saldo)
-app.delete('/api/estoque/movimentos/:id', autenticar, apenasAdmin, async (req, res) => {
-  try {
-    const mov = await pool.query('SELECT * FROM estoque_movimentos WHERE id=$1', [req.params.id]);
-    if (!mov.rows.length) return res.status(404).json({ erro: 'Movimento não encontrado.' });
-    const m = mov.rows[0];
-    await pool.query('DELETE FROM estoque_movimentos WHERE id=$1', [req.params.id]);
-    // Recalcular saldo
-    const ajuste = m.tipo === 'entrada' ? -m.quantidade : m.quantidade;
-    await pool.query('UPDATE estoque_produtos SET saldo_atual = saldo_atual + $1 WHERE id=$2', [ajuste, m.produto_id]);
-    broadcast('estoque:movimento_del', { id: req.params.id, produto_id: m.produto_id });
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
-});
 
 // Resumo geral
 app.get('/api/estoque/resumo', autenticar, async (req, res) => {
@@ -1462,10 +1298,44 @@ app.get('/api/estoque/resumo', autenticar, async (req, res) => {
       SELECT tipo, SUM(quantidade)::int as total
       FROM estoque_movimentos WHERE data_iso=$1 GROUP BY tipo
     `, [hoje]);
-    res.json({
-      produtos: produtos.rows,
-      movimentos_hoje: movHoje.rows
-    });
+    res.json({ produtos: produtos.rows, movimentos_hoje: movHoje.rows });
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Insumos do lote (pedido)
+app.get('/api/lotes/:loteId/insumos', autenticar, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM lote_insumos WHERE pedido_id=$1 ORDER BY criado_em ASC',
+      [req.params.loteId]
+    );
+    res.json(result.rows);
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+app.post('/api/lotes/:loteId/insumos', autenticar, async (req, res) => {
+  try {
+    const { insumo_id, insumo_nome, fornecedor, valor_unitario, quantidade, data_entrega_fab, obs } = req.body;
+    if (!insumo_nome) return res.status(400).json({ erro: 'Nome do insumo obrigatório.' });
+    const qtd  = parseFloat(quantidade) || 1;
+    const vUnit= parseFloat(valor_unitario) || 0;
+    const vTot = qtd * vUnit;
+    const result = await pool.query(`
+      INSERT INTO lote_insumos (id,pedido_id,insumo_id,insumo_nome,fornecedor,valor_unitario,quantidade,valor_total,data_entrega_fab,obs)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *
+    `, [uid(), req.params.loteId, insumo_id||null, insumo_nome.trim(), fornecedor||'', vUnit, qtd, vTot,
+        data_entrega_fab||null, obs||'']);
+    const ins = result.rows[0];
+    broadcast('lote_insumo:add', ins);
+    res.json(ins);
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+app.delete('/api/lotes/:loteId/insumos/:id', autenticar, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM lote_insumos WHERE id=$1 AND pedido_id=$2', [req.params.id, req.params.loteId]);
+    broadcast('lote_insumo:del', { id: req.params.id, lote_id: req.params.loteId });
+    res.json({ ok: true });
   } catch(e) { res.status(500).json({ erro: e.message }); }
 });
 
