@@ -950,6 +950,7 @@ function renderLotes(){
       const falta=ped-rec;
       const pct=ped>0?Math.min(Math.round(rec/ped*100),100):0;
       const corFalta=falta<0?'var(--purple)':falta===0?'var(--accent)':rec>0?'var(--warn)':'var(--text3)';
+      const faltaTxt=falta>0?falta.toLocaleString('pt-BR'):falta<0?`+${Math.abs(falta).toLocaleString('pt-BR')}`:'✓';
       return `<tr>
         <td class="nome">${i.produto_nome} — ${i.variante}</td>
         <td class="mono">${ped.toLocaleString('pt-BR')}</td>
