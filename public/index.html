@@ -1620,6 +1620,16 @@ function renderInsumos() {
     <td>${i.fornecedor_nome || '-'}</td>
     <td>${i.unidade || 'UN'}</td>
     <td>${dinheiro(i.valor_unitario)}</td>
+    <td>
+  <input type="date" value="${i.data_entrega || ''}" 
+  onchange="atualizarDataEntrega('${i.id}', this.value)">
+</td>
+
+<td>
+  ${i.data_entrega 
+    ? '<span style="color:#00ff88">● Entregue</span>' 
+    : '<span style="color:#ff4d4f">● Pendente</span>'}
+</td>
 
     <td>${dataBR(i.data_entrega)}</td>
 
@@ -1785,3 +1795,16 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
 </script>
 </body>
 </html>
+async function atualizarDataEntrega(id, data) {
+  try {
+    await api('PUT', '/api/insumos/data', {
+      id,
+      data_entrega: data
+    });
+
+    toast('Data atualizada', 'ok');
+    carregarProducao();
+  } catch (e) {
+    toast('Erro ao atualizar data', 'err');
+  }
+}
