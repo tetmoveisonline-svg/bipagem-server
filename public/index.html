@@ -543,10 +543,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 </div>
       <!-- INSUMOS DO PEDIDO -->
 <div class="add-form" id="pedido-insumos-box" style="display:none;margin-top:1rem;">
-  <<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;">
-  <div class="add-form-title" id="pedido-insumos-title" style="margin-bottom:0;">Insumos do pedido</div>
-  <button class="btn btn-ghost btn-sm" onclick="fecharInsumosPedido()">Fechar</button>
-</div>
+  <div class="add-form-title" id="pedido-insumos-title">Insumos do pedido</div>
 
   <div class="add-row">
     <div class="field">
@@ -586,48 +583,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       </tbody>
     </table>
   </div>
-</div>
-      <div class="add-form" style="margin-top:1rem;">
-  <div class="add-form-title">Lançar Requisição de Insumo</div>
-
-  <div class="add-row">
-    <div class="field">
-      <label>Insumo do pedido</label>
-      <select id="req-insumo-select">
-        <option value="">— selecionar —</option>
-      </select>
-    </div>
-
-    <div class="field">
-      <label>Quantidade requisitada</label>
-      <input type="number" step="0.01" id="req-qtd" placeholder="Quantidade">
-    </div>
-
-    <div class="field">
-      <label>Observação</label>
-      <input type="text" id="req-obs" placeholder="Ex: enviado para fábrica">
-    </div>
-
-    <button class="btn btn-primary" onclick="criarRequisicaoPedido()">Lançar Requisição</button>
-  </div>
-</div>
-
-<div class="table-wrap" style="margin-top:1rem;">
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Req.</th>
-        <th>Data</th>
-        <th>Insumo</th>
-        <th>Fornecedor</th>
-        <th>Qtd</th>
-        <th>Obs</th>
-      </tr>
-    </thead>
-    <tbody id="req-tbody">
-      <tr><td colspan="6" class="empty-state">Nenhuma requisição lançada.</td></tr>
-    </tbody>
-  </table>
 </div>
       <!-- USUÁRIOS -->
       <div class="panel" id="panel-usuarios">
@@ -1508,7 +1463,6 @@ function renderProducao() {
 let CAD_PROD = { fornecedores: [], insumos: [] };
 let pedidoInsumosAtual = null;
 let PEDIDO_INSUMOS = [];
-  let PEDIDO_REQUISICOES = [];
 
 function dinheiro(v) {
   return Number(v || 0).toLocaleString('pt-BR', {
@@ -1676,19 +1630,9 @@ async function deletarInsumo(id) {
     toast(e.erro || 'Erro ao excluir insumo.', 'err');
   }
 }
-function fecharInsumosPedido() {
-  pedidoInsumosAtual = null;
-  PEDIDO_INSUMOS = [];
 
-  const box = document.getElementById('pedido-insumos-box');
-  if (box) box.style.display = 'none';
-}
 async function abrirInsumosPedido(id) {
-  PEDIDO_INSUMOS = await api('GET', `/api/producao/pedidos/${id}/insumos`);
-  PEDIDO_REQUISICOES = await api('GET', `/api/producao/pedidos/${id}/requisicoes`);
   pedidoInsumosAtual = id;
-  renderRequisicoesPedido();
-popularSelectRequisicao();
 
   await carregarCadastrosProducao();
 
@@ -1781,84 +1725,7 @@ async function removerInsumoPedido(itemId) {
   } catch (e) {
     toast(e.erro || 'Erro ao remover insumo.', 'err');
   }
-  function popularSelectRequisicao() {
-  const sel = document.getElementById('req-insumo-select');
-  if (!sel) return;
-
-  sel.innerHTML = '<option value="">— selecionar —</option>' +
-    PEDIDO_INSUMOS.map(i => {
-      const usado = PEDIDO_REQUISICOES
-        .filter(r => r.insumo_pedido_id === i.id)
-        .reduce((s, r) => s + Number(r.quantidade || 0), 0);
-
-      const saldo = Number(i.quantidade || 0) - usado;
-
-      return `<option value="${i.id}">
-        ${i.insumo_nome} | Saldo: ${saldo} ${i.unidade}
-      </option>`;
-    }).join('');
 }
-
-async function criarRequisicaoPedido() {
-  const insumo_pedido_id = document.getElementById('req-insumo-select').value;
-  const quantidade = parseFloat(document.getElementById('req-qtd').value || '0');
-  const obs = document.getElementById('req-obs').value.trim();
-
-  if (!pedidoInsumosAtual) {
-    toast('Selecione um pedido.', 'warn');
-    return;
-  }
-
-  if (!insumo_pedido_id || !quantidade) {
-    toast('Informe insumo e quantidade.', 'warn');
-    return;
-  }
-
-  try {
-    const req = await api('POST', `/api/producao/pedidos/${pedidoInsumosAtual}/requisicoes`, {
-      insumo_pedido_id,
-      quantidade,
-      obs
-    });
-
-    PEDIDO_REQUISICOES.unshift(req);
-
-    document.getElementById('req-insumo-select').value = '';
-    document.getElementById('req-qtd').value = '';
-    document.getElementById('req-obs').value = '';
-
-    renderRequisicoesPedido();
-    renderPedidoInsumos();
-    popularSelectRequisicao();
-
-    toast('Requisição lançada.', 'ok');
-  } catch (e) {
-    toast(e.erro || 'Erro ao lançar requisição.', 'err');
-  }
-}
-
-function renderRequisicoesPedido() {
-  const tb = document.getElementById('req-tbody');
-  if (!tb) return;
-
-  if (!PEDIDO_REQUISICOES.length) {
-    tb.innerHTML = '<tr><td colspan="6" class="empty-state">Nenhuma requisição lançada.</td></tr>';
-    return;
-  }
-
-  tb.innerHTML = PEDIDO_REQUISICOES.map(r => `
-    <tr>
-      <td class="mono">${r.numero}</td>
-      <td class="mono">${r.data}</td>
-      <td>${r.insumo_nome}</td>
-      <td>${r.fornecedor_nome || '—'}</td>
-      <td class="mono">${Number(r.quantidade)}</td>
-      <td>${r.obs || '—'}</td>
-    </tr>
-  `).join('');
-}
-}
-  
 // ── Export CSV ────────────────────────────────────────────────
 function exportCSV(tipo){
   let header,rows,filename;
