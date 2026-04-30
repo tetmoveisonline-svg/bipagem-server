@@ -313,6 +313,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <!-- LOTES -->
       <div class="panel" id="panel-lotes">
         <div class="page-title">Acompanhamento de lotes</div>
+        <div style="background:rgba(0,229,160,.06);border:0.5px solid rgba(0,229,160,.3);border-radius:var(--r);padding:.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:12px;color:var(--accent);">📥 Importar 38 lotes históricos da planilha</div>
+          <button class="btn btn-primary btn-sm" onclick="importarLotes()" id="btn-import">Importar agora</button>
+        </div>
 
         <!-- FORMULÁRIO NOVO LOTE -->
         <div class="lote-form-card">
@@ -1249,6 +1253,24 @@ async function delInsumo(id){
   insumos=insumos.filter(i=>i.id!==id);
   renderInsumosConfig();
   toast('Insumo removido.','warn');
+}
+
+async function importarLotes(){
+  const btn=document.getElementById('btn-import');
+  if(btn){btn.textContent='Importando...';btn.disabled=true;}
+  try{
+    const res=await api('POST','/api/estoque/lotes/importar',{});
+    toast(`✓ ${res.criados} lotes importados · ${res.pulados} já existiam${res.erros.length?' · '+res.erros.length+' erros':''}`, 'ok', 6000);
+    lotes=await api('GET','/api/estoque/lotes');
+    renderLotes();renderDashboard();updateCounts();
+    // Hide import bar after success
+    const bar=document.querySelector('[onclick="importarLotes()"]');
+    if(bar) bar.closest('div').style.display='none';
+  }catch(e){
+    toast(e.erro||'Erro na importação.','err');
+  }finally{
+    if(btn){btn.textContent='Importar agora';btn.disabled=false;}
+  }
 }
 
 (async()=>{
