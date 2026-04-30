@@ -475,17 +475,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     <table class="data-table">
       <thead>
         <tr>
-          <th>INSUMO</th>
-<th>FORNECEDOR</th>
-<th>UNIDADE</th>
-<th>VALOR</th>
-<th>ENTREGA</th>
-<th>STATUS</th>
-<th>AÇÃO</th>
+          <th>Insumo</th>
+          <th>Fornecedor</th>
+          <th>Unidade</th>
+          <th>Valor</th>
+          <th>Ação</th>
         </tr>
       </thead>
       <tbody id="ins-tbody">
-        <td colspan="7" class="empty-state">Nenhum insumo cadastrado.</td></tr>
+        <tr><td colspan="5" class="empty-state">Nenhum insumo cadastrado.</td></tr>
       </tbody>
     </table>
   </div>
@@ -545,10 +543,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 </div>
       <!-- INSUMOS DO PEDIDO -->
 <div class="add-form" id="pedido-insumos-box" style="display:none;margin-top:1rem;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;">
-  <div class="add-form-title" id="pedido-insumos-title" style="margin-bottom:0;">Insumos do pedido</div>
-  <button class="btn btn-ghost btn-sm" onclick="fecharInsumosPedido()">Fechar</button>
-</div>
+  <div class="add-form-title" id="pedido-insumos-title">Insumos do pedido</div>
 
   <div class="add-row">
     <div class="field">
@@ -1470,11 +1465,6 @@ let pedidoInsumosAtual = null;
 let PEDIDO_INSUMOS = [];
 
 function dinheiro(v) {
-  function dataBR(data) {
-  if (!data) return '—';
-  const [ano, mes, dia] = data.split('-');
-  return `${dia}/${mes}/${ano}`;
-}
   return Number(v || 0).toLocaleString('pt-BR', {
     style: 'currency',
     currency: 'BRL'
@@ -1615,37 +1605,16 @@ function renderInsumos() {
   }
 
   tb.innerHTML = CAD_PROD.insumos.map(i => `
-  <tr>
-    <td>${i.nome}</td>
-    <td>${i.fornecedor_nome || '-'}</td>
-    <td>${i.unidade || 'UN'}</td>
-    <td>${dinheiro(i.valor_unitario)}</td>
-    <td>
-  <input type="date" value="${i.data_entrega || ''}" 
-  onchange="atualizarDataEntrega('${i.id}', this.value)">
-</td>
-
-<td>
-  ${i.data_entrega 
-    ? '<span style="color:#00ff88">● Entregue</span>' 
-    : '<span style="color:#ff4d4f">● Pendente</span>'}
-</td>
-
-    <td>${dataBR(i.data_entrega)}</td>
-
-    <td>
-      ${
-        i.data_entrega
-          ? '<span style="color:#00e5a0;font-weight:600;">🟢</span>'
-          : '<span style="color:#ff4d4d;font-weight:600;">🔴</span>'
-      }
-    </td>
-
-    <td>
-      <button class="btn btn-danger-outline btn-sm" onclick="deletarInsumo('${i.id}')">Excluir</button>
-    </td>
-  </tr>
-`).join('');
+    <tr>
+      <td>${i.nome}</td>
+      <td>${i.fornecedor_nome || '—'}</td>
+      <td>${i.unidade || 'UN'}</td>
+      <td>${dinheiro(i.valor_unitario)}</td>
+      <td>
+        <button class="btn btn-danger-outline btn-sm" onclick="deletarInsumo('${i.id}')">Excluir</button>
+      </td>
+    </tr>
+  `).join('');
 }
 
 async function deletarInsumo(id) {
@@ -1661,13 +1630,7 @@ async function deletarInsumo(id) {
     toast(e.erro || 'Erro ao excluir insumo.', 'err');
   }
 }
-function fecharInsumosPedido() {
-  pedidoInsumosAtual = null;
-  PEDIDO_INSUMOS = [];
 
-  const box = document.getElementById('pedido-insumos-box');
-  if (box) box.style.display = 'none';
-}
 async function abrirInsumosPedido(id) {
   pedidoInsumosAtual = id;
 
@@ -1795,16 +1758,3 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
 </script>
 </body>
 </html>
-async function atualizarDataEntrega(id, data) {
-  try {
-    await api('PUT', '/api/insumos/data', {
-      id,
-      data_entrega: data
-    });
-
-    toast('Data atualizada', 'ok');
-    carregarProducao();
-  } catch (e) {
-    toast('Erro ao atualizar data', 'err');
-  }
-}
