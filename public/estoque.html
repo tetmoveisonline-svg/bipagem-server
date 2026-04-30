@@ -707,21 +707,16 @@ function renderDashboard(){
     const movLote=movimentos.filter(m=>parseInt(m.lote)===parseInt(l.numero));
     const totalRec=movLote.filter(m=>m.tipo==='entrada').reduce((a,m)=>a+parseInt(m.quantidade),0);
     const diff=totalPed-totalRec;
-    const totalPed=totalPedReal;
-    const pct=totalPed>0?Math.min(Math.round(totalRecReal/totalPed*100),100):0;
+    const pct=totalPed>0?Math.min(Math.round(totalRec/totalPed*100),100):0;
 
     // Status real baseado nos itens (qtd_recebida vs qtd_pedida)
-    const totalPedReal=itens.reduce((a,i)=>a+parseInt(i.qtd_pedida),0);
-    const totalRecReal=itens.reduce((a,i)=>a+parseInt(i.qtd_recebida||0),0);
-    const diffReal=totalPedReal-totalRecReal;
     let statusTxt='';
-    if(diffReal>0) statusTxt=`<span style="color:var(--warn);">Faltam ${diffReal.toLocaleString('pt-BR')} uni</span>`;
-    else if(diffReal<0) statusTxt=`<span style="color:var(--purple);">Passou ${Math.abs(diffReal).toLocaleString('pt-BR')} uni</span>`;
+    if(diff>0) statusTxt=`<span style="color:var(--warn);">Faltam ${diff.toLocaleString('pt-BR')} uni</span>`;
+    else if(diff<0) statusTxt=`<span style="color:var(--purple);">Passou ${Math.abs(diff).toLocaleString('pt-BR')} uni</span>`;
     else statusTxt=`<span style="color:var(--accent);">Lote completo ✓</span>`;
 
     const itensRows=itens.map(i=>{
-      const rec=movimentos.filter(m=>parseInt(m.lote)===parseInt(l.numero)&&m.produto_id===i.produto_id&&m.tipo==='entrada')
-                          .reduce((a,m)=>a+parseInt(m.quantidade),0);
+      const rec=parseInt(i.qtd_recebida)||0;
       const ped=parseInt(i.qtd_pedida);
       const falta=ped-rec;
       const corFalta=falta>0?(rec>0?'var(--warn)':'var(--info)'):falta<0?'var(--purple)':'var(--accent)';
