@@ -72,6 +72,7 @@ async function initDB() {
       senha TEXT NOT NULL,
       nome TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
+      tema TEXT DEFAULT 'dark',
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
 
@@ -180,6 +181,9 @@ CREATE TABLE IF NOT EXISTS producao_pedido_insumos (
 );
   `);
 
+  // Migração: adicionar coluna tema se ainda não existe (bancos pré-existentes)
+  await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS tema TEXT DEFAULT 'dark'`);
+
   const admin = await pool.query(`SELECT id FROM usuarios WHERE role = 'admin' LIMIT 1`);
   if (admin.rowCount === 0) {
     await pool.query(
@@ -236,7 +240,7 @@ async function autenticar(req, res, next) {
     if (!token) return res.status(401).json({ erro: 'Não autenticado.' });
 
     const result = await pool.query(`
-      SELECT u.id, u.username, u.nome, u.role
+      SELECT u.id, u.username, u.nome, u.role, u.tema
       FROM sessoes s
       JOIN usuarios u ON u.id = s.usuario_id
       WHERE s.token = $1
@@ -278,7 +282,7 @@ app.post('/api/login', async (req, res) => {
 
     res.json({
       token,
-      usuario: { id: usuario.id, username: usuario.username, nome: usuario.nome, role: usuario.role }
+      usuario: { id: usuario.id, username: usuario.username, nome: usuario.nome, role: usuario.role, tema: usuario.tema || 'dark' }
     });
   } catch (e) {
     console.error(e);
@@ -301,8 +305,25 @@ app.get('/api/me', autenticar, (req, res) => {
     id: req.usuario.id,
     username: req.usuario.username,
     nome: req.usuario.nome,
-    role: req.usuario.role
+    role: req.usuario.role,
+    tema: req.usuario.tema || 'dark'
   });
+});
+
+// Atualizar tema do usuário logado
+app.put('/api/me/tema', autenticar, async (req, res) => {
+  try {
+    const { tema } = req.body;
+    const temasValidos = ['dark','grafite','midnight','claro','industria'];
+    if (!tema || !temasValidos.includes(tema)) {
+      return res.status(400).json({ erro: 'Tema inválido.' });
+    }
+    await pool.query('UPDATE usuarios SET tema=$1 WHERE id=$2', [tema, req.usuario.id]);
+    res.json({ ok: true, tema });
+  } catch (e) {
+    console.error('PUT /api/me/tema:', e.message);
+    res.status(500).json({ erro: 'Erro ao salvar tema.' });
+  }
 });
 
 // ── USUÁRIOS ─────────────────────────────────────────────────
