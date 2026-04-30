@@ -475,15 +475,17 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     <table class="data-table">
       <thead>
         <tr>
-          <th>Insumo</th>
-          <th>Fornecedor</th>
-          <th>Unidade</th>
-          <th>Valor</th>
-          <th>Ação</th>
+          <th>INSUMO</th>
+<th>FORNECEDOR</th>
+<th>UNIDADE</th>
+<th>VALOR</th>
+<th>ENTREGA</th>
+<th>STATUS</th>
+<th>AÇÃO</th>
         </tr>
       </thead>
       <tbody id="ins-tbody">
-        <tr><td colspan="5" class="empty-state">Nenhum insumo cadastrado.</td></tr>
+        <td colspan="7" class="empty-state">Nenhum insumo cadastrado.</td></tr>
       </tbody>
     </table>
   </div>
@@ -1468,6 +1470,11 @@ let pedidoInsumosAtual = null;
 let PEDIDO_INSUMOS = [];
 
 function dinheiro(v) {
+  function dataBR(data) {
+  if (!data) return '—';
+  const [ano, mes, dia] = data.split('-');
+  return `${dia}/${mes}/${ano}`;
+}
   return Number(v || 0).toLocaleString('pt-BR', {
     style: 'currency',
     currency: 'BRL'
@@ -1608,16 +1615,27 @@ function renderInsumos() {
   }
 
   tb.innerHTML = CAD_PROD.insumos.map(i => `
-    <tr>
-      <td>${i.nome}</td>
-      <td>${i.fornecedor_nome || '—'}</td>
-      <td>${i.unidade || 'UN'}</td>
-      <td>${dinheiro(i.valor_unitario)}</td>
-      <td>
-        <button class="btn btn-danger-outline btn-sm" onclick="deletarInsumo('${i.id}')">Excluir</button>
-      </td>
-    </tr>
-  `).join('');
+  <tr>
+    <td>${i.nome}</td>
+    <td>${i.fornecedor_nome || '-'}</td>
+    <td>${i.unidade || 'UN'}</td>
+    <td>${dinheiro(i.valor_unitario)}</td>
+
+    <td>${dataBR(i.data_entrega)}</td>
+
+    <td>
+      ${
+        i.data_entrega
+          ? '<span style="color:#00e5a0;font-weight:600;">🟢</span>'
+          : '<span style="color:#ff4d4d;font-weight:600;">🔴</span>'
+      }
+    </td>
+
+    <td>
+      <button class="btn btn-danger-outline btn-sm" onclick="deletarInsumo('${i.id}')">Excluir</button>
+    </td>
+  </tr>
+`).join('');
 }
 
 async function deletarInsumo(id) {
