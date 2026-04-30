@@ -1308,11 +1308,11 @@ async function salvarEntrega(){
   if(!qtd||qtd<=0){toast('Informe a quantidade recebida.','warn');return;}
   try{
     const res=await api('POST',`/api/lotes/${modalEntregaData.loteId}/itens/${modalEntregaData.itemId}/entrega`,{quantidade:qtd,obs});
-    const i=lotes.findIndex(l=>l.id===modalEntregaData.loteId);
-    if(i>=0) lotes[i]=res;
+    // res = { ...lote, itens: [...], movimento, saldo_atual }
+    // O WebSocket (estoque:movimento + estoque:lote_update) já cuida de
+    // atualizar movimentos[], produtos[] (saldo) e lotes[]. Não duplicar aqui.
     fecharEntrega();
-    renderLotes();renderDashboard();updateCounts();
-    toast(`✓ Entrega de ${qtd} uni registrada.`,'ok');
+    toast(`✓ Entrega de ${qtd} uni registrada${res.saldo_atual!=null?` · saldo: ${res.saldo_atual}`:''}.`,'ok');
   }catch(e){toast(e.erro||'Erro.','err');}
 }
 
