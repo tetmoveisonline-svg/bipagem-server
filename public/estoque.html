@@ -274,6 +274,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   <div class="header">
     <div class="brand">
       <img src="/logo.png.jpeg" alt="Logo" style="height:42px;width:auto;object-fit:contain;"/>
+      <span id="relogio" style="display:none;"></span>
     </div>
     <div class="header-right">
       <div class="ws-dot" id="ws-dot"></div>
@@ -305,6 +306,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div class="stat"><div class="stat-label">Excedente</div><div class="stat-value" style="color:var(--purple);" id="stat-excedentes">0</div><div style="font-size:10px;color:var(--text3);margin-top:2px;font-family:var(--mono);">lotes acima do pedido</div></div>
           <div class="stat"><div class="stat-label">Total insumos (R$)</div><div class="stat-value" style="color:var(--accent);font-size:18px;" id="stat-insumos-total">R$ 0,00</div><div style="font-size:10px;color:var(--text3);margin-top:2px;font-family:var(--mono);">soma lotes em aberto</div></div>
         </div>
+        <select id="filter-prod" style="display:none;"></select>
         <div id="dashboard-lotes-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;"></div>
       </div>
 
@@ -327,6 +329,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           </div>
           <div class="divider"></div>
           <div class="itens-label">Produtos / Variantes deste lote</div>
+          <select id="lote-prod" style="display:none;"></select>
           <div id="lote-itens-wrap"></div>
           <button class="btn-add-item" onclick="addItemLoteForm()">+ Adicionar produto / variante</button>
           <div class="lote-summary" id="lote-summary" style="display:none;">
@@ -590,8 +593,13 @@ function switchPanel(name,el){
 
 function populateSelects(){
   const cs=produtos.map(p=>`<option value="${p.id}">${p.nome} — ${p.variante}</option>`).join('');
-  document.getElementById('filter-prod').innerHTML='<option value="">Todos</option>'+cs;
-  document.getElementById('mov-filter-prod').innerHTML='<option value="">Todos</option>'+cs;
+  const fp=document.getElementById('filter-prod');
+  const mp=document.getElementById('mov-filter-prod');
+  if(fp) fp.innerHTML='<option value="">Todos</option>'+cs;
+  if(mp) mp.innerHTML='<option value="">Todos</option>'+cs;
+  // Lote form select
+  const lp=document.getElementById('lote-prod');
+  if(lp) lp.innerHTML='<option value="">— selecionar —</option>'+cs;
 }
 
 function isToday(iso){
