@@ -1288,7 +1288,9 @@ app.post('/api/estoque/movimentos', autenticar, async (req, res) => {
     `, [uid(), produto_id, p.nome, p.variante, tipo, qtd, novoSaldo, lote||null, obs||'', data, data_iso, req.usuario.nome]);
 
     const mov = result.rows[0];
-    
+    broadcast('estoque:movimento', { ...mov, saldo_atual: novoSaldo });
+    // Recalcular status do lote se informado
+    if (lote) await recalcularLotes(produto_id, parseInt(lote));
     res.json({ movimento: mov, saldo_atual: novoSaldo });
   } catch(e) { res.status(500).json({ erro: e.message }); }
 });
