@@ -1,11 +1,13 @@
-<div style="display:flex; gap:10px; margin-bottom:15px;">
-</div>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Controle de Bipagem</title>
+<script>
+// Anti-flash: aplica o tema do localStorage antes da página renderizar
+(function(){try{var t=localStorage.getItem('bip_tema');if(t&&t!=='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
 :root{
@@ -13,6 +15,31 @@
   --border:#2e2e2e;--border2:#3a3a3a;--text:#f0f0f0;--text2:#888;--text3:#555;
   --accent:#00e5a0;--accent2:#00b87a;--danger:#ff4d4d;--warn:#ffb547;--info:#4d9fff;
   --font:'IBM Plex Sans',sans-serif;--mono:'IBM Plex Mono',monospace;--r:6px;
+}
+
+/* TEMA · Grafite Quente (marrom · âmbar) */
+html[data-theme="grafite"]{
+  --bg:#1c1917;--surface:#27221e;--surface2:#322b25;--surface3:#3a322c;
+  --border:#3a322c;--border2:#4a3f37;--text:#f5f5f4;--text2:#a8a29e;--text3:#78716c;
+  --accent:#fbbf24;--accent2:#d97706;--danger:#ef4444;--warn:#fbbf24;--info:#60a5fa;
+}
+/* TEMA · Midnight Corporativo (azul profundo · ciano) */
+html[data-theme="midnight"]{
+  --bg:#0b1220;--surface:#111a2e;--surface2:#172238;--surface3:#1e293b;
+  --border:#1e293b;--border2:#334155;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
+  --accent:#22d3ee;--accent2:#0891b2;--danger:#f43f5e;--warn:#f59e0b;--info:#60a5fa;
+}
+/* TEMA · Claro Corporativo (branco · verde-petróleo) */
+html[data-theme="claro"]{
+  --bg:#f8fafc;--surface:#ffffff;--surface2:#f1f5f9;--surface3:#e2e8f0;
+  --border:#e2e8f0;--border2:#cbd5e1;--text:#0f172a;--text2:#475569;--text3:#94a3b8;
+  --accent:#0d9488;--accent2:#0f766e;--danger:#dc2626;--warn:#b45309;--info:#1d4ed8;
+}
+/* TEMA · Indústria/Terminal (verde militar · amarelo) */
+html[data-theme="industria"]{
+  --bg:#0a0e0a;--surface:#0f1410;--surface2:#161c16;--surface3:#1f2a1f;
+  --border:#1f2a1f;--border2:#374151;--text:#d1d5db;--text2:#9ca3af;--text3:#6b7280;
+  --accent:#a3e635;--accent2:#65a30d;--danger:#ef4444;--warn:#fde047;--info:#60a5fa;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;}
@@ -188,6 +215,22 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .prod-perc{font-family:var(--mono);font-size:13px;color:var(--accent);text-align:right;font-weight:600;}
 @media(max-width:900px){.prod-layout{grid-template-columns:1fr}.prod-row{grid-template-columns:28px 1fr 70px 60px}.prod-pie{width:230px;height:230px}.prod-pie::after{inset:50px}}
 
+/* SELETOR DE TEMA */
+.tema-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}
+.tema-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0;cursor:pointer;overflow:hidden;transition:transform .15s,border-color .15s;}
+.tema-card:hover{transform:translateY(-2px);border-color:var(--border2);}
+.tema-card.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset;}
+.tema-preview{height:88px;display:grid;grid-template-columns:60px 1fr;border-bottom:1px solid;}
+.tema-preview-side{display:flex;flex-direction:column;justify-content:flex-start;padding:8px 6px;gap:5px;}
+.tema-preview-bar{height:5px;border-radius:3px;}
+.tema-preview-main{padding:8px 10px;}
+.tema-preview-card{border-radius:4px;padding:6px 8px;border:1px solid;font-size:9px;}
+.tema-preview-pill{display:inline-block;font-size:8px;padding:1px 6px;border-radius:8px;font-weight:600;margin-top:3px;}
+.tema-info{padding:10px 12px;}
+.tema-name{font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;}
+.tema-desc{font-size:11px;color:var(--text2);font-family:var(--mono);}
+.tema-check{float:right;font-size:14px;color:var(--accent);}
+
 </style>
 </head>
 <body>
@@ -258,6 +301,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <div class="nav-item" onclick="switchPanel('prod-fornecedores',this)">🏢 Fornecedores</div>
 <div class="nav-item" onclick="switchPanel('prod-insumos',this)">📦 Insumos</div>
 <div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
+      <div class="sidebar-divider"></div>
+      <div class="nav-item" onclick="switchPanel('tema',this)">🎨 Tema</div>
     </div>
 
     <div class="main">
@@ -636,6 +681,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div class="config-grid" id="mkt-config-grid"></div>
       </div>
 
+      <!-- TEMA -->
+      <div class="panel" id="panel-tema">
+        <div class="page-title">Escolha de Tema</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:1rem;">Sua preferência fica salva e segue você em qualquer dispositivo.</div>
+        <div class="tema-grid" id="tema-grid"></div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -839,6 +891,7 @@ async function iniciarApp() {
   document.getElementById('login-wrap').style.display = 'none';
   document.getElementById('app').classList.add('visible');
   document.getElementById('user-display').textContent = usuarioLogado.nome || usuarioLogado.username;
+  aplicarTema(usuarioLogado.tema || 'dark');
   if (usuarioLogado.role === 'admin') document.getElementById('nav-usuarios').style.display = 'flex';
 
   const estado = await api('GET','/api/estado');
@@ -867,6 +920,73 @@ function switchPanel(name, el) {
   if (name==='producao') carregarProducao();
   if (name==='prod-fornecedores') carregarCadastrosProducao();
 if (name==='prod-insumos') carregarCadastrosProducao();
+  if (name==='tema') renderTemaGrid();
+}
+
+// ── TEMA ──────────────────────────────────────────────────────
+const TEMAS=[
+  {id:'dark',     nome:'Escuro Minimal', desc:'Padrão atual · preto + verde',
+    bg:'#0f0f0f', surface:'#1a1a1a', side:'#1a1a1a', sideBd:'#2e2e2e',
+    accent:'#00e5a0', cardBd:'#ffb547', text:'#f0f0f0', text2:'#888'},
+  {id:'grafite',  nome:'Grafite Quente', desc:'Marrom escuro · acentos âmbar',
+    bg:'#1c1917', surface:'#27221e', side:'#27221e', sideBd:'#3a322c',
+    accent:'#fbbf24', cardBd:'#d97706', text:'#f5f5f4', text2:'#a8a29e'},
+  {id:'midnight', nome:'Midnight Corp.', desc:'Azul profundo · acentos ciano',
+    bg:'#0b1220', surface:'#111a2e', side:'#111a2e', sideBd:'#1e293b',
+    accent:'#22d3ee', cardBd:'#f59e0b', text:'#e2e8f0', text2:'#94a3b8'},
+  {id:'claro',    nome:'Claro Corporativo', desc:'Branco · verde-petróleo',
+    bg:'#f8fafc', surface:'#ffffff', side:'#ffffff', sideBd:'#e2e8f0',
+    accent:'#0d9488', cardBd:'#f59e0b', text:'#0f172a', text2:'#475569'},
+  {id:'industria',nome:'Indústria/Terminal', desc:'Verde militar · amarelo',
+    bg:'#0a0e0a', surface:'#0f1410', side:'#0f1410', sideBd:'#1f2a1f',
+    accent:'#a3e635', cardBd:'#eab308', text:'#d1d5db', text2:'#9ca3af'},
+];
+
+function aplicarTema(temaId){
+  if(temaId==='dark') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme',temaId);
+  if(typeof usuarioLogado!=='undefined' && usuarioLogado) usuarioLogado.tema=temaId;
+  try{ localStorage.setItem('bip_tema',temaId); }catch(e){}
+}
+
+function renderTemaGrid(){
+  const grid=document.getElementById('tema-grid');
+  if(!grid) return;
+  const atual=(typeof usuarioLogado!=='undefined' && usuarioLogado?.tema) || localStorage.getItem('bip_tema') || 'dark';
+  grid.innerHTML=TEMAS.map(t=>{
+    const sel=t.id===atual;
+    return `<div class="tema-card ${sel?'selected':''}" onclick="escolherTema('${t.id}')">
+      <div class="tema-preview" style="background:${t.bg};border-color:${t.sideBd};">
+        <div class="tema-preview-side" style="background:${t.side};border-right:1px solid ${t.sideBd};">
+          <div class="tema-preview-bar" style="background:${t.accent};width:80%;"></div>
+          <div class="tema-preview-bar" style="background:${t.text2};width:60%;opacity:.5;"></div>
+          <div class="tema-preview-bar" style="background:${t.text2};width:70%;opacity:.5;"></div>
+        </div>
+        <div class="tema-preview-main">
+          <div class="tema-preview-card" style="background:${t.surface};border-color:${t.cardBd};color:${t.text};">
+            <div style="color:${t.cardBd};font-weight:600;">Lote #1005</div>
+            <div style="color:${t.text2};font-size:8px;">2 produtos</div>
+            <span class="tema-preview-pill" style="background:${t.cardBd}33;color:${t.cardBd};">Parcial</span>
+          </div>
+        </div>
+      </div>
+      <div class="tema-info">
+        <div class="tema-name">${t.nome}${sel?' <span class="tema-check">✓</span>':''}</div>
+        <div class="tema-desc">${t.desc}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function escolherTema(temaId){
+  aplicarTema(temaId);
+  renderTemaGrid();
+  try{
+    await api('PUT','/api/me/tema',{tema:temaId});
+    if(typeof toast==='function') toast(`✓ Tema aplicado: ${TEMAS.find(t=>t.id===temaId).nome}`,'ok');
+  }catch(e){
+    if(typeof toast==='function') toast('Tema aplicado, mas não foi possível salvar.','warn');
+  }
 }
 
 // ── Selects ───────────────────────────────────────────────────
