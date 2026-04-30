@@ -22,6 +22,9 @@ function uid() {
 }
 
 function codigoEEA() {
+  function codigoREQ() {
+  return 'REQ' + Math.floor(100 + Math.random() * 900);
+}
   return 'EEA' + Math.floor(100 + Math.random() * 900);
 }
 
@@ -176,6 +179,19 @@ CREATE TABLE IF NOT EXISTS producao_pedido_insumos (
   quantidade NUMERIC(12,2) DEFAULT 0,
   valor_unitario NUMERIC(12,2) DEFAULT 0,
   valor_total NUMERIC(12,2) DEFAULT 0,
+  criado_em TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS producao_requisicoes (
+  id TEXT PRIMARY KEY,
+  pedido_id TEXT REFERENCES producao_pedidos(id) ON DELETE CASCADE,
+  insumo_pedido_id TEXT REFERENCES producao_pedido_insumos(id) ON DELETE CASCADE,
+  numero TEXT,
+  insumo_nome TEXT DEFAULT '',
+  fornecedor_nome TEXT DEFAULT '',
+  quantidade NUMERIC(12,2) DEFAULT 0,
+  obs TEXT DEFAULT '',
+  data TEXT,
+  hora TEXT,
   criado_em TIMESTAMPTZ DEFAULT NOW()
 );
   `);
@@ -1128,6 +1144,83 @@ app.delete('/api/producao/pedidos/:id/insumos/:itemId', autenticar, async (req, 
   } catch (e) {
     console.error(e);
     res.status(500).json({ erro: 'Erro ao remover insumo do pedido.' });
+  }
+});
+app.get('/api/producao/pedidos/:id/requisicoes', autenticar, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT * FROM producao_requisicoes
+      WHERE pedido_id = $1
+      ORDER BY criado_em DESC
+    `, [req.params.id]);
+
+    res.json(result.rows.map(toISO));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar requisições.' });
+  }
+});
+
+app.post('/api/producao/pedidos/:id/requisicoes', autenticar, async (req, res) => {
+  try {
+    const { insumo_pedido_id, quantidade, obs = '' } = req.body;
+
+    if (!insumo_pedido_id || !quantidade) {
+      return res.status(400).json({ erro: 'Insumo e quantidade são obrigatórios.' });
+    }
+
+    const itemResult = await pool.query(`
+      SELECT *
+      FROM producao_pedido_insumos
+      WHERE id = $1 AND pedido_id = $2
+    `, [insumo_pedido_id, req.params.id]);
+
+    if (itemResult.rowCount === 0) {
+      return res.status(404).json({ erro: 'Insumo do pedido não encontrado.' });
+    }
+
+    const item = itemResult.rows[0];
+
+    const usadas = await pool.query(`
+      SELECT COALESCE(SUM(quantidade),0)::numeric AS total
+      FROM producao_requisicoes
+      WHERE insumo_pedido_id = $1
+    `, [insumo_pedido_id]);
+
+    const totalUsado = Number(usadas.rows[0].total || 0);
+    const qtdSolicitada = Number(quantidade);
+    const qtdDisponivel = Number(item.quantidade || 0) - totalUsado;
+
+    if (qtdSolicitada > qtdDisponivel) {
+      return res.status(400).json({
+        erro: `Quantidade maior que o saldo disponível. Saldo: ${qtdDisponivel}`
+      });
+    }
+
+    const { data, hora } = nowBR();
+
+    const result = await pool.query(`
+      INSERT INTO producao_requisicoes
+      (id, pedido_id, insumo_pedido_id, numero, insumo_nome, fornecedor_nome, quantidade, obs, data, hora)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      RETURNING *
+    `, [
+      uid(),
+      req.params.id,
+      insumo_pedido_id,
+      codigoREQ(),
+      item.insumo_nome,
+      item.fornecedor_nome,
+      qtdSolicitada,
+      obs,
+      data,
+      hora
+    ]);
+
+    res.json(toISO(result.rows[0]));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao criar requisição.' });
   }
 });
 // ── Health check / Railway ────────────────────────────────────
