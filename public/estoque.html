@@ -53,7 +53,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 
 .legenda{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:1rem;padding:.75rem 1rem;background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);}
 .leg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);}
-.leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.leg-dot{width:10px;height:10px;border-radius:50%;}
 
 .produtos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
 .prod-card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);overflow:hidden;}
@@ -72,8 +72,37 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .btn-sai{padding:6px;font-size:11px;font-weight:500;background:rgba(255,77,77,.08);color:var(--danger);border:none;cursor:pointer;}
 .btn-sai:hover{background:rgba(255,77,77,.15);}
 
-/* LOTES */
-.lotes-list{display:flex;flex-direction:column;gap:10px;margin-top:1rem;}
+/* NOVO CADASTRO DE LOTE */
+.lote-form-card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);padding:1.25rem;margin-bottom:1.25rem;}
+.lote-form-title{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:1rem;}
+.lote-form-top{display:flex;gap:10px;margin-bottom:1rem;align-items:flex-end;}
+.form-field{display:flex;flex-direction:column;gap:4px;}
+.form-field label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);}
+.form-field input,.form-field select{padding:8px 10px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:13px;}
+.form-field input:focus,.form-field select:focus{outline:none;border-color:var(--accent);}
+.form-field select option{background:var(--surface2);}
+.divider{border:none;border-top:0.5px solid var(--border);margin:1rem 0;}
+.itens-label{font-size:11px;color:var(--text2);font-weight:500;margin-bottom:.75rem;}
+.item-row{display:grid;grid-template-columns:1fr 100px auto;gap:8px;align-items:flex-end;margin-bottom:8px;}
+.item-row .form-field:first-child{min-width:0;}
+.item-row .form-field select{width:100%;}
+.btn-remove-item{padding:8px 10px;background:rgba(255,77,77,.08);color:var(--danger);border:0.5px solid rgba(255,77,77,.3);border-radius:var(--r);cursor:pointer;font-size:13px;white-space:nowrap;}
+.btn-remove-item:hover{background:rgba(255,77,77,.15);}
+.btn-add-item{width:100%;padding:8px;background:transparent;border:0.5px dashed var(--border2);border-radius:var(--r);color:var(--text3);font-size:12px;cursor:pointer;text-align:center;margin-bottom:1rem;}
+.btn-add-item:hover{border-color:var(--accent);color:var(--accent);}
+.lote-summary{background:#111;border-radius:var(--r);padding:10px 12px;margin-bottom:1rem;}
+.lote-summary-title{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);margin-bottom:8px;}
+.summary-item{display:flex;align-items:center;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:0.5px solid var(--border);}
+.summary-item:last-of-type{border-bottom:none;}
+.summary-nome{color:var(--text);}
+.summary-qtd{color:var(--accent);font-family:var(--mono);font-weight:600;}
+.summary-total{display:flex;justify-content:space-between;padding-top:8px;margin-top:4px;border-top:0.5px solid var(--border2);font-size:12px;color:var(--text2);}
+.summary-total strong{color:var(--accent);font-family:var(--mono);}
+.btn-cadastrar-lote{width:100%;padding:11px;background:var(--accent);color:#000;border:none;border-radius:var(--r);font-size:14px;font-weight:600;cursor:pointer;}
+.btn-cadastrar-lote:hover{background:var(--accent2);}
+
+/* CARDS DE LOTE */
+.lotes-list{display:flex;flex-direction:column;gap:10px;}
 .lote-card{background:var(--surface);border-radius:var(--r);overflow:hidden;}
 .lote-card.aberto{border:1px solid var(--info);}
 .lote-card.parcial{border:1px solid var(--warn);}
@@ -85,74 +114,74 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .lote-numero.parcial{color:var(--warn);}
 .lote-numero.completo{color:var(--accent);}
 .lote-numero.excedente{color:var(--purple);}
-.lote-prod{font-size:11px;color:var(--text2);margin-top:2px;}
+.lote-meta{font-size:11px;color:var(--text2);margin-top:2px;}
 .lote-body{padding:.75rem 1rem;}
-.prog-label{display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-bottom:4px;font-family:var(--mono);}
-.prog-bar{height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;}
-.prog-fill{height:100%;border-radius:3px;transition:width .3s;}
-.fill-aberto{background:var(--info);}
-.fill-parcial{background:var(--warn);}
-.fill-completo{background:var(--accent);}
-.fill-excedente{background:var(--purple);}
-.lote-nums{display:flex;gap:16px;margin-top:.5rem;font-size:11px;color:var(--text3);flex-wrap:wrap;}
-.lote-nums strong{color:var(--text);font-family:var(--mono);}
-.lote-falta{font-size:12px;font-weight:600;font-family:var(--mono);margin-top:6px;}
-.lote-obs-txt{font-size:11px;color:var(--text3);margin-top:.4rem;font-style:italic;}
+
+/* TABELA DE ITENS DO LOTE */
+.itens-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:.5rem;}
+.itens-table th{text-align:left;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:0.5px solid var(--border);font-family:var(--mono);}
+.itens-table td{padding:7px 8px;border-bottom:0.5px solid var(--border);vertical-align:middle;}
+.itens-table tr:last-child td{border-bottom:none;}
+.itens-table td.nome{color:var(--text);font-weight:500;}
+.itens-table td.mono{font-family:var(--mono);font-size:11px;}
+.prog-mini{height:4px;background:var(--surface2);border-radius:2px;width:60px;display:inline-block;vertical-align:middle;margin-left:6px;overflow:hidden;}
+.prog-mini-fill{height:100%;border-radius:2px;}
+.badge-status{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600;font-family:var(--mono);}
+.badge-aberto{background:rgba(77,159,255,.12);color:var(--info);}
+.badge-parcial{background:rgba(255,181,71,.12);color:var(--warn);}
+.badge-completo{background:rgba(0,229,160,.12);color:var(--accent);}
+.badge-excedente{background:var(--purple-bg);color:var(--purple);}
+
+.lote-obs-txt{font-size:11px;color:var(--text3);margin-top:4px;font-style:italic;}
 .lote-actions{display:flex;justify-content:flex-end;padding:.5rem .75rem;border-top:0.5px solid var(--border);gap:6px;}
 
 .toggle-btn{width:100%;padding:6px 12px;background:var(--surface2);border:none;border-top:0.5px solid var(--border);color:var(--text3);font-size:10px;text-align:left;cursor:pointer;font-family:var(--mono);display:flex;align-items:center;gap:5px;}
 .toggle-btn:hover{color:var(--text);}
 .toggle-btn.green{color:var(--accent);}
 
-/* HISTÓRICO DO LOTE */
 .lote-hist{display:none;background:#111;border-top:0.5px solid var(--border);padding:8px 14px;}
 .lote-hist.open{display:block;}
 .hist-row{display:grid;grid-template-columns:90px 70px 60px 80px 1fr;gap:8px;padding:4px 0;font-size:11px;font-family:var(--mono);border-bottom:0.5px solid var(--border);color:var(--text2);}
 .hist-row:last-child{border-bottom:none;}
 .hist-row.hdr{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;}
 
-/* INSUMOS DO LOTE */
 .lote-insumos{display:none;background:#0d0d0d;border-top:0.5px solid var(--border);padding:10px 14px;}
 .lote-insumos.open{display:block;}
 .ins-add-title{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);margin-bottom:8px;}
 .ins-add-row{display:grid;grid-template-columns:2fr 60px 90px 110px 1fr auto;gap:6px;align-items:flex-end;margin-bottom:10px;}
-.ins-field label{display:block;font-size:9px;color:var(--text3);margin-bottom:3px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;}
-.ins-field input{width:100%;padding:6px 8px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-size:12px;font-family:var(--font);}
+.ins-field{display:flex;flex-direction:column;gap:3px;}
+.ins-field label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);}
+.ins-field input{padding:6px 8px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-size:12px;}
 .ins-field input:focus{outline:none;border-color:var(--accent);}
 .autocomplete-wrap{position:relative;}
 .suggestions-box{position:absolute;top:100%;left:0;right:0;background:var(--surface);border:0.5px solid var(--border2);border-radius:var(--r);z-index:100;max-height:160px;overflow-y:auto;display:none;}
 .suggestions-box.open{display:block;}
 .sug-item{padding:6px 10px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border);}
 .sug-item:last-child{border-bottom:none;}
-.sug-item:hover,.sug-item.active{background:var(--surface2);}
-.sug-nome{color:var(--text);}
+.sug-item:hover{background:var(--surface2);}
 .sug-nome em{color:var(--accent);font-style:normal;}
 .sug-meta{display:flex;gap:8px;font-size:10px;font-family:var(--mono);}
 .sug-val{color:var(--accent);}
 .sug-forn{color:var(--info);}
-
 .ins-table{width:100%;border-collapse:collapse;font-size:12px;}
 .ins-table th{padding:6px 8px;text-align:left;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:0.5px solid var(--border);font-family:var(--mono);}
 .ins-table td{padding:7px 8px;border-bottom:0.5px solid var(--border);vertical-align:middle;color:var(--text2);}
 .ins-table tr:last-child td{border-bottom:none;}
 .ins-table tr:hover td{background:var(--surface2);}
-.ins-table td.nome{color:var(--text);font-size:12px;}
+.ins-table td.nome{color:var(--text);}
 .ins-table td.val{color:var(--accent);font-family:var(--mono);}
 .ins-table td.forn{color:var(--info);font-size:11px;}
-.ins-table td.mono{font-family:var(--mono);font-size:11px;}
 .date-badge{background:rgba(77,159,255,.12);color:var(--info);padding:2px 6px;border-radius:3px;font-size:10px;font-family:var(--mono);}
 .ins-total{display:flex;justify-content:flex-end;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);font-size:12px;color:var(--text2);gap:6px;}
 .ins-total-val{color:var(--accent);font-family:var(--mono);font-weight:600;}
 .empty-ins{text-align:center;padding:1.5rem;color:var(--text3);font-size:11px;font-family:var(--mono);}
 
-/* PILLS */
 .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:600;font-family:var(--mono);}
 .pill-aberto{background:rgba(77,159,255,.12);color:var(--info);}
 .pill-parcial{background:rgba(255,181,71,.12);color:var(--warn);}
 .pill-completo{background:rgba(0,229,160,.12);color:var(--accent);}
 .pill-excedente{background:var(--purple-bg);color:var(--purple);}
 
-/* FORMS */
 .add-form{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);padding:1rem;margin-bottom:1rem;}
 .add-form-title{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:.75rem;}
 .add-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
@@ -177,14 +206,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .data-table td.mono{font-family:var(--mono);font-size:11px;color:var(--text2);}
 .empty-state{text-align:center;padding:2.5rem;color:var(--text3);font-size:12px;font-family:var(--mono);}
 
-/* INSUMOS CONFIG */
+.insumos-config-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;margin-top:.75rem;}
 .insumo-chip{background:var(--surface2);border:0.5px solid var(--border);border-radius:var(--r);padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
 .insumo-chip-info{display:flex;flex-direction:column;gap:3px;}
 .insumo-chip-nome{font-size:13px;font-weight:500;}
 .insumo-chip-meta{display:flex;gap:10px;font-size:11px;font-family:var(--mono);}
 .insumo-chip-val{color:var(--accent);}
 .insumo-chip-forn{color:var(--info);}
-.insumos-config-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;margin-top:.75rem;}
 
 .btn{padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;font-family:var(--font);border-radius:var(--r);transition:all .15s;}
 .btn-primary{background:var(--accent);color:#000;border:none;}
@@ -207,7 +235,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .modal-field input:focus,.modal-field select:focus{outline:none;border-color:var(--accent);}
 .modal-field select option{background:var(--surface2);}
 .modal-lote-info{background:var(--surface3);border-radius:var(--r);padding:6px 10px;margin-top:4px;font-size:11px;font-family:var(--mono);color:var(--text2);display:none;}
-.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:.25rem;}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;}
 
 .toast-area{position:fixed;top:64px;right:1rem;display:flex;flex-direction:column;gap:6px;z-index:9999;}
 .toast{padding:10px 14px;border-radius:var(--r);font-size:13px;font-weight:500;animation:fadeIn .2s ease;display:flex;align-items:flex-start;gap:8px;min-width:240px;}
@@ -246,10 +274,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   <div class="header">
     <div class="brand">
       <span style="font-size:20px;">📦</span>
-      <div>
-        <div class="brand-text">Controle de Estoque</div>
-        <div class="brand-sub" id="relogio"></div>
-      </div>
+      <div><div class="brand-text">Controle de Estoque</div><div class="brand-sub" id="relogio"></div></div>
     </div>
     <div class="header-right">
       <div class="ws-dot" id="ws-dot"></div>
@@ -286,8 +311,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div class="legenda">
           <div class="leg"><div class="leg-dot" style="background:var(--accent);"></div>Verde — dentro do lote</div>
           <div class="leg"><div class="leg-dot" style="background:var(--warn);"></div>Amarelo — estoque baixo</div>
-          <div class="leg"><div class="leg-dot" style="background:var(--danger);"></div>Vermelho — saldo negativo</div>
-          <div class="leg"><div class="leg-dot" style="background:var(--purple);"></div>Roxo — acima do lote</div>
+          <div class="leg"><div class="leg-dot" style="background:var(--danger);"></div>Vermelho — negativo</div>
+          <div class="leg"><div class="leg-dot" style="background:var(--purple);"></div>Roxo — excedente</div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;">
           <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);">Produtos</div>
@@ -299,16 +324,36 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <!-- LOTES -->
       <div class="panel" id="panel-lotes">
         <div class="page-title">Acompanhamento de lotes</div>
-        <div class="add-form">
-          <div class="add-form-title">Cadastrar novo lote</div>
-          <div class="add-row">
-            <div class="field"><label>Nº do Lote</label><input type="number" id="lote-num" placeholder="Ex: 2187"/></div>
-            <div class="field"><label>Produto / Variante</label><select id="lote-prod"><option value="">— selecionar —</option></select></div>
-            <div class="field"><label>Qtd Pedida</label><input type="number" id="lote-qtd" placeholder="Ex: 1000"/></div>
-            <div class="field"><label>Obs (opcional)</label><input type="text" id="lote-obs" placeholder="Observação"/></div>
-            <button class="btn btn-primary" onclick="addLote()">+ Cadastrar</button>
+
+        <!-- FORMULÁRIO NOVO LOTE -->
+        <div class="lote-form-card">
+          <div class="lote-form-title">Cadastrar novo lote</div>
+          <div class="lote-form-top">
+            <div class="form-field" style="width:160px;">
+              <label>Nº do Lote</label>
+              <input type="number" id="lote-num" placeholder="Ex: 2187"/>
+            </div>
+            <div class="form-field" style="flex:1;">
+              <label>Observação (opcional)</label>
+              <input type="text" id="lote-obs-geral" placeholder="Ex: pedido urgente, frete incluso..."/>
+            </div>
           </div>
+          <div class="divider"></div>
+          <div class="itens-label">Produtos / Variantes deste lote</div>
+          <div id="lote-itens-wrap"></div>
+          <button class="btn-add-item" onclick="addItemLoteForm()">+ Adicionar produto / variante</button>
+          <div class="lote-summary" id="lote-summary" style="display:none;">
+            <div class="lote-summary-title">Resumo do pedido</div>
+            <div id="summary-itens"></div>
+            <div class="summary-total">
+              <span>Total do lote:</span>
+              <strong id="summary-total-txt">0 uni em 0 produtos</strong>
+            </div>
+          </div>
+          <button class="btn-cadastrar-lote" onclick="cadastrarLote()">+ Cadastrar Lote</button>
         </div>
+
+        <!-- FILTROS -->
         <div class="filters-row">
           <div class="field"><label>Status</label>
             <select id="lote-filter-status" onchange="renderLotes()">
@@ -319,8 +364,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
               <option value="excedente">Excedente</option>
             </select>
           </div>
-          <div class="field"><label>Pesquisar lote</label>
-            <input type="text" id="lote-search" placeholder="Digite o nº do lote..." oninput="renderLotes()"/>
+          <div class="field"><label>Pesquisar nº lote</label>
+            <input type="text" id="lote-search" placeholder="Digite o nº..." oninput="renderLotes()"/>
           </div>
           <button class="btn btn-ghost btn-sm" onclick="limparFiltrosLote()">Limpar</button>
         </div>
@@ -386,9 +431,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
             <button class="btn btn-primary" onclick="addInsumo()">+ Cadastrar</button>
           </div>
         </div>
-        <div class="export-bar">
-          <span class="export-label" id="ins-count-label">0 insumos cadastrados</span>
-        </div>
+        <div class="export-bar"><span class="export-label" id="ins-count-label">0 insumos</span></div>
         <div class="insumos-config-grid" id="insumos-config-grid"></div>
       </div>
 
@@ -401,20 +444,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   <div class="modal">
     <div class="modal-title" id="modal-title">Registrar</div>
     <div class="modal-info" id="modal-info"></div>
-    <div class="modal-field">
-      <label>Quantidade</label>
-      <input type="number" id="modal-qtd" min="1" placeholder="0" onkeydown="if(event.key==='Enter')salvarMovimento()"/>
-    </div>
+    <div class="modal-field"><label>Quantidade</label><input type="number" id="modal-qtd" min="1" placeholder="0" onkeydown="if(event.key==='Enter')salvarMovimento()"/></div>
     <div class="modal-field">
       <label>Lote (selecione ou digite)</label>
       <select id="modal-lote-sel" onchange="onLoteSel()" style="margin-bottom:6px;"><option value="">— sem lote / digitar manualmente —</option></select>
       <div class="modal-lote-info" id="modal-lote-info"></div>
       <input type="number" id="modal-lote-manual" placeholder="Ou digite o número do lote manualmente"/>
     </div>
-    <div class="modal-field">
-      <label>Observação (opcional)</label>
-      <input type="text" id="modal-obs" onkeydown="if(event.key==='Enter')salvarMovimento()"/>
-    </div>
+    <div class="modal-field"><label>Observação (opcional)</label><input type="text" id="modal-obs" onkeydown="if(event.key==='Enter')salvarMovimento()"/></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="fecharModal()">Cancelar</button>
       <button class="btn btn-primary" id="modal-btn" onclick="salvarMovimento()">Confirmar</button>
@@ -435,18 +472,16 @@ let loteInsumos={};
 let modalProduto=null;
 let modalTipo=null;
 let ws=null;
+let loteFormItens=[];
 
-// ── CLOCK ──────────────────────────────────────────────────────
 function updateClock(){
   const now=new Date();
-  const e1=document.getElementById('relogio');
-  const e2=document.getElementById('data-full');
+  const e1=document.getElementById('relogio'),e2=document.getElementById('data-full');
   if(e1)e1.textContent=now.toLocaleTimeString('pt-BR');
   if(e2)e2.textContent=now.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'2-digit',year:'numeric'});
 }
 updateClock();setInterval(updateClock,1000);
 
-// ── TOAST ──────────────────────────────────────────────────────
 function toast(msg,type='ok',dur=3000){
   const area=document.getElementById('toast-area');
   const el=document.createElement('div');
@@ -456,7 +491,6 @@ function toast(msg,type='ok',dur=3000){
   setTimeout(()=>{el.style.opacity='0';el.style.transition='opacity .3s';setTimeout(()=>el.remove(),300);},dur);
 }
 
-// ── API ────────────────────────────────────────────────────────
 async function api(method,path,body){
   const opts={method,headers:{'Content-Type':'application/json','Authorization':token||''}};
   if(body) opts.body=JSON.stringify(body);
@@ -466,7 +500,6 @@ async function api(method,path,body){
   return json;
 }
 
-// ── AUTH ───────────────────────────────────────────────────────
 async function fazerLogin(){
   const username=document.getElementById('login-user').value.trim();
   const senha=document.getElementById('login-pass').value;
@@ -494,7 +527,6 @@ async function verificarToken(){
   catch(e){localStorage.removeItem('bip_token');token=null;return false;}
 }
 
-// ── WEBSOCKET ──────────────────────────────────────────────────
 function connectWS(){
   const proto=location.protocol==='https:'?'wss':'ws';
   ws=new WebSocket(`${proto}://${location.host}`);
@@ -514,25 +546,25 @@ function connectWS(){
       if(i>=0) lotes[i]=data; else lotes.unshift(data);
       renderLotes();renderDashboard();updateCounts();
     }
-    if(event==='estoque:lote_add'){lotes.unshift(data);renderLotes();updateCounts();populateSelects();}
+    if(event==='estoque:lote_add'){lotes.unshift(data);renderLotes();updateCounts();}
     if(event==='estoque:lote_del'){lotes=lotes.filter(l=>l.id!==data.id);renderLotes();updateCounts();}
     if(event==='estoque:produto_add'){produtos.push(data);populateSelects();renderDashboard();renderProdConfig();}
     if(event==='estoque:produto_del'){produtos=produtos.filter(p=>p.id!==data.id);populateSelects();renderDashboard();renderProdConfig();}
     if(event==='insumo:add'){insumos.push(data);renderInsumosConfig();}
     if(event==='insumo:del'){insumos=insumos.filter(i=>i.id!==data.id);renderInsumosConfig();}
     if(event==='lote_insumo:add'){
-      if(!loteInsumos[data.lote_id]) loteInsumos[data.lote_id]=[];
-      if(!loteInsumos[data.lote_id].find(x=>x.id===data.id)) loteInsumos[data.lote_id].push(data);
+      if(!loteInsumos[data.pedido_id]) loteInsumos[data.pedido_id]=[];
+      if(!loteInsumos[data.pedido_id].find(x=>x.id===data.id)) loteInsumos[data.pedido_id].push(data);
       renderLotes();
     }
     if(event==='lote_insumo:del'){
-      if(loteInsumos[data.lote_id]) loteInsumos[data.lote_id]=loteInsumos[data.lote_id].filter(x=>x.id!==data.id);
+      const pid=Object.keys(loteInsumos).find(k=>loteInsumos[k].find(x=>x.id===data.id));
+      if(pid) loteInsumos[pid]=loteInsumos[pid].filter(x=>x.id!==data.id);
       renderLotes();
     }
   };
 }
 
-// ── INIT ───────────────────────────────────────────────────────
 async function iniciarApp(){
   document.getElementById('login-wrap').style.display='none';
   document.getElementById('app').style.display='block';
@@ -541,7 +573,6 @@ async function iniciarApp(){
     document.getElementById('nav-config-prod').style.display='flex';
     document.getElementById('nav-config-ins').style.display='flex';
   }
-
   const [resumo,lotesData,movsData,insumosData]=await Promise.all([
     api('GET','/api/estoque/resumo'),
     api('GET','/api/estoque/lotes'),
@@ -552,16 +583,15 @@ async function iniciarApp(){
   lotes=lotesData;
   movimentos=movsData;
   insumos=insumosData;
-
   populateSelects();
   renderDashboard();
   renderLotes();
   renderMovimentos();
   updateCounts();
+  initLoteForm();
   connectWS();
 }
 
-// ── PANEL NAV ──────────────────────────────────────────────────
 function switchPanel(name,el){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
@@ -571,15 +601,12 @@ function switchPanel(name,el){
   if(name==='config-ins') renderInsumosConfig();
 }
 
-// ── SELECTS ────────────────────────────────────────────────────
 function populateSelects(){
   const cs=produtos.map(p=>`<option value="${p.id}">${p.nome} — ${p.variante}</option>`).join('');
   document.getElementById('filter-prod').innerHTML='<option value="">Todos</option>'+cs;
   document.getElementById('mov-filter-prod').innerHTML='<option value="">Todos</option>'+cs;
-  document.getElementById('lote-prod').innerHTML='<option value="">— selecionar —</option>'+cs;
 }
 
-// ── HELPERS ────────────────────────────────────────────────────
 function isToday(iso){
   if(!iso) return false;
   const d=new Date(iso),t=new Date();
@@ -589,21 +616,25 @@ function isToday(iso){
 function getCorProduto(p){
   const saldo=parseInt(p.saldo_atual);
   if(saldo<0) return {text:'var(--danger)',border:'cor-red'};
-  const exc=lotes.find(l=>l.produto_id===p.id&&l.status==='excedente');
+  const exc=lotes.find(l=>(l.itens||[]).some(i=>i.produto_id===p.id&&i.status==='excedente'));
   if(exc) return {text:'var(--purple)',border:'cor-purple'};
   if(saldo<=10) return {text:'var(--warn)',border:'cor-amber'};
   return {text:'var(--accent)',border:'cor-verde'};
 }
 
 function getDiffLote(p){
-  const l=lotes.find(l=>l.produto_id===p.id&&['aberto','parcial','excedente'].includes(l.status));
-  if(!l) return '';
-  const recebida=parseInt(l.qtd_recebida)||0;
-  const pedida=parseInt(l.qtd_pedida);
-  const falta=pedida-recebida;
-  if(l.status==='excedente') return `<span style="color:var(--purple);">+${recebida-pedida} acima — Lote #${l.numero}</span>`;
-  if(falta>0) return `<span style="color:var(--text3);">Lote #${l.numero} — faltam ${falta} uni</span>`;
-  return `<span style="color:var(--accent);">Lote #${l.numero} completo</span>`;
+  for(const l of lotes){
+    if(!['aberto','parcial','excedente'].includes(l.status)) continue;
+    const item=(l.itens||[]).find(i=>i.produto_id===p.id&&['aberto','parcial','excedente'].includes(i.status));
+    if(!item) continue;
+    const rec=parseInt(item.qtd_recebida)||0;
+    const ped=parseInt(item.qtd_pedida);
+    const falta=ped-rec;
+    if(item.status==='excedente') return `<span style="color:var(--purple);">+${rec-ped} acima — Lote #${l.numero}</span>`;
+    if(falta>0) return `<span style="color:var(--text3);">Lote #${l.numero} — faltam ${falta} uni</span>`;
+    return `<span style="color:var(--accent);">Lote #${l.numero} completo</span>`;
+  }
+  return '';
 }
 
 function updateCounts(){
@@ -639,7 +670,85 @@ function renderDashboard(){
   }).join('');
 }
 
-// ── MODAL ──────────────────────────────────────────────────────
+// ── FORMULÁRIO LOTE (multi-produto) ───────────────────────────
+function initLoteForm(){
+  loteFormItens=[];
+  document.getElementById('lote-itens-wrap').innerHTML='';
+  document.getElementById('lote-summary').style.display='none';
+  addItemLoteForm();
+}
+
+function addItemLoteForm(){
+  const idx=loteFormItens.length;
+  loteFormItens.push({produto_id:'',qtd_pedida:0});
+  const wrap=document.getElementById('lote-itens-wrap');
+  const div=document.createElement('div');
+  div.className='item-row';
+  div.dataset.idx=idx;
+  const opts=produtos.map(p=>`<option value="${p.id}">${p.nome} — ${p.variante}</option>`).join('');
+  div.innerHTML=`
+    <div class="form-field">
+      <label>Produto / Variante</label>
+      <select onchange="updateItemLote(${idx},'produto_id',this.value)">
+        <option value="">— selecionar —</option>${opts}
+      </select>
+    </div>
+    <div class="form-field">
+      <label>Qtd Pedida</label>
+      <input type="number" min="1" placeholder="0" onchange="updateItemLote(${idx},'qtd_pedida',parseInt(this.value)||0)"/>
+    </div>
+    <button class="btn-remove-item" onclick="removeItemLote(${idx})">✕</button>`;
+  wrap.appendChild(div);
+  updateSummary();
+}
+
+function updateItemLote(idx,field,val){
+  if(loteFormItens[idx]) loteFormItens[idx][field]=val;
+  updateSummary();
+}
+
+function removeItemLote(idx){
+  const wrap=document.getElementById('lote-itens-wrap');
+  const row=wrap.querySelector(`[data-idx="${idx}"]`);
+  if(row) row.remove();
+  loteFormItens[idx]=null;
+  updateSummary();
+}
+
+function updateSummary(){
+  const valid=loteFormItens.filter(i=>i&&i.produto_id&&i.qtd_pedida>0);
+  const summary=document.getElementById('lote-summary');
+  if(!valid.length){summary.style.display='none';return;}
+  summary.style.display='block';
+  const total=valid.reduce((a,i)=>a+i.qtd_pedida,0);
+  document.getElementById('summary-itens').innerHTML=valid.map(i=>{
+    const p=produtos.find(x=>x.id===i.produto_id);
+    return `<div class="summary-item"><span class="summary-nome">${p?p.nome+' — '+p.variante:'—'}</span><span class="summary-qtd">${i.qtd_pedida.toLocaleString('pt-BR')} uni</span></div>`;
+  }).join('');
+  document.getElementById('summary-total-txt').textContent=`${total.toLocaleString('pt-BR')} uni em ${valid.length} produto${valid.length!==1?'s':''}`;
+  const btn=document.querySelector('.btn-cadastrar-lote');
+  const num=document.getElementById('lote-num').value;
+  if(btn) btn.textContent=num?`+ Cadastrar Lote #${num}`:'+ Cadastrar Lote';
+}
+
+async function cadastrarLote(){
+  const numero=document.getElementById('lote-num').value;
+  const obs=document.getElementById('lote-obs-geral').value.trim();
+  const itens=loteFormItens.filter(i=>i&&i.produto_id&&i.qtd_pedida>0);
+  if(!numero){toast('Informe o número do lote.','warn');return;}
+  if(!itens.length){toast('Adicione ao menos um produto.','warn');return;}
+  try{
+    const l=await api('POST','/api/estoque/lotes',{numero:parseInt(numero),obs,itens});
+    lotes.unshift(l);
+    document.getElementById('lote-num').value='';
+    document.getElementById('lote-obs-geral').value='';
+    initLoteForm();
+    renderLotes();renderDashboard();updateCounts();
+    toast(`Lote #${numero} cadastrado com ${itens.length} produto${itens.length!==1?'s':''}.`,'ok');
+  }catch(e){toast(e.erro||'Erro ao cadastrar.','err');}
+}
+
+// ── MODAL MOVIMENTO ────────────────────────────────────────────
 function abrirModal(prodId,tipo){
   const p=produtos.find(x=>x.id===prodId);
   if(!p) return;
@@ -653,24 +762,31 @@ function abrirModal(prodId,tipo){
   document.getElementById('modal-lote-manual').value='';
   document.getElementById('modal-lote-info').style.display='none';
 
-  const loteProd=lotes.filter(l=>l.produto_id===p.id&&['aberto','parcial','excedente'].includes(l.status)).sort((a,b)=>b.numero-a.numero);
+  // Buscar lotes que têm este produto
+  const lotesComProd=lotes.filter(l=>
+    (l.itens||[]).some(i=>i.produto_id===p.id&&['aberto','parcial','excedente'].includes(i.status))
+    && ['aberto','parcial','excedente'].includes(l.status)
+  ).sort((a,b)=>b.numero-a.numero);
+
   const sel=document.getElementById('modal-lote-sel');
   sel.innerHTML='<option value="">— sem lote / digitar manualmente —</option>';
-  loteProd.forEach(l=>{
-    const recebida=parseInt(l.qtd_recebida)||0;
-    const pedida=parseInt(l.qtd_pedida);
-    const faltam=pedida-recebida;
+  lotesComProd.forEach(l=>{
+    const item=(l.itens||[]).find(i=>i.produto_id===p.id);
+    if(!item) return;
+    const rec=parseInt(item.qtd_recebida)||0;
+    const ped=parseInt(item.qtd_pedida);
+    const faltam=ped-rec;
     const statusMap={aberto:'Aberto',parcial:'Parcial',excedente:'Excedente'};
     const fStr=faltam>0?`faltam ${faltam} uni`:faltam<0?`excedente ${Math.abs(faltam)} uni`:'completo';
     const opt=document.createElement('option');
     opt.value=l.numero;
-    opt.dataset.pedida=pedida;
-    opt.dataset.recebida=recebida;
-    opt.dataset.status=l.status;
-    opt.textContent=`Lote #${l.numero} — ${statusMap[l.status]||l.status} — ${fStr}`;
+    opt.dataset.pedida=ped;
+    opt.dataset.recebida=rec;
+    opt.dataset.status=item.status;
+    opt.textContent=`Lote #${l.numero} — ${statusMap[item.status]||item.status} — ${fStr}`;
     sel.appendChild(opt);
   });
-  if(loteProd.length===1){sel.value=loteProd[0].numero;onLoteSel();}
+  if(lotesComProd.length===1){sel.value=lotesComProd[0].numero;onLoteSel();}
 
   const btn=document.getElementById('modal-btn');
   btn.textContent=tipo==='entrada'?'Confirmar Entrada':'Confirmar Saída';
@@ -696,9 +812,7 @@ function onLoteSel(){
                     faltam<0?`Pedido: ${pedida} · Recebido: ${recebida} · Excedente: ${Math.abs(faltam)} uni`:
                     `Pedido: ${pedida} · Recebido: ${recebida} · Completo ✓`;
     manual.style.display='none';manual.value='';
-  } else {
-    info.style.display='none';manual.style.display='block';
-  }
+  }else{info.style.display='none';manual.style.display='block';}
 }
 
 function fecharModal(){document.getElementById('modal-overlay').style.display='none';modalProduto=null;modalTipo=null;}
@@ -723,23 +837,6 @@ async function salvarMovimento(){
 }
 
 // ── LOTES ──────────────────────────────────────────────────────
-async function addLote(){
-  const numero=document.getElementById('lote-num').value;
-  const produto_id=document.getElementById('lote-prod').value;
-  const qtd_pedida=document.getElementById('lote-qtd').value;
-  const obs=document.getElementById('lote-obs').value.trim();
-  if(!numero||!produto_id||!qtd_pedida){toast('Preencha número, produto e quantidade.','warn');return;}
-  try{
-    const l=await api('POST','/api/estoque/lotes',{numero:parseInt(numero),produto_id,qtd_pedida:parseInt(qtd_pedida),obs});
-    lotes.unshift(l);
-    document.getElementById('lote-num').value='';
-    document.getElementById('lote-qtd').value='';
-    document.getElementById('lote-obs').value='';
-    renderLotes();renderDashboard();updateCounts();populateSelects();
-    toast('Lote cadastrado.','ok');
-  }catch(e){toast(e.erro||'Erro.','err');}
-}
-
 function renderLotes(){
   const fS=document.getElementById('lote-filter-status').value;
   const search=(document.getElementById('lote-search').value||'').trim();
@@ -753,74 +850,77 @@ function renderLotes(){
   if(!data.length){grid.innerHTML='<div style="color:var(--text3);font-size:12px;padding:1rem;font-family:var(--mono);">Nenhum lote encontrado.</div>';return;}
 
   const statusLabel={aberto:'Aberto',parcial:'Parcial',completo:'Completo',excedente:'Excedente'};
+  const corNum={aberto:'var(--info)',parcial:'var(--warn)',completo:'var(--accent)',excedente:'var(--purple)'};
 
   grid.innerHTML=data.map(l=>{
-    const pedida=parseInt(l.qtd_pedida);
-    const recebida=parseInt(l.qtd_recebida)||0;
-    const faltam=pedida-recebida;
-    const pct=pedida>0?Math.min(Math.round(recebida/pedida*100),100):0;
-    const corMap={aberto:'var(--info)',parcial:'var(--warn)',completo:'var(--accent)',excedente:'var(--purple)'};
-    const corNum=corMap[l.status]||'var(--info)';
+    const itens=l.itens||[];
+    const totalPed=itens.reduce((a,i)=>a+parseInt(i.qtd_pedida),0);
+    const totalRec=itens.reduce((a,i)=>a+parseInt(i.qtd_recebida||0),0);
 
-    let faltaHtml='';
-    if(faltam>0)      faltaHtml=`<div class="lote-falta" style="color:var(--warn);">⬇ Faltam receber: ${faltam} uni</div>`;
-    else if(faltam<0) faltaHtml=`<div class="lote-falta" style="color:var(--purple);">↑ Excedente: ${Math.abs(faltam)} uni</div>`;
-    else              faltaHtml=`<div class="lote-falta" style="color:var(--accent);">✓ Totalmente recebido</div>`;
+    // Tabela de itens
+    const itensRows=itens.map(i=>{
+      const ped=parseInt(i.qtd_pedida);
+      const rec=parseInt(i.qtd_recebida)||0;
+      const falta=ped-rec;
+      const pct=ped>0?Math.min(Math.round(rec/ped*100),100):0;
+      const corFalta=i.status==='excedente'?'var(--purple)':i.status==='completo'?'var(--accent)':rec>0?'var(--warn)':'var(--text3)';
+      return `<tr>
+        <td class="nome">${i.produto_nome} — ${i.variante}</td>
+        <td class="mono">${ped.toLocaleString('pt-BR')}</td>
+        <td class="mono" style="color:var(--accent);">${rec.toLocaleString('pt-BR')}</td>
+        <td class="mono" style="color:${corFalta};">${falta>0?falta:falta<0?`+${Math.abs(falta)}`:'✓'}</td>
+        <td>
+          <span class="badge-status badge-${i.status}">${statusLabel[i.status]||i.status}</span>
+          <span class="prog-mini"><span class="prog-mini-fill" style="width:${pct}%;background:${corNum[i.status]||'var(--info)'};"></span></span>
+        </td>
+      </tr>`;
+    }).join('');
 
     // Movimentos deste lote
-    const movLote=movimentos.filter(m=>parseInt(m.lote)===parseInt(l.numero)&&m.produto_id===l.produto_id)
+    const movLote=movimentos.filter(m=>parseInt(m.lote)===parseInt(l.numero))
                             .sort((a,b)=>new Date(a.criado_em)-new Date(b.criado_em));
-
     const histRows=movLote.length
-      ? `<div class="hist-row hdr"><span>Data</span><span>Tipo</span><span>Qtd</span><span>Saldo Após</span><span>Obs</span></div>`+
-        movLote.map(m=>`<div class="hist-row">
-          <span>${m.data}</span>
-          <span style="color:${m.tipo==='entrada'?'var(--accent)':'var(--danger)'};">${m.tipo==='entrada'?'Entrada':'Saída'}</span>
-          <span style="color:${m.tipo==='entrada'?'var(--accent)':'var(--danger)'};">${m.tipo==='entrada'?'+':'-'}${m.quantidade}</span>
-          <span>${m.saldo_apos}</span>
-          <span style="color:var(--text3);font-size:10px;">${m.obs||'—'}</span>
-        </div>`).join('')
-      : '<div style="color:var(--text3);font-size:11px;padding:6px 0;font-family:var(--mono);">Nenhum movimento neste lote.</div>';
+      ?`<div class="hist-row hdr"><span>Data</span><span>Tipo</span><span>Qtd</span><span>Saldo</span><span>Obs</span></div>`+
+       movLote.map(m=>`<div class="hist-row">
+         <span>${m.data}</span>
+         <span style="color:${m.tipo==='entrada'?'var(--accent)':'var(--danger)'};">${m.tipo==='entrada'?'Entrada':'Saída'}</span>
+         <span style="color:${m.tipo==='entrada'?'var(--accent)':'var(--danger)'};">${m.tipo==='entrada'?'+':'-'}${m.quantidade}</span>
+         <span>${m.saldo_apos}</span>
+         <span style="font-size:10px;color:var(--text3);">${m.obs||'—'}</span>
+       </div>`).join('')
+      :'<div style="color:var(--text3);font-size:11px;padding:6px 0;font-family:var(--mono);">Nenhum movimento neste lote.</div>';
 
-    // Insumos deste lote
+    // Insumos
     const ins=loteInsumos[l.id]||[];
     const totalIns=ins.reduce((a,i)=>a+parseFloat(i.valor_total||0),0);
-
     const insRows=ins.length
-      ? `<table class="ins-table">
-          <thead><tr><th>Insumo</th><th>Fornecedor</th><th>Qtd</th><th>Valor unit.</th><th>Total</th><th>Entrega fab.</th><th>Obs</th><th></th></tr></thead>
-          <tbody>`+
-        ins.map(i=>`<tr>
-          <td class="nome">${i.insumo_nome}</td>
-          <td class="forn">${i.fornecedor||'—'}</td>
-          <td class="mono">${i.quantidade}</td>
-          <td class="val">R$ ${parseFloat(i.valor_unitario).toFixed(2)}</td>
-          <td class="val">R$ ${parseFloat(i.valor_total).toFixed(2)}</td>
-          <td>${i.data_entrega_fab?`<span class="date-badge">${new Date(i.data_entrega_fab+'T12:00:00').toLocaleDateString('pt-BR')}</span>`:'—'}</td>
-          <td style="font-size:10px;color:var(--text3);">${i.obs||'—'}</td>
-          <td><button class="btn btn-danger-outline btn-sm" onclick="delLoteInsumo('${l.id}','${i.id}')">✕</button></td>
-        </tr>`).join('')+
-        `</tbody></table>
-        <div class="ins-total">Total insumos: <span class="ins-total-val">R$ ${totalIns.toFixed(2)}</span></div>`
-      : '<div class="empty-ins">Nenhum insumo registrado neste lote.</div>';
+      ?`<table class="ins-table"><thead><tr><th>Insumo</th><th>Fornecedor</th><th>Qtd</th><th>Valor unit.</th><th>Total</th><th>Entrega fab.</th><th>Obs</th><th></th></tr></thead><tbody>`+
+       ins.map(i=>`<tr>
+         <td class="nome">${i.insumo_nome}</td>
+         <td class="forn">${i.fornecedor||'—'}</td>
+         <td class="mono">${i.quantidade}</td>
+         <td class="val">R$ ${parseFloat(i.valor_unitario).toFixed(2)}</td>
+         <td class="val">R$ ${parseFloat(i.valor_total).toFixed(2)}</td>
+         <td>${i.data_entrega_fab?`<span class="date-badge">${new Date(i.data_entrega_fab+'T12:00:00').toLocaleDateString('pt-BR')}</span>`:'—'}</td>
+         <td style="font-size:10px;color:var(--text3);">${i.obs||'—'}</td>
+         <td><button class="btn btn-danger-outline btn-sm" onclick="delLoteInsumo('${l.id}','${i.id}')">✕</button></td>
+       </tr>`).join('')+
+       `</tbody></table><div class="ins-total">Total insumos: <span class="ins-total-val">R$ ${totalIns.toFixed(2)}</span></div>`
+      :'<div class="empty-ins">Nenhum insumo registrado neste lote.</div>';
 
     return `<div class="lote-card ${l.status}" data-lote-id="${l.id}">
       <div class="lote-card-head">
         <div>
-          <div class="lote-numero ${l.status}" style="color:${corNum};">Lote #${l.numero}</div>
-          <div class="lote-prod">${l.produto_nome} — ${l.variante}</div>
+          <div class="lote-numero ${l.status}" style="color:${corNum[l.status]||'var(--info)'};">Lote #${l.numero}</div>
+          <div class="lote-meta">${itens.length} produto${itens.length!==1?'s':''} · ${totalPed.toLocaleString('pt-BR')} uni pedidas · ${totalRec.toLocaleString('pt-BR')} recebidas${l.obs?` · ${l.obs}`:''}</div>
         </div>
         <span class="pill pill-${l.status}">${statusLabel[l.status]||l.status}</span>
       </div>
       <div class="lote-body">
-        <div class="prog-label"><span>Recebido</span><span>${pct}%</span></div>
-        <div class="prog-bar"><div class="prog-fill fill-${l.status}" style="width:${pct}%"></div></div>
-        <div class="lote-nums">
-          <div>Pedido: <strong>${pedida.toLocaleString('pt-BR')}</strong></div>
-          <div>Recebido: <strong>${recebida.toLocaleString('pt-BR')}</strong></div>
-        </div>
-        ${faltaHtml}
-        ${l.obs?`<div class="lote-obs-txt">${l.obs}</div>`:''}
+        <table class="itens-table">
+          <thead><tr><th>Produto</th><th>Pedido</th><th>Recebido</th><th>Falta/Extra</th><th>Status</th></tr></thead>
+          <tbody>${itensRows}</tbody>
+        </table>
       </div>
 
       <button class="toggle-btn" onclick="toggleSection(this,'hist')">▸ Ver histórico de movimentos (${movLote.length})</button>
@@ -837,22 +937,10 @@ function renderLotes(){
             <input type="hidden" class="ins-inp-insumo-id"/>
             <input type="hidden" class="ins-inp-forn-val"/>
           </div>
-          <div class="ins-field">
-            <label>Qtd</label>
-            <input type="number" class="ins-inp-qtd" placeholder="0" min="1"/>
-          </div>
-          <div class="ins-field">
-            <label>Valor unit.</label>
-            <input type="number" class="ins-inp-valor" placeholder="0.00" step="0.01"/>
-          </div>
-          <div class="ins-field">
-            <label>Entrega ao fab.</label>
-            <input type="date" class="ins-inp-data"/>
-          </div>
-          <div class="ins-field">
-            <label>Obs</label>
-            <input type="text" class="ins-inp-obs" placeholder="Observação"/>
-          </div>
+          <div class="ins-field"><label>Qtd</label><input type="number" class="ins-inp-qtd" placeholder="0" min="1"/></div>
+          <div class="ins-field"><label>Valor unit.</label><input type="number" class="ins-inp-valor" placeholder="0.00" step="0.01"/></div>
+          <div class="ins-field"><label>Entrega ao fab.</label><input type="date" class="ins-inp-data"/></div>
+          <div class="ins-field"><label>Obs</label><input type="text" class="ins-inp-obs" placeholder="Observação"/></div>
           <button class="btn btn-primary btn-sm" onclick="addLoteInsumo('${l.id}',this)">+ Add</button>
         </div>
         ${insRows}
@@ -867,11 +955,9 @@ function toggleSection(btn,tipo){
   const section=btn.nextElementSibling;
   const isOpen=section.classList.toggle('open');
   const count=btn.textContent.match(/\((\d+)\)/)?.[1]||'';
-  const labelMap={hist:`histórico de movimentos`,ins:`insumos do lote`};
-  const label=labelMap[tipo]||tipo;
-  btn.textContent=(isOpen?'▾ Fechar ':'▸ Ver ')+label+(count?` (${count})`:'');
+  const labels={hist:'histórico de movimentos',ins:'insumos do lote'};
+  btn.textContent=(isOpen?'▾ Fechar ':'▸ Ver ')+labels[tipo]+(count?` (${count})`:'');
   if(isOpen) btn.classList.add('green'); else btn.classList.remove('green');
-  // Carregar insumos ao abrir pela primeira vez
   if(tipo==='ins'&&isOpen){
     const loteId=btn.closest('[data-lote-id]')?.dataset.loteId;
     if(loteId&&!loteInsumos[loteId]) carregarLoteInsumos(loteId);
@@ -886,19 +972,31 @@ async function carregarLoteInsumos(loteId){
   }catch(e){}
 }
 
+function limparFiltrosLote(){
+  document.getElementById('lote-filter-status').value='';
+  document.getElementById('lote-search').value='';
+  renderLotes();
+}
+
+async function delLote(id){
+  if(!confirm('Remover lote e todos os seus itens?')) return;
+  await api('DELETE',`/api/estoque/lotes/${id}`);
+  lotes=lotes.filter(l=>l.id!==id);
+  delete loteInsumos[id];
+  renderLotes();updateCounts();
+  toast('Lote removido.','warn');
+}
+
 // ── AUTOCOMPLETE INSUMO ────────────────────────────────────────
 function buscaInsumo(input,loteId){
   const q=input.value.toLowerCase();
   const box=document.getElementById(`sug-${loteId}`);
   const wrap=input.closest('.autocomplete-wrap');
-  const idInput=wrap.querySelector('.ins-inp-insumo-id');
-  const fornInput=wrap.querySelector('.ins-inp-forn-val');
-  idInput.value=''; fornInput.value='';
-
-  if(!q){box.classList.remove('open');box.innerHTML='';return;}
+  wrap.querySelector('.ins-inp-insumo-id').value='';
+  wrap.querySelector('.ins-inp-forn-val').value='';
+  if(!q){box.classList.remove('open');return;}
   const filtered=insumos.filter(i=>i.nome.toLowerCase().includes(q)).slice(0,6);
   if(!filtered.length){box.classList.remove('open');return;}
-
   box.innerHTML=filtered.map(i=>{
     const hi=i.nome.replace(new RegExp(`(${q})`,'gi'),'<em>$1</em>');
     return `<div class="sug-item" onclick="selecionarInsumo('${i.id}','${i.nome.replace(/'/g,"\\'")}',${i.valor_unitario},'${(i.fornecedor||'').replace(/'/g,"\\'")}',this,'${loteId}')">
@@ -935,19 +1033,12 @@ async function addLoteInsumo(loteId,btn){
   if(!nome){toast('Informe o nome do insumo.','warn');return;}
   if(qtd<=0){toast('Informe a quantidade.','warn');return;}
   try{
-    const res=await api('POST',`/api/lotes/${loteId}/insumos`,{
-      insumo_id:insumoId||null,insumo_nome:nome,fornecedor:forn,
-      valor_unitario:valor,quantidade:qtd,data_entrega_fab:data||null,obs
-    });
+    const res=await api('POST',`/api/lotes/${loteId}/insumos`,{insumo_id:insumoId||null,insumo_nome:nome,fornecedor:forn,valor_unitario:valor,quantidade:qtd,data_entrega_fab:data||null,obs});
     if(!loteInsumos[loteId]) loteInsumos[loteId]=[];
     loteInsumos[loteId].push(res);
-    row.querySelector('.ins-inp-nome').value='';
-    row.querySelector('.ins-inp-insumo-id').value='';
-    row.querySelector('.ins-inp-forn-val').value='';
-    row.querySelector('.ins-inp-qtd').value='';
-    row.querySelector('.ins-inp-valor').value='';
-    row.querySelector('.ins-inp-data').value='';
-    row.querySelector('.ins-inp-obs').value='';
+    ['ins-inp-nome','ins-inp-qtd','ins-inp-valor','ins-inp-data','ins-inp-obs','ins-inp-insumo-id','ins-inp-forn-val'].forEach(c=>{
+      const el=row.querySelector('.'+c);if(el)el.value='';
+    });
     renderLotes();
     toast('Insumo adicionado.','ok');
   }catch(e){toast(e.erro||'Erro.','err');}
@@ -959,21 +1050,6 @@ async function delLoteInsumo(loteId,insId){
   if(loteInsumos[loteId]) loteInsumos[loteId]=loteInsumos[loteId].filter(i=>i.id!==insId);
   renderLotes();
   toast('Insumo removido.','warn');
-}
-
-function limparFiltrosLote(){
-  document.getElementById('lote-filter-status').value='';
-  document.getElementById('lote-search').value='';
-  renderLotes();
-}
-
-async function delLote(id){
-  if(!confirm('Remover lote?')) return;
-  await api('DELETE',`/api/estoque/lotes/${id}`);
-  lotes=lotes.filter(l=>l.id!==id);
-  delete loteInsumos[id];
-  renderLotes();updateCounts();
-  toast('Lote removido.','warn');
 }
 
 // ── MOVIMENTOS ─────────────────────────────────────────────────
@@ -1012,7 +1088,7 @@ function limparFiltrosMov(){
   renderMovimentos();
 }
 
-async function delMovimento(id,prodId){
+async function delMovimento(id){
   if(!confirm('Remover movimento?')) return;
   await api('DELETE',`/api/estoque/movimentos/${id}`);
   movimentos=movimentos.filter(m=>m.id!==id);
@@ -1092,15 +1168,12 @@ async function addInsumo(){
 function renderInsumosConfig(){
   const g=document.getElementById('insumos-config-grid');
   document.getElementById('ins-count-label').textContent=`${insumos.length} insumo${insumos.length!==1?'s':''} cadastrado${insumos.length!==1?'s':''}`;
-  if(!insumos.length){g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum insumo cadastrado.</div>';return;}
+  if(!insumos.length){g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum insumo.</div>';return;}
   g.innerHTML=insumos.sort((a,b)=>a.nome.localeCompare(b.nome)).map(i=>`
     <div class="insumo-chip">
       <div class="insumo-chip-info">
         <div class="insumo-chip-nome">${i.nome}</div>
-        <div class="insumo-chip-meta">
-          <span class="insumo-chip-val">R$ ${parseFloat(i.valor_unitario).toFixed(2)}</span>
-          <span class="insumo-chip-forn">${i.fornecedor||'—'}</span>
-        </div>
+        <div class="insumo-chip-meta"><span class="insumo-chip-val">R$ ${parseFloat(i.valor_unitario).toFixed(2)}</span><span class="insumo-chip-forn">${i.fornecedor||'—'}</span></div>
       </div>
       <button class="btn btn-danger-outline btn-sm" onclick="delInsumo('${i.id}')">✕</button>
     </div>`).join('');
@@ -1114,7 +1187,6 @@ async function delInsumo(id){
   toast('Insumo removido.','warn');
 }
 
-// ── BOOT ───────────────────────────────────────────────────────
 (async()=>{
   const ok=await verificarToken();
   if(ok) iniciarApp();
