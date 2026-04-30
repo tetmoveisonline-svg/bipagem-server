@@ -1512,6 +1512,116 @@ app.get('/api/estoque/resumo', autenticar, async (req, res) => {
   } catch(e) { res.status(500).json({ erro: e.message }); }
 });
 
+// ── INSUMOS (cadastro base) ───────────────────────────────────
+async function initInsumos() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS insumos (
+      id TEXT PRIMARY KEY,
+      nome TEXT NOT NULL,
+      valor_unitario NUMERIC(10,2) DEFAULT 0,
+      fornecedor TEXT DEFAULT '',
+      criado_em TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(nome)
+    );
+    -- lote_insumos gerenciada por initLotes
+  `);
+  // Migrate lote_insumos: add pedido_id if missing
+  try {
+    await pool.query('ALTER TABLE lote_insumos ADD COLUMN IF NOT EXISTS pedido_id TEXT');
+    await pool.query('UPDATE lote_insumos SET pedido_id = lote_id WHERE pedido_id IS NULL AND lote_id IS NOT NULL');
+  } catch(e) {}
+}
+
+// Listar insumos
+app.get('/api/insumos', autenticar, async (req, res) => {
+  try {
+    const { q } = req.query;
+    let sql = 'SELECT * FROM insumos';
+    const params = [];
+    if (q) { sql += ' WHERE LOWER(nome) LIKE $1'; params.push(`%${q.toLowerCase()}%`); }
+    sql += ' ORDER BY nome';
+    const result = await pool.query(sql, params);
+    res.json(result.rows);
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Criar insumo
+app.post('/api/insumos', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const { nome, valor_unitario = 0, fornecedor = '' } = req.body;
+    if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
+    const result = await pool.query(
+      'INSERT INTO insumos (id,nome,valor_unitario,fornecedor) VALUES ($1,$2,$3,$4) RETURNING *',
+      [uid(), nome.trim(), parseFloat(valor_unitario)||0, fornecedor.trim()]
+    );
+    broadcast('insumo:add', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch(e) {
+    if (e.code === '23505') return res.status(409).json({ erro: 'Insumo já cadastrado.' });
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Atualizar insumo
+app.put('/api/insumos/:id', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    const { nome, valor_unitario, fornecedor } = req.body;
+    const result = await pool.query(
+      'UPDATE insumos SET nome=$1, valor_unitario=$2, fornecedor=$3 WHERE id=$4 RETURNING *',
+      [nome, parseFloat(valor_unitario)||0, fornecedor||'', req.params.id]
+    );
+    broadcast('insumo:update', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Remover insumo
+app.delete('/api/insumos/:id', autenticar, apenasAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM insumos WHERE id=$1', [req.params.id]);
+    broadcast('insumo:del', { id: req.params.id });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Listar insumos de um lote
+app.get('/api/lotes/:loteId/insumos', autenticar, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM lote_insumos WHERE pedido_id=$1 ORDER BY criado_em ASC',
+      [req.params.loteId]
+    );
+    res.json(result.rows);
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Adicionar insumo ao lote
+app.post('/api/lotes/:loteId/insumos', autenticar, async (req, res) => {
+  try {
+    const { insumo_id, insumo_nome, fornecedor, valor_unitario, quantidade, data_entrega_fab, obs } = req.body;
+    if (!insumo_nome) return res.status(400).json({ erro: 'Nome do insumo obrigatório.' });
+    const qtd  = parseFloat(quantidade) || 1;
+    const vUnit= parseFloat(valor_unitario) || 0;
+    const vTot = qtd * vUnit;
+    const result = await pool.query(`
+      INSERT INTO lote_insumos (id,pedido_id,insumo_id,insumo_nome,fornecedor,valor_unitario,quantidade,valor_total,data_entrega_fab,obs)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *
+    `, [uid(), req.params.loteId, insumo_id||null, insumo_nome.trim(), fornecedor||'', vUnit, qtd, vTot,
+        data_entrega_fab||null, obs||'']);
+    broadcast('lote_insumo:add', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Remover insumo do lote
+app.delete('/api/lotes/:loteId/insumos/:id', autenticar, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM lote_insumos WHERE id=$1 AND pedido_id=$2', [req.params.id, req.params.loteId]);
+    broadcast('lote_insumo:del', { id: req.params.id, lote_id: req.params.loteId });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ erro: e.message }); }
+});
+
 // ── Health check / Railway ────────────────────────────────────
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.get('/', (req, res) => res.json({ status: 'online', mensagem: 'API Bipagem', data: new Date() }));
