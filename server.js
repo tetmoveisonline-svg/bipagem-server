@@ -1345,6 +1345,15 @@ app.get('/api/estoque/resumo', autenticar, async (req, res) => {
 
 // ── LOTES v2 (multi-produto) ──────────────────────────────────
 async function initLotes() {
+  // Drop old table structure if exists (migration)
+  try {
+    // Check if old estoque_lotes exists and pedidos_lote doesn't
+    const check = await pool.query(`SELECT to_regclass('public.pedidos_lote') as exists`);
+    if (!check.rows[0].exists) {
+      console.log('Criando tabelas de lotes v2...');
+    }
+  } catch(e) {}
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS pedidos_lote (
       id TEXT PRIMARY KEY,
@@ -1409,12 +1418,16 @@ app.get('/api/estoque/lotes', autenticar, async (req, res) => {
   try {
     const pedidos = await pool.query('SELECT * FROM pedidos_lote ORDER BY numero DESC');
     const itens   = await pool.query('SELECT * FROM lote_itens ORDER BY produto_nome, variante');
+    console.log(`GET lotes: ${pedidos.rows.length} pedidos, ${itens.rows.length} itens`);
     const result  = pedidos.rows.map(p => ({
       ...p,
       itens: itens.rows.filter(i => i.pedido_id === p.id)
     }));
     res.json(result);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { 
+    console.error('GET lotes error:', e.message);
+    res.status(500).json({ erro: e.message }); 
+  }
 });
 
 // Criar pedido/lote com múltiplos itens
@@ -1449,9 +1462,13 @@ app.post('/api/estoque/lotes', autenticar, async (req, res) => {
 
     const pedido = await pool.query('SELECT * FROM pedidos_lote WHERE id=$1', [pedidoId]);
     const full = { ...pedido.rows[0], itens: itemsCreated };
+    console.log(`POST lote: criado lote #${numero} com ${itemsCreated.length} itens`);
     broadcast('estoque:lote_add', full);
     res.json(full);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { 
+    console.error('POST lotes error:', e.message);
+    res.status(500).json({ erro: e.message }); 
+  }
 });
 
 // Deletar lote
@@ -1500,19 +1517,6 @@ async function recalcularLotes(produto_id, lote_numero) {
     broadcast('estoque:lote_update', { ...updated.rows[0], itens: allItens.rows });
   } catch(e) { console.error('recalcularLotes:', e.message); }
 }
-
-// Resumo geral
-app.get('/api/estoque/resumo', autenticar, async (req, res) => {
-  try {
-    const produtos = await pool.query('SELECT * FROM estoque_produtos ORDER BY nome, variante');
-    const hoje = new Date().toISOString().slice(0,10);
-    const movHoje = await pool.query(`
-      SELECT tipo, SUM(quantidade)::int as total
-      FROM estoque_movimentos WHERE data_iso=$1 GROUP BY tipo
-    `, [hoje]);
-    res.json({ produtos: produtos.rows, movimentos_hoje: movHoje.rows });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
-});
 
 // ── INSUMOS (cadastro base) ───────────────────────────────────
 async function initInsumos() {
