@@ -1631,27 +1631,29 @@ app.delete('/api/lotes/:loteId/insumos/:id', autenticar, async (req, res) => {
 
 
 // ── IMPORTAÇÃO EM MASSA DE LOTES DA PLANILHA v2 ──────────────
-// ENTRADA planilha = pedido ao fabricante (insumos enviados)
-// SAÍDA planilha   = recebido do fabricante (peças prontas)
+// ENTRADA planilha = pedido ao fabricante (qtd_pedida)
+// SAÍDA planilha   = recebido do fabricante (qtd_recebida)
 app.post('/api/estoque/lotes/importar', autenticar, apenasAdmin, async (req, res) => {
   const lotesData = [{"numero": 1896, "itens": [{"produto_nome": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "qtd_pedida": 300, "qtd_recebida": 291, "status": "parcial"}, {"produto_nome": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "qtd_pedida": 700, "qtd_recebida": 693, "status": "parcial"}]}, {"numero": 1914, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 350, "qtd_recebida": 350, "status": "completo"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 350, "qtd_recebida": 338, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 350, "qtd_recebida": 336, "status": "parcial"}]}, {"numero": 1971, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 700, "qtd_recebida": 669, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 300, "qtd_recebida": 227, "status": "parcial"}]}, {"numero": 1982, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 100, "qtd_recebida": 29, "status": "parcial"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "qtd_pedida": 100, "qtd_recebida": 27, "status": "parcial"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "qtd_pedida": 100, "qtd_recebida": 46, "status": "parcial"}]}, {"numero": 1992, "itens": [{"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "qtd_pedida": 150, "qtd_recebida": 146, "status": "parcial"}, {"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "qtd_pedida": 150, "qtd_recebida": 323, "status": "excedente"}]}, {"numero": 1996, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 1000, "qtd_recebida": 1004, "status": "excedente"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 300, "qtd_recebida": 299, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 300, "qtd_recebida": 300, "status": "completo"}]}, {"numero": 1997, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 800, "qtd_recebida": 790, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 550, "qtd_recebida": 546, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 250, "qtd_recebida": 124, "status": "parcial"}]}, {"numero": 1998, "itens": [{"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "qtd_pedida": 400, "qtd_recebida": 120, "status": "parcial"}, {"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "qtd_pedida": 600, "qtd_recebida": 320, "status": "parcial"}]}, {"numero": 2021, "itens": [{"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "qtd_pedida": 400, "qtd_recebida": 401, "status": "excedente"}, {"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "qtd_pedida": 600, "qtd_recebida": 557, "status": "parcial"}]}, {"numero": 2022, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 400, "qtd_recebida": 288, "status": "parcial"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "qtd_pedida": 300, "qtd_recebida": 403, "status": "excedente"}]}, {"numero": 2023, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 600, "qtd_recebida": 600, "status": "completo"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 200, "qtd_recebida": 198, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 200, "qtd_recebida": 200, "status": "completo"}]}, {"numero": 2024, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 600, "qtd_recebida": 600, "status": "completo"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 200, "qtd_recebida": 200, "status": "completo"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 200, "qtd_recebida": 197, "status": "parcial"}]}, {"numero": 2025, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 600, "qtd_recebida": 576, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 200, "qtd_recebida": 198, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 200, "qtd_recebida": 202, "status": "excedente"}]}, {"numero": 2026, "itens": [{"produto_nome": "PENTEADEIRA NEW", "variante": "BRANCA", "qtd_pedida": 400, "qtd_recebida": 397, "status": "parcial"}, {"produto_nome": "PENTEADEIRA NEW", "variante": "OFF / NATURE", "qtd_pedida": 1000, "qtd_recebida": 1001, "status": "excedente"}, {"produto_nome": "PENTEADEIRA NEW", "variante": "PRETA / NATURE", "qtd_pedida": 400, "qtd_recebida": 394, "status": "parcial"}]}, {"numero": 2031, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 800, "qtd_recebida": 0, "status": "aberto"}]}, {"numero": 2037, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 550, "qtd_recebida": 0, "status": "aberto"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 250, "qtd_recebida": 0, "status": "aberto"}]}, {"numero": 2049, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 400, "qtd_recebida": 389, "status": "parcial"}]}, {"numero": 2078, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 600, "qtd_recebida": 600, "status": "completo"}]}, {"numero": 2082, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 26, "qtd_recebida": 0, "status": "aberto"}]}, {"numero": 2085, "itens": [{"produto_nome": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 493, "status": "parcial"}, {"produto_nome": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "qtd_pedida": 500, "qtd_recebida": 453, "status": "parcial"}]}, {"numero": 2086, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 476, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 200, "qtd_recebida": 297, "status": "excedente"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 200, "qtd_recebida": 196, "status": "parcial"}]}, {"numero": 2090, "itens": [{"produto_nome": "BALCÃO COOKTOP FLÓRIDA", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 510, "status": "excedente"}, {"produto_nome": "BALCÃO COOKTOP FLÓRIDA", "variante": "PRETO", "qtd_pedida": 500, "qtd_recebida": 476, "status": "parcial"}]}, {"numero": 2096, "itens": [{"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "qtd_pedida": 200, "qtd_recebida": 192, "status": "parcial"}, {"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "qtd_pedida": 300, "qtd_recebida": 307, "status": "excedente"}]}, {"numero": 2097, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 300, "qtd_recebida": 300, "status": "completo"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 528, "status": "excedente"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 200, "qtd_recebida": 210, "status": "excedente"}]}, {"numero": 2099, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 484, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 300, "qtd_recebida": 316, "status": "excedente"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 200, "qtd_recebida": 200, "status": "completo"}]}, {"numero": 2100, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 600, "qtd_recebida": 600, "status": "completo"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "qtd_pedida": 200, "qtd_recebida": 202, "status": "excedente"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "qtd_pedida": 200, "qtd_recebida": 199, "status": "parcial"}]}, {"numero": 2101, "itens": [{"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "qtd_pedida": 250, "qtd_recebida": 249, "status": "parcial"}, {"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "qtd_pedida": 250, "qtd_recebida": 274, "status": "excedente"}]}, {"numero": 2102, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 510, "status": "excedente"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 300, "qtd_recebida": 300, "status": "completo"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "NATURE PRETO", "qtd_pedida": 200, "qtd_recebida": 183, "status": "parcial"}]}, {"numero": 2172, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 400, "qtd_recebida": 393, "status": "parcial"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "qtd_pedida": 200, "qtd_recebida": 200, "status": "completo"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "qtd_pedida": 200, "qtd_recebida": 200, "status": "completo"}]}, {"numero": 2176, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 600, "qtd_recebida": 500, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 200, "qtd_recebida": 300, "status": "excedente"}]}, {"numero": 2177, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 300, "qtd_recebida": 300, "status": "completo"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "qtd_pedida": 200, "qtd_recebida": 201, "status": "excedente"}]}, {"numero": 2178, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 498, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 300, "qtd_recebida": 290, "status": "parcial"}]}, {"numero": 2179, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 300, "qtd_recebida": 300, "status": "completo"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "qtd_pedida": 100, "qtd_recebida": 100, "status": "completo"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "qtd_pedida": 400, "qtd_recebida": 400, "status": "completo"}]}, {"numero": 2182, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 500, "status": "completo"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 300, "qtd_recebida": 300, "status": "completo"}]}, {"numero": 2183, "itens": [{"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "qtd_pedida": 500, "qtd_recebida": 0, "status": "aberto"}]}, {"numero": 2184, "itens": [{"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "BRANCO", "qtd_pedida": 250, "qtd_recebida": 250, "status": "completo"}, {"produto_nome": "BALCÃO COOKTOP NEW (MONACO)", "variante": "PRETO", "qtd_pedida": 250, "qtd_recebida": 249, "status": "parcial"}]}, {"numero": 2187, "itens": [{"produto_nome": "COMBO E&A (DULCE)", "variante": "BRANCO", "qtd_pedida": 1000, "qtd_recebida": 996, "status": "parcial"}, {"produto_nome": "COMBO E&A (DULCE)", "variante": "OFF WHITE", "qtd_pedida": 600, "qtd_recebida": 600, "status": "completo"}]}, {"numero": 2188, "itens": [{"produto_nome": "COMBO 2 MÓDULOS", "variante": "BRANCO", "qtd_pedida": 600, "qtd_recebida": 890, "status": "excedente"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "NATURE / OFF", "qtd_pedida": 600, "qtd_recebida": 400, "status": "parcial"}, {"produto_nome": "COMBO 2 MÓDULOS", "variante": "PRETO / NATURE", "qtd_pedida": 400, "qtd_recebida": 300, "status": "parcial"}]}];
-  let criados = 0, pulados = 0, erros = [];
+  let criados = 0, atualizados = 0, erros = [];
 
   for (const lote of lotesData) {
     try {
-      const dup = await pool.query('SELECT id FROM pedidos_lote WHERE numero=$1', [lote.numero]);
-      if (dup.rows.length) { pulados++; continue; }
+      // Remover lote existente importado da planilha para reimportar com dados corretos
+      const existing = await pool.query('SELECT id FROM pedidos_lote WHERE numero=$1', [lote.numero]);
+      if (existing.rows.length) {
+        await pool.query('DELETE FROM pedidos_lote WHERE id=$1', [existing.rows[0].id]);
+        atualizados++;
+      }
 
       const pedidoId = uid();
-      
-      // Status geral: se algum item é parcial/aberto, pedido é parcial/aberto
-      const statusGeral = (() => {
-        const statuses = lote.itens.map(i => i.status);
-        if (statuses.every(s => s === 'completo')) return 'completo';
-        if (statuses.some(s => s === 'excedente') && statuses.every(s => s === 'completo' || s === 'excedente')) return 'excedente';
-        if (statuses.some(s => s === 'parcial' || s === 'completo' || s === 'excedente')) return 'parcial';
-        return 'aberto';
-      })();
+
+      // Status geral do pedido
+      const statuses = lote.itens.map(i => i.status);
+      let statusGeral = 'aberto';
+      if (statuses.every(s => s === 'completo')) statusGeral = 'completo';
+      else if (statuses.every(s => s === 'completo' || s === 'excedente')) statusGeral = 'excedente';
+      else if (statuses.some(s => ['parcial','completo','excedente'].includes(s))) statusGeral = 'parcial';
 
       await pool.query(
         'INSERT INTO pedidos_lote (id,numero,obs,status,usuario_nome) VALUES ($1,$2,$3,$4,$5)',
@@ -1677,7 +1679,50 @@ app.post('/api/estoque/lotes/importar', autenticar, apenasAdmin, async (req, res
     }
   }
 
-  res.json({ criados, pulados, erros, total: lotesData.length });
+  res.json({ criados, atualizados, erros, total: lotesData.length });
+});
+
+// Registrar entrega parcial do fabricante em um item do lote
+app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res) => {
+  try {
+    const { quantidade, obs } = req.body;
+    if (!quantidade || parseInt(quantidade) <= 0)
+      return res.status(400).json({ erro: 'Quantidade inválida.' });
+
+    const item = await pool.query('SELECT * FROM lote_itens WHERE id=$1 AND pedido_id=$2',
+      [req.params.itemId, req.params.loteId]);
+    if (!item.rows.length) return res.status(404).json({ erro: 'Item não encontrado.' });
+    const it = item.rows[0];
+
+    const novoRecebido = parseInt(it.qtd_recebida) + parseInt(quantidade);
+    const ped = parseInt(it.qtd_pedida);
+    let statusItem = 'parcial';
+    if (novoRecebido === 0)    statusItem = 'aberto';
+    if (novoRecebido === ped)  statusItem = 'completo';
+    if (novoRecebido > ped)    statusItem = 'excedente';
+
+    await pool.query(
+      'UPDATE lote_itens SET qtd_recebida=$1, status=$2 WHERE id=$3',
+      [novoRecebido, statusItem, it.id]
+    );
+
+    // Recalcular status geral do pedido
+    const allItens = await pool.query('SELECT * FROM lote_itens WHERE pedido_id=$1', [req.params.loteId]);
+    const statuses = allItens.rows.map(i => i.status);
+    let statusGeral = 'aberto';
+    if (statuses.every(s => s === 'completo')) statusGeral = 'completo';
+    else if (statuses.every(s => s === 'completo' || s === 'excedente')) statusGeral = 'excedente';
+    else if (statuses.some(s => ['parcial','completo','excedente'].includes(s))) statusGeral = 'parcial';
+
+    const pedido = await pool.query(
+      'UPDATE pedidos_lote SET status=$1 WHERE id=$2 RETURNING *',
+      [statusGeral, req.params.loteId]
+    );
+
+    const full = { ...pedido.rows[0], itens: allItens.rows.map(r => r.id === it.id ? {...r, qtd_recebida: novoRecebido, status: statusItem} : r) };
+    broadcast('estoque:lote_update', full);
+    res.json(full);
+  } catch(e) { res.status(500).json({ erro: e.message }); }
 });
 
 
