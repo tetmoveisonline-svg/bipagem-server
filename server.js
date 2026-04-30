@@ -1683,18 +1683,27 @@ app.post('/api/estoque/lotes/importar', autenticar, apenasAdmin, async (req, res
 });
 
 // Registrar entrega parcial do fabricante em um item do lote
+// (também cria ENTRADA no estoque do produto)
 app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res) => {
   try {
     const { quantidade, obs } = req.body;
-    if (!quantidade || parseInt(quantidade) <= 0)
+    const qtd = parseInt(quantidade);
+    if (!qtd || qtd <= 0)
       return res.status(400).json({ erro: 'Quantidade inválida.' });
 
+    // 1) Buscar item do lote
     const item = await pool.query('SELECT * FROM lote_itens WHERE id=$1 AND pedido_id=$2',
       [req.params.itemId, req.params.loteId]);
     if (!item.rows.length) return res.status(404).json({ erro: 'Item não encontrado.' });
     const it = item.rows[0];
 
-    const novoRecebido = parseInt(it.qtd_recebida) + parseInt(quantidade);
+    // 2) Buscar lote (para pegar o número do lote)
+    const pedidoRes = await pool.query('SELECT * FROM pedidos_lote WHERE id=$1', [req.params.loteId]);
+    if (!pedidoRes.rows.length) return res.status(404).json({ erro: 'Lote não encontrado.' });
+    const numeroLote = pedidoRes.rows[0].numero;
+
+    // 3) Atualizar quantidade recebida + status do item
+    const novoRecebido = parseInt(it.qtd_recebida) + qtd;
     const ped = parseInt(it.qtd_pedida);
     let statusItem = 'parcial';
     if (novoRecebido === 0)    statusItem = 'aberto';
@@ -1706,7 +1715,30 @@ app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res
       [novoRecebido, statusItem, it.id]
     );
 
-    // Recalcular status geral do pedido
+    // 4) Criar ENTRADA no estoque do produto (se houver produto vinculado)
+    let movimento = null;
+    let novoSaldo = null;
+    if (it.produto_id) {
+      const prod = await pool.query('SELECT * FROM estoque_produtos WHERE id=$1', [it.produto_id]);
+      if (prod.rows.length) {
+        const p = prod.rows[0];
+        novoSaldo = p.saldo_atual + qtd;
+        const { data } = nowBR();
+        const data_iso = new Date().toISOString().slice(0,10);
+
+        await pool.query('UPDATE estoque_produtos SET saldo_atual=$1 WHERE id=$2', [novoSaldo, it.produto_id]);
+
+        const movRes = await pool.query(`
+          INSERT INTO estoque_movimentos
+          (id, produto_id, produto_nome, variante, tipo, quantidade, saldo_apos, lote, obs, data, data_iso, usuario_nome)
+          VALUES ($1,$2,$3,$4,'entrada',$5,$6,$7,$8,$9,$10,$11) RETURNING *
+        `, [uid(), it.produto_id, p.nome, p.variante, qtd, novoSaldo, numeroLote, obs||'', data, data_iso, req.usuario.nome]);
+        movimento = movRes.rows[0];
+        broadcast('estoque:movimento', { ...movimento, saldo_atual: novoSaldo });
+      }
+    }
+
+    // 5) Recalcular status geral do pedido
     const allItens = await pool.query('SELECT * FROM lote_itens WHERE pedido_id=$1', [req.params.loteId]);
     const statuses = allItens.rows.map(i => i.status);
     let statusGeral = 'aberto';
@@ -1721,8 +1753,12 @@ app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res
 
     const full = { ...pedido.rows[0], itens: allItens.rows.map(r => r.id === it.id ? {...r, qtd_recebida: novoRecebido, status: statusItem} : r) };
     broadcast('estoque:lote_update', full);
-    res.json(full);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+    console.log(`POST entrega: lote #${numeroLote} ${it.produto_nome}/${it.variante} +${qtd} (saldo: ${novoSaldo}) obs="${obs||''}"`);
+    res.json({ ...full, movimento, saldo_atual: novoSaldo });
+  } catch(e) {
+    console.error('POST entrega error:', e.message);
+    res.status(500).json({ erro: e.message });
+  }
 });
 
 
