@@ -9,6 +9,7 @@
 (function(){try{var t=localStorage.getItem('bip_tema');if(t&&t!=='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
 </script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   --bg:#0f0f0f;--surface:#1a1a1a;--surface2:#222;--surface3:#2a2a2a;
@@ -723,13 +724,52 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 
         <!-- Bipagem da coleta -->
         <div class="add-form" style="margin-bottom:1.25rem;">
-          <div class="add-form-title">Registrar coleta da transportadora</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div class="add-form-title" style="margin:0;">Registrar coleta da transportadora</div>
+            <button class="btn" onclick="abrirImportRomaneio()" style="background:var(--info);color:#fff;font-size:11px;padding:6px 12px;">📥 Importar Romaneio (.xlsx)</button>
+          </div>
           <div class="add-row" style="gap:10px;">
             <div class="field"><label>Transportadora</label><select id="col-transp-sel"></select></div>
             <div class="field" style="flex:2;"><label>Bipe ou digite a etiqueta</label><input type="text" id="col-etiq-input" placeholder="Aguardando bipagem..." onkeydown="if(event.key==='Enter')bipColeta()" autocomplete="off"/></div>
             <button class="btn btn-primary" onclick="bipColeta()">✓ Confirmar coleta</button>
           </div>
           <div id="col-feedback" style="margin-top:8px;font-size:12px;"></div>
+        </div>
+
+        <!-- Modal: Importar Romaneio -->
+        <div id="modal-import" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.5rem;width:560px;max-width:92vw;max-height:90vh;overflow:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+              <div style="font-size:16px;font-weight:600;">📥 Importar Romaneio de Coleta</div>
+              <button onclick="fecharImportRomaneio()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;">×</button>
+            </div>
+
+            <div style="font-size:12px;color:var(--text2);margin-bottom:1rem;line-height:1.5;">
+              Faça upload do arquivo <code style="background:var(--surface2);padding:2px 6px;border-radius:3px;">.xlsx</code> que a plataforma envia.
+              O sistema vai ler a coluna <strong>B (Tracking Number)</strong> e <strong>E (Pickup Time)</strong> e dar baixa nas etiquetas correspondentes.
+            </div>
+
+            <!-- Etapa 1: seleção -->
+            <div id="imp-step1">
+              <div class="field" style="margin-bottom:1rem;">
+                <label>Transportadora *</label>
+                <select id="imp-transp-sel"></select>
+              </div>
+              <div class="field" style="margin-bottom:1rem;">
+                <label>Arquivo (.xlsx)</label>
+                <input type="file" id="imp-file" accept=".xlsx" onchange="lerRomaneio()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:var(--r);width:100%;box-sizing:border-box;"/>
+              </div>
+              <div id="imp-preview" style="font-size:12px;"></div>
+            </div>
+
+            <!-- Etapa 2: resultado -->
+            <div id="imp-step2" style="display:none;"></div>
+
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem;">
+              <button class="btn" onclick="fecharImportRomaneio()" style="background:var(--surface2);">Cancelar</button>
+              <button class="btn btn-primary" id="imp-confirm-btn" onclick="confirmarImportRomaneio()" disabled style="background:var(--accent);color:#000;opacity:.5;cursor:not-allowed;">Confirmar importação</button>
+            </div>
+          </div>
         </div>
 
         <!-- Filtros -->
@@ -1340,6 +1380,187 @@ async function bipColeta(){
       fb.innerHTML = `<div class="col-feedback-err">✗ ${e.erro||'Erro'}: ${e.mensagem||''}</div>`;
     }
     inp.select();
+  }
+}
+
+// ── Importar romaneio (.xlsx) ─────────────────────────────────
+let romaneioParsed = null; // { etiquetas: [{etiqueta, pickup_time}], total }
+
+function abrirImportRomaneio(){
+  // Sincroniza o select de transportadora do modal com o do sistema
+  const sel = document.getElementById('imp-transp-sel');
+  sel.innerHTML = '<option value="">— selecionar —</option>' +
+    TRANSPS.map(t=>`<option value="${t.nome}">${t.nome}</option>`).join('');
+  // Pré-seleciona a transportadora se já estiver escolhida no campo de bipe
+  const bipSel = document.getElementById('col-transp-sel').value;
+  if (bipSel) sel.value = bipSel;
+
+  document.getElementById('imp-step1').style.display = 'block';
+  document.getElementById('imp-step2').style.display = 'none';
+  document.getElementById('imp-preview').innerHTML = '';
+  document.getElementById('imp-file').value = '';
+  romaneioParsed = null;
+  desabilitarConfirmImport();
+  document.getElementById('modal-import').style.display = 'flex';
+}
+
+function fecharImportRomaneio(){
+  document.getElementById('modal-import').style.display = 'none';
+  romaneioParsed = null;
+}
+
+function desabilitarConfirmImport(){
+  const btn = document.getElementById('imp-confirm-btn');
+  btn.disabled = true;
+  btn.style.opacity = '.5';
+  btn.style.cursor = 'not-allowed';
+}
+function habilitarConfirmImport(){
+  const btn = document.getElementById('imp-confirm-btn');
+  btn.disabled = false;
+  btn.style.opacity = '1';
+  btn.style.cursor = 'pointer';
+}
+
+async function lerRomaneio(){
+  const file = document.getElementById('imp-file').files[0];
+  const preview = document.getElementById('imp-preview');
+  if (!file) return;
+  if (typeof XLSX === 'undefined') {
+    preview.innerHTML = `<div class="col-feedback-err">⚠ Biblioteca XLSX não carregou. Recarregue a página (F5).</div>`;
+    return;
+  }
+  preview.innerHTML = `<div style="color:var(--text2);">⏳ Lendo arquivo...</div>`;
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+    // Detectar header: procurar "Tracking Number" e "Pickup Time"
+    const headerRow = rows[0] || [];
+    let colTracking = -1, colPickup = -1;
+    headerRow.forEach((h, i) => {
+      const t = String(h || '').toLowerCase().trim();
+      if (t.includes('tracking') || t === 'etiqueta' || t === 'awb') colTracking = i;
+      if (t.includes('pickup') || t.includes('coleta') || t.includes('horário') || t.includes('horario')) colPickup = i;
+    });
+    // Fallback: B (col 1) e E (col 4)
+    if (colTracking === -1) colTracking = 1;
+    if (colPickup === -1) colPickup = 4;
+
+    const etiquetas = [];
+    const vistos = new Set();
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const et = String(r[colTracking] || '').trim().toUpperCase();
+      if (!et) continue;
+      if (vistos.has(et)) continue;
+      vistos.add(et);
+      let pt = r[colPickup];
+      let pickupISO = null;
+      if (pt instanceof Date) {
+        pickupISO = pt.toISOString();
+      } else if (typeof pt === 'string' && pt.trim()) {
+        // Aceita "2026-05-04 15:39" ou "04/05/2026 15:39"
+        const d = parseDateBR(pt);
+        if (d && !isNaN(d)) pickupISO = d.toISOString();
+      }
+      etiquetas.push({ etiqueta: et, pickup_time: pickupISO });
+    }
+
+    if (etiquetas.length === 0) {
+      preview.innerHTML = `<div class="col-feedback-err">⚠ Nenhuma etiqueta encontrada no arquivo. Verifique se a coluna B contém os Tracking Numbers.</div>`;
+      desabilitarConfirmImport();
+      return;
+    }
+
+    romaneioParsed = { etiquetas, total: etiquetas.length };
+    const semHora = etiquetas.filter(e => !e.pickup_time).length;
+    preview.innerHTML = `
+      <div class="col-feedback-ok" style="margin-bottom:6px;">✓ ${etiquetas.length.toLocaleString('pt-BR')} etiquetas encontradas</div>
+      <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">
+        Primeira: ${etiquetas[0].etiqueta}<br>
+        Última: ${etiquetas[etiquetas.length-1].etiqueta}<br>
+        ${semHora ? `<span style="color:var(--warn);">⚠ ${semHora} sem horário de coleta (vai usar agora)</span>` : '✓ Todas com horário de coleta'}
+      </div>
+    `;
+    habilitarConfirmImport();
+  } catch (e) {
+    console.error('Erro ao ler romaneio:', e);
+    preview.innerHTML = `<div class="col-feedback-err">⚠ Erro ao ler arquivo: ${e.message}</div>`;
+    desabilitarConfirmImport();
+  }
+}
+
+// Parse "04/05/2026 15:39" ou "2026-05-04 15:39"
+function parseDateBR(s){
+  s = String(s).trim();
+  // ISO-like
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return new Date(s.replace(' ','T'));
+  // BR
+  const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s*(\d{1,2}):(\d{2})?/);
+  if (m) return new Date(`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}T${m[4].padStart(2,'0')}:${m[5]||'00'}:00`);
+  return null;
+}
+
+async function confirmarImportRomaneio(){
+  const transp = document.getElementById('imp-transp-sel').value;
+  if (!transp) { toast('Selecione a transportadora.','warn'); return; }
+  if (!romaneioParsed || romaneioParsed.etiquetas.length === 0) { toast('Nenhuma etiqueta a importar.','warn'); return; }
+
+  desabilitarConfirmImport();
+  const step2 = document.getElementById('imp-step2');
+  step2.style.display = 'block';
+  step2.innerHTML = `<div style="color:var(--text2);font-size:12px;">⏳ Processando ${romaneioParsed.total.toLocaleString('pt-BR')} etiquetas...</div>`;
+
+  try {
+    const r = await api('POST','/api/coletas/lote', {
+      transportadora: transp,
+      etiquetas: romaneioParsed.etiquetas
+    });
+    document.getElementById('imp-step1').style.display = 'none';
+    const fNF = r.nao_encontradas || [];
+    step2.innerHTML = `
+      <div class="col-feedback-ok" style="margin-bottom:8px;">✅ Importação concluída</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;margin-bottom:10px;">
+        <div style="background:var(--surface2);padding:10px;border-radius:6px;">
+          <div style="font-size:10px;color:var(--text2);text-transform:uppercase;">Coletadas com sucesso</div>
+          <div style="font-size:22px;font-weight:600;color:var(--accent);">${(r.coletadas||0).toLocaleString('pt-BR')}</div>
+        </div>
+        <div style="background:var(--surface2);padding:10px;border-radius:6px;">
+          <div style="font-size:10px;color:var(--text2);text-transform:uppercase;">Já estavam coletadas</div>
+          <div style="font-size:22px;font-weight:600;color:var(--warn);">${(r.ja_coletadas||0).toLocaleString('pt-BR')}</div>
+        </div>
+        <div style="background:var(--surface2);padding:10px;border-radius:6px;">
+          <div style="font-size:10px;color:var(--text2);text-transform:uppercase;">Não encontradas</div>
+          <div style="font-size:22px;font-weight:600;color:var(--danger);">${fNF.length.toLocaleString('pt-BR')}</div>
+        </div>
+        <div style="background:var(--surface2);padding:10px;border-radius:6px;">
+          <div style="font-size:10px;color:var(--text2);text-transform:uppercase;">Total processadas</div>
+          <div style="font-size:22px;font-weight:600;">${(r.total||0).toLocaleString('pt-BR')}</div>
+        </div>
+      </div>
+      ${fNF.length > 0 ? `
+        <details style="margin-top:8px;">
+          <summary style="cursor:pointer;font-size:12px;color:var(--text2);">Ver ${fNF.length} etiquetas não encontradas</summary>
+          <div style="margin-top:6px;padding:8px;background:var(--surface2);border-radius:4px;max-height:160px;overflow:auto;font-family:var(--mono);font-size:11px;line-height:1.6;">
+            ${fNF.map(e=>e).join('<br>')}
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:5px;">
+            Essas etiquetas estão no romaneio mas ainda não foram bipadas na separação. Verifique se foram separadas corretamente.
+          </div>
+        </details>
+      ` : ''}
+    `;
+    document.getElementById('imp-confirm-btn').textContent = 'Fechar';
+    document.getElementById('imp-confirm-btn').onclick = fecharImportRomaneio;
+    habilitarConfirmImport();
+    // Recarrega coletas pra refletir
+    carregarColetas();
+  } catch(e) {
+    step2.innerHTML = `<div class="col-feedback-err">✗ Erro: ${e.erro || e.message}</div>`;
+    habilitarConfirmImport();
   }
 }
 
