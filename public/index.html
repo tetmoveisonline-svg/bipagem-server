@@ -252,6 +252,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .col-feedback-warn{padding:8px 12px;background:rgba(255,181,71,.08);border-left:3px solid var(--warn);border-radius:4px;color:var(--warn);}
 .col-feedback-err{padding:8px 12px;background:rgba(255,77,77,.08);border-left:3px solid var(--danger);border-radius:4px;color:var(--danger);}
 
+/* Pílulas de filtro por marketplace */
+.col-pill{padding:5px 11px;background:var(--surface);border:1px solid var(--border);color:var(--text2);border-radius:14px;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:border-color .15s,opacity .15s;user-select:none;}
+.col-pill:hover{border-color:var(--border2);}
+.col-pill.active{border-width:1px;}
+.col-pill.zero{opacity:.4;}
+.col-pill .col-pill-count{font-family:var(--mono);opacity:.7;font-weight:500;}
+
 </style>
 </head>
 <body>
@@ -731,9 +738,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
             <button class="btn" id="col-tab-aguard" onclick="trocarAbaColeta('aguardando')" style="background:var(--accent);color:#000;">Aguardando coleta</button>
             <button class="btn" id="col-tab-hist" onclick="trocarAbaColeta('coletado')" style="background:var(--surface2);">Histórico de coletas</button>
           </div>
-          <select id="col-filter-mkt" onchange="renderColetas()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r);font-size:12px;">
-            <option value="">Todos marketplaces</option>
-          </select>
+          <div id="col-mkt-pills" style="display:flex;gap:6px;flex-wrap:wrap;margin-left:8px;"></div>
           <select id="col-filter-transp" onchange="renderColetas()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r);font-size:12px;display:none;">
             <option value="">Todas transportadoras</option>
           </select>
@@ -942,7 +947,7 @@ function handleWS(event, data) {
         const ci = COLETAS.findIndex(c => c.id === data.id);
         if (ci >= 0) COLETAS[ci] = data; else COLETAS.unshift(data);
       }
-      if (document.getElementById('panel-coleta').classList.contains('active')) renderColetas();
+      if (document.getElementById('panel-coleta').classList.contains('active')) { renderMktPills(); renderColetas(); }
       atualizarStatColeta();
       break;
     case 'coleta:del':
@@ -952,7 +957,7 @@ function handleWS(event, data) {
         const ci = COLETAS.findIndex(c => c.id === data.id);
         if (ci >= 0) COLETAS[ci] = { ...COLETAS[ci], coletada_em: null, transportadora: null, coletada_por: null };
       }
-      if (document.getElementById('panel-coleta').classList.contains('active')) renderColetas();
+      if (document.getElementById('panel-coleta').classList.contains('active')) { renderMktPills(); renderColetas(); }
       atualizarStatColeta();
       break;
     case 'transportadora:add':
@@ -1101,6 +1106,7 @@ async function escolherTema(temaId){
 let COLETAS = [];
 let TRANSPS = [];
 let abaColetaAtiva = 'aguardando'; // 'aguardando' | 'coletado'
+let filtroMktAtivo = ''; // '' = todos · ou nome do marketplace
 
 // Limites de tempo (em segundos) — < 5h verde, 1d+ amarelo, 2d+ vermelho
 const TEMPO_VERDE_MAX = 5 * 3600;        // 18000s = 5h
@@ -1148,15 +1154,57 @@ function populateTranspSelect(){
 }
 
 function populateColetaFilters(){
-  const filtroMkt = document.getElementById('col-filter-mkt');
-  if (filtroMkt && S.marketplaces) {
-    filtroMkt.innerHTML = '<option value="">Todos marketplaces</option>' +
-      S.marketplaces.map(m=>`<option value="${m.nome}">${m.nome}</option>`).join('');
-  }
+  renderMktPills();
+}
+
+function renderMktPills(){
+  const cont = document.getElementById('col-mkt-pills');
+  if (!cont || !S.marketplaces) return;
+
+  // Conta quantas coletas pendentes/coletadas por marketplace (de acordo com a aba)
+  const contagem = {};
+  let total = 0;
+  COLETAS.forEach(c => {
+    const ehAguard = !c.coletada_em;
+    if (abaColetaAtiva === 'aguardando' && !ehAguard) return;
+    if (abaColetaAtiva === 'coletado' && ehAguard) return;
+    const nome = c.marketplace_nome || '?';
+    contagem[nome] = (contagem[nome] || 0) + 1;
+    total++;
+  });
+
+  // Pílula "Todos" sempre primeiro
+  const pills = [
+    { nome: '', label: 'Todos', count: total, cor: 'var(--accent)' }
+  ];
+  // Resto: marketplaces ordenados por contagem decrescente
+  S.marketplaces
+    .map(m => ({ nome: m.nome, label: m.nome, count: contagem[m.nome] || 0, cor: m.cor || '#888' }))
+    .sort((a,b) => b.count - a.count)
+    .forEach(p => pills.push(p));
+
+  cont.innerHTML = pills.map(p => {
+    const ativo = p.nome === filtroMktAtivo;
+    const zero = p.count === 0;
+    const corBorda = ativo ? p.cor : 'var(--border)';
+    const corTexto = (ativo || !zero) ? p.cor : 'var(--text2)';
+    return `<span class="col-pill ${ativo?'active':''} ${zero?'zero':''}"
+      onclick="filtrarPorMkt('${p.nome.replace(/'/g,"\\'")}')"
+      style="border-color:${corBorda};color:${corTexto};">
+      ${p.label} <span class="col-pill-count">${p.count.toLocaleString('pt-BR')}</span>
+    </span>`;
+  }).join('');
+}
+
+function filtrarPorMkt(nome){
+  filtroMktAtivo = nome;
+  renderMktPills();
+  renderColetas();
 }
 
 function trocarAbaColeta(aba){
   abaColetaAtiva = aba;
+  filtroMktAtivo = ''; // reseta filtro ao trocar de aba
   const tA = document.getElementById('col-tab-aguard');
   const tH = document.getElementById('col-tab-hist');
   const transpFilter = document.getElementById('col-filter-transp');
@@ -1169,6 +1217,7 @@ function trocarAbaColeta(aba){
     tA.style.background = 'var(--surface2)'; tA.style.color = 'var(--text)';
     transpFilter.style.display = 'inline-block';
   }
+  renderMktPills();
   renderColetas();
 }
 
@@ -1176,7 +1225,7 @@ function renderColetas(){
   const cont = document.getElementById('col-tabela');
   if (!cont) return;
 
-  const filtroMkt = document.getElementById('col-filter-mkt')?.value || '';
+  const filtroMkt = filtroMktAtivo;
   const filtroTransp = document.getElementById('col-filter-transp')?.value || '';
 
   let lista = COLETAS.filter(c => {
