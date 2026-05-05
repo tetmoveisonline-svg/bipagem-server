@@ -899,6 +899,77 @@ app.post('/api/coletas', autenticar, async (req, res) => {
   }
 });
 
+// Importação em lote (romaneio da transportadora)
+app.post('/api/coletas/lote', autenticar, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const transportadora = (req.body.transportadora || '').trim();
+    const etiquetas = Array.isArray(req.body.etiquetas) ? req.body.etiquetas : [];
+    if (!transportadora) return res.status(400).json({ erro: 'Selecione a transportadora.' });
+    if (etiquetas.length === 0) return res.status(400).json({ erro: 'Nenhuma etiqueta enviada.' });
+
+    let coletadas = 0, jaColetadas = 0;
+    const naoEncontradas = [];
+    const novasColetas = [];
+
+    await client.query('BEGIN');
+
+    for (const item of etiquetas) {
+      const et = String(item.etiqueta || '').trim().toUpperCase();
+      if (!et) continue;
+
+      // Busca a bipagem
+      const r = await client.query('SELECT * FROM bipagens WHERE etiqueta = $1 LIMIT 1', [et]);
+      if (r.rowCount === 0) {
+        naoEncontradas.push(et);
+        continue;
+      }
+      const b = r.rows[0];
+      if (b.coletada_em) {
+        jaColetadas++;
+        continue;
+      }
+      // Atualiza com pickup_time se fornecido, senão NOW()
+      const upd = await client.query(`
+        UPDATE bipagens
+        SET coletada_em = COALESCE($1::timestamptz, NOW()),
+            transportadora = $2,
+            coletada_por = $3
+        WHERE id = $4
+        RETURNING *,
+          EXTRACT(EPOCH FROM (coletada_em - criado_em)) AS segundos_parado
+      `, [item.pickup_time || null, transportadora, req.usuario.nome + ' (romaneio)', b.id]);
+
+      coletadas++;
+      novasColetas.push({
+        ...toISO(upd.rows[0]),
+        coletada_em: upd.rows[0].coletada_em.toISOString(),
+        segundos_parado: parseInt(upd.rows[0].segundos_parado || 0)
+      });
+    }
+
+    await client.query('COMMIT');
+
+    // Broadcast em batch (1 por etiqueta processada com sucesso)
+    novasColetas.forEach(nc => broadcast('coleta:add', nc));
+
+    console.log(`POST /api/coletas/lote: ${coletadas} ok · ${jaColetadas} já coletadas · ${naoEncontradas.length} não encontradas (transp: ${transportadora})`);
+
+    res.json({
+      total: etiquetas.length,
+      coletadas,
+      ja_coletadas: jaColetadas,
+      nao_encontradas: naoEncontradas
+    });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(()=>{});
+    console.error('POST /api/coletas/lote:', e.message);
+    res.status(500).json({ erro: 'Erro ao importar lote: ' + e.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Desfazer coleta (caso bipou errado)
 app.delete('/api/coletas/:id', autenticar, async (req, res) => {
   try {
