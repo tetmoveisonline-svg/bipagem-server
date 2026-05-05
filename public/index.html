@@ -229,7 +229,28 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .tema-info{padding:10px 12px;}
 .tema-name{font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;}
 .tema-desc{font-size:11px;color:var(--text2);font-family:var(--mono);}
-.tema-check{float:right;font-size:14px;color:var(--accent);}
+/* COLETA · tabela e badges de tempo */
+.col-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.col-table thead{background:var(--surface2);}
+.col-table th{text-align:left;padding:9px 12px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);font-family:var(--mono);font-weight:600;border-bottom:1px solid var(--border);}
+.col-table td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.col-table tr:hover td{background:var(--surface2);}
+.col-etiq{font-family:var(--mono);font-size:12px;color:var(--text);}
+.col-mkt-pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;}
+.col-tempo{font-family:var(--mono);font-size:12px;font-weight:600;}
+.col-tempo.verde{color:var(--accent);}
+.col-tempo.amarelo{color:var(--warn);}
+.col-tempo.vermelho{color:var(--danger);}
+.col-status-pill{display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
+.col-status-pill.verde{background:rgba(0,229,160,.12);color:var(--accent);}
+.col-status-pill.amarelo{background:rgba(255,181,71,.12);color:var(--warn);}
+.col-status-pill.vermelho{background:rgba(255,77,77,.12);color:var(--danger);}
+.col-undo-btn{background:transparent;border:0.5px solid var(--border2);color:var(--text2);font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;}
+.col-undo-btn:hover{border-color:var(--danger);color:var(--danger);}
+.col-empty{padding:32px;text-align:center;color:var(--text3);font-size:13px;}
+.col-feedback-ok{padding:8px 12px;background:rgba(0,229,160,.08);border-left:3px solid var(--accent);border-radius:4px;color:var(--accent);}
+.col-feedback-warn{padding:8px 12px;background:rgba(255,181,71,.08);border-left:3px solid var(--warn);border-radius:4px;color:var(--warn);}
+.col-feedback-err{padding:8px 12px;background:rgba(255,77,77,.08);border-left:3px solid var(--danger);border-radius:4px;color:var(--danger);}
 
 </style>
 </head>
@@ -281,6 +302,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="sidebar-section">Operação</div>
       <div class="nav-item active" onclick="switchPanel('bipagem',this)">&#9783; Bipagem <span class="count" id="nav-bip">0</span></div>
       <div class="nav-item" onclick="switchPanel('produtividade',this)">&#9685; Produtividade <span class="count" id="nav-prod">0</span></div>
+      <div class="nav-item" onclick="switchPanel('coleta',this)">&#128666; Aguardando Coleta <span class="count" id="nav-coleta">0</span></div>
       <div class="nav-item" onclick="switchPanel('pendencias',this)">&#9888; Pendências <span class="count" id="nav-pend">0</span></div>
       <div class="nav-item" onclick="switchPanel('retorno',this)">&#8617; Retorno <span class="count" id="nav-ret">0</span></div>      
       <div class="sidebar-divider"></div>
@@ -294,13 +316,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item" id="nav-usuarios" onclick="switchPanel('usuarios',this)" style="display:none;">&#128274; Usuários</div>
       <div class="nav-item" onclick="switchPanel('colaboradores',this)">&#128100; Colaboradores</div>
       <div class="nav-item" onclick="switchPanel('marketplaces',this)">&#128722; Marketplaces</div>
+      <div class="nav-item" onclick="switchPanel('transportadoras',this)">&#128667; Transportadoras</div>
       <div class="sidebar-divider"></div>
-<div class="sidebar-section">Produção</div>
       <div class="sidebar-section">Produção</div>
-<div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
-<div class="nav-item" onclick="switchPanel('prod-fornecedores',this)">🏢 Fornecedores</div>
-<div class="nav-item" onclick="switchPanel('prod-insumos',this)">📦 Insumos</div>
-<div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
+      <div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
+      <div class="nav-item" onclick="switchPanel('prod-fornecedores',this)">🏢 Fornecedores</div>
+      <div class="nav-item" onclick="switchPanel('prod-insumos',this)">📦 Insumos</div>
       <div class="sidebar-divider"></div>
       <div class="nav-item" onclick="switchPanel('tema',this)">🎨 Tema</div>
     </div>
@@ -681,6 +702,60 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div class="config-grid" id="mkt-config-grid"></div>
       </div>
 
+      <!-- AGUARDANDO COLETA -->
+      <div class="panel" id="panel-coleta">
+        <div class="page-title">Aguardando Coleta</div>
+
+        <!-- Estatísticas -->
+        <div class="stats" style="grid-template-columns:repeat(4,1fr);margin-bottom:1.25rem;">
+          <div class="stat"><div class="stat-label">Aguardando coleta</div><div class="stat-value" style="color:var(--info);" id="col-stat-aguardando">0</div></div>
+          <div class="stat"><div class="stat-label">Atrasados (2 dias+)</div><div class="stat-value" style="color:var(--danger);" id="col-stat-atrasados">0</div></div>
+          <div class="stat"><div class="stat-label">Coletados hoje</div><div class="stat-value" style="color:var(--accent);" id="col-stat-coletados-hoje">0</div></div>
+          <div class="stat"><div class="stat-label">Tempo médio</div><div class="stat-value" id="col-stat-tempo-medio" style="font-size:18px;">—</div></div>
+        </div>
+
+        <!-- Bipagem da coleta -->
+        <div class="add-form" style="margin-bottom:1.25rem;">
+          <div class="add-form-title">Registrar coleta da transportadora</div>
+          <div class="add-row" style="gap:10px;">
+            <div class="field"><label>Transportadora</label><select id="col-transp-sel"></select></div>
+            <div class="field" style="flex:2;"><label>Bipe ou digite a etiqueta</label><input type="text" id="col-etiq-input" placeholder="Aguardando bipagem..." onkeydown="if(event.key==='Enter')bipColeta()" autocomplete="off"/></div>
+            <button class="btn btn-primary" onclick="bipColeta()">✓ Confirmar coleta</button>
+          </div>
+          <div id="col-feedback" style="margin-top:8px;font-size:12px;"></div>
+        </div>
+
+        <!-- Filtros -->
+        <div style="display:flex;gap:8px;margin-bottom:1rem;align-items:center;flex-wrap:wrap;">
+          <div style="display:flex;gap:4px;">
+            <button class="btn" id="col-tab-aguard" onclick="trocarAbaColeta('aguardando')" style="background:var(--accent);color:#000;">Aguardando coleta</button>
+            <button class="btn" id="col-tab-hist" onclick="trocarAbaColeta('coletado')" style="background:var(--surface2);">Histórico de coletas</button>
+          </div>
+          <select id="col-filter-mkt" onchange="renderColetas()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r);font-size:12px;">
+            <option value="">Todos marketplaces</option>
+          </select>
+          <select id="col-filter-transp" onchange="renderColetas()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r);font-size:12px;display:none;">
+            <option value="">Todas transportadoras</option>
+          </select>
+        </div>
+
+        <!-- Tabela -->
+        <div id="col-tabela"></div>
+      </div>
+
+      <!-- TRANSPORTADORAS -->
+      <div class="panel" id="panel-transportadoras">
+        <div class="page-title">Transportadoras</div>
+        <div class="add-form">
+          <div class="add-form-title">Cadastrar transportadora</div>
+          <div class="add-row">
+            <div class="field"><label>Nome</label><input type="text" id="transp-nome" placeholder="Ex: Total Express" onkeydown="if(event.key==='Enter')addTransp()"/></div>
+            <button class="btn btn-primary" onclick="addTransp()">+ Adicionar</button>
+          </div>
+        </div>
+        <div class="config-grid" id="transp-config-grid"></div>
+      </div>
+
       <!-- TEMA -->
       <div class="panel" id="panel-tema">
         <div class="page-title">Escolha de Tema</div>
@@ -859,6 +934,35 @@ function handleWS(event, data) {
       if (!S.marketplaces.find(m=>m.id===data.id)) { S.marketplaces.push(data); populateSelects(); renderMktConfig(); renderBipagem(); } break;
     case 'marketplace:del':
       S.marketplaces = S.marketplaces.filter(m=>m.id!==data.id); populateSelects(); renderMktConfig(); renderBipagem(); break;
+    case 'coleta:add':
+      // marca a bipagem como coletada e re-renderiza
+      const bIdx = S.bipagens.findIndex(b => b.id === data.id);
+      if (bIdx >= 0) S.bipagens[bIdx] = { ...S.bipagens[bIdx], coletada_em: data.coletada_em, transportadora: data.transportadora, coletada_por: data.coletada_por };
+      if (typeof COLETAS !== 'undefined') {
+        const ci = COLETAS.findIndex(c => c.id === data.id);
+        if (ci >= 0) COLETAS[ci] = data; else COLETAS.unshift(data);
+      }
+      if (document.getElementById('panel-coleta').classList.contains('active')) renderColetas();
+      atualizarStatColeta();
+      break;
+    case 'coleta:del':
+      const bI = S.bipagens.findIndex(b => b.id === data.id);
+      if (bI >= 0) S.bipagens[bI] = { ...S.bipagens[bI], coletada_em: null, transportadora: null, coletada_por: null };
+      if (typeof COLETAS !== 'undefined') {
+        const ci = COLETAS.findIndex(c => c.id === data.id);
+        if (ci >= 0) COLETAS[ci] = { ...COLETAS[ci], coletada_em: null, transportadora: null, coletada_por: null };
+      }
+      if (document.getElementById('panel-coleta').classList.contains('active')) renderColetas();
+      atualizarStatColeta();
+      break;
+    case 'transportadora:add':
+      if (!TRANSPS.find(t => t.id === data.id)) TRANSPS.push(data);
+      populateTranspSelect(); renderTranspConfig();
+      break;
+    case 'transportadora:del':
+      TRANSPS = TRANSPS.filter(t => t.id !== data.id);
+      populateTranspSelect(); renderTranspConfig();
+      break;
       case 'producao:pedido:add':
   if (!PRODUCAO.pedidos.find(p => p.id === data.id)) {
     PRODUCAO.pedidos.unshift(data);
@@ -902,6 +1006,8 @@ async function iniciarApp() {
     document.getElementById('sel-colab').value = selectedColabId;
     selecionarColab(false);
   }
+  // Carregar coletas + transportadoras em background pro contador da sidebar
+  carregarColetas().catch(()=>{});
   connectWS();
   document.getElementById('inp-etiq').focus();
 }
@@ -919,8 +1025,10 @@ function switchPanel(name, el) {
   if (name==='usuarios') carregarUsuarios();
   if (name==='producao') carregarProducao();
   if (name==='prod-fornecedores') carregarCadastrosProducao();
-if (name==='prod-insumos') carregarCadastrosProducao();
+  if (name==='prod-insumos') carregarCadastrosProducao();
   if (name==='tema') renderTemaGrid();
+  if (name==='coleta') { carregarColetas(); setTimeout(()=>document.getElementById('col-etiq-input')?.focus(),100); }
+  if (name==='transportadoras') renderTranspConfig();
 }
 
 // ── TEMA ──────────────────────────────────────────────────────
@@ -989,6 +1097,254 @@ async function escolherTema(temaId){
   }
 }
 
+// ── COLETA / TRANSPORTADORAS ──────────────────────────────────
+let COLETAS = [];
+let TRANSPS = [];
+let abaColetaAtiva = 'aguardando'; // 'aguardando' | 'coletado'
+
+// Limites de tempo (em segundos) — < 5h verde, 1d+ amarelo, 2d+ vermelho
+const TEMPO_VERDE_MAX = 5 * 3600;        // 18000s = 5h
+const TEMPO_AMARELO_MAX = 2 * 24 * 3600; // 172800s = 2 dias
+
+function fmtDuracao(segs){
+  if (segs < 60) return segs+'s';
+  if (segs < 3600) return Math.floor(segs/60)+'min';
+  if (segs < 86400) {
+    const h = Math.floor(segs/3600);
+    const m = Math.floor((segs%3600)/60);
+    return `${h}h${m?' '+m+'min':''}`;
+  }
+  const d = Math.floor(segs/86400);
+  const h = Math.floor((segs%86400)/3600);
+  return `${d}d${h?' '+h+'h':''}`;
+}
+
+function corDuracao(segs){
+  if (segs < TEMPO_VERDE_MAX) return 'verde';
+  if (segs < TEMPO_AMARELO_MAX) return 'amarelo';
+  return 'vermelho';
+}
+
+async function carregarColetas(){
+  try{
+    if (TRANSPS.length === 0) {
+      TRANSPS = await api('GET','/api/transportadoras');
+      populateTranspSelect();
+    }
+    COLETAS = await api('GET','/api/coletas?status=todos');
+    populateColetaFilters();
+    renderColetas();
+    atualizarStatColeta();
+  }catch(e){ toast('Erro ao carregar coletas: '+(e.erro||e.message),'err'); }
+}
+
+function populateTranspSelect(){
+  const sel = document.getElementById('col-transp-sel');
+  const filtro = document.getElementById('col-filter-transp');
+  if (sel) sel.innerHTML = '<option value="">— selecionar —</option>' +
+    TRANSPS.map(t=>`<option value="${t.nome}">${t.nome}</option>`).join('');
+  if (filtro) filtro.innerHTML = '<option value="">Todas transportadoras</option>' +
+    TRANSPS.map(t=>`<option value="${t.nome}">${t.nome}</option>`).join('');
+}
+
+function populateColetaFilters(){
+  const filtroMkt = document.getElementById('col-filter-mkt');
+  if (filtroMkt && S.marketplaces) {
+    filtroMkt.innerHTML = '<option value="">Todos marketplaces</option>' +
+      S.marketplaces.map(m=>`<option value="${m.nome}">${m.nome}</option>`).join('');
+  }
+}
+
+function trocarAbaColeta(aba){
+  abaColetaAtiva = aba;
+  const tA = document.getElementById('col-tab-aguard');
+  const tH = document.getElementById('col-tab-hist');
+  const transpFilter = document.getElementById('col-filter-transp');
+  if (aba === 'aguardando') {
+    tA.style.background = 'var(--accent)'; tA.style.color = '#000';
+    tH.style.background = 'var(--surface2)'; tH.style.color = 'var(--text)';
+    transpFilter.style.display = 'none';
+  } else {
+    tH.style.background = 'var(--accent)'; tH.style.color = '#000';
+    tA.style.background = 'var(--surface2)'; tA.style.color = 'var(--text)';
+    transpFilter.style.display = 'inline-block';
+  }
+  renderColetas();
+}
+
+function renderColetas(){
+  const cont = document.getElementById('col-tabela');
+  if (!cont) return;
+
+  const filtroMkt = document.getElementById('col-filter-mkt')?.value || '';
+  const filtroTransp = document.getElementById('col-filter-transp')?.value || '';
+
+  let lista = COLETAS.filter(c => {
+    if (abaColetaAtiva === 'aguardando' && c.coletada_em) return false;
+    if (abaColetaAtiva === 'coletado' && !c.coletada_em) return false;
+    if (filtroMkt && c.marketplace_nome !== filtroMkt) return false;
+    if (filtroTransp && c.transportadora !== filtroTransp) return false;
+    return true;
+  });
+
+  // Recalcular tempo parado para itens aguardando (em tempo real ao re-renderizar)
+  if (abaColetaAtiva === 'aguardando') {
+    const now = Date.now();
+    lista = lista.map(c => ({...c, segundos_parado: Math.floor((now - new Date(c.criado_em).getTime())/1000)}));
+    lista.sort((a,b)=>b.segundos_parado - a.segundos_parado); // mais antigos primeiro
+  } else {
+    lista.sort((a,b)=>new Date(b.coletada_em||0) - new Date(a.coletada_em||0));
+  }
+
+  if (lista.length === 0) {
+    cont.innerHTML = `<div class="col-empty">${abaColetaAtiva==='aguardando' ? '🎉 Nenhum pedido aguardando coleta!' : 'Nenhuma coleta no histórico ainda.'}</div>`;
+    return;
+  }
+
+  const linhas = lista.map(c => {
+    const cor = corDuracao(c.segundos_parado);
+    const mktColor = (S.marketplaces.find(m=>m.nome===c.marketplace_nome)?.cor) || '#888';
+    if (abaColetaAtiva === 'aguardando') {
+      return `<tr>
+        <td class="col-etiq">${c.etiqueta}</td>
+        <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${c.marketplace_nome||'-'}</span></td>
+        <td>${c.colaborador_nome||'-'}</td>
+        <td class="col-tempo ${cor}">${fmtDuracao(c.segundos_parado)}</td>
+        <td><span class="col-status-pill ${cor}">${cor==='vermelho'?'atrasado':cor==='amarelo'?'atenção':'ok'}</span></td>
+      </tr>`;
+    } else {
+      const dt = new Date(c.coletada_em);
+      const quando = dt.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      return `<tr>
+        <td class="col-etiq">${c.etiqueta}</td>
+        <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${c.marketplace_nome||'-'}</span></td>
+        <td>${c.colaborador_nome||'-'}</td>
+        <td>${c.transportadora||'-'}</td>
+        <td>${quando}</td>
+        <td class="col-tempo ${cor}">${fmtDuracao(c.segundos_parado)}</td>
+        <td><button class="col-undo-btn" onclick="desfazerColeta('${c.id}')">↶ desfazer</button></td>
+      </tr>`;
+    }
+  }).join('');
+
+  if (abaColetaAtiva === 'aguardando') {
+    cont.innerHTML = `<table class="col-table">
+      <thead><tr>
+        <th>Etiqueta</th><th>Marketplace</th><th>Separador</th><th>Parado há</th><th>Status</th>
+      </tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>`;
+  } else {
+    cont.innerHTML = `<table class="col-table">
+      <thead><tr>
+        <th>Etiqueta</th><th>Marketplace</th><th>Separador</th><th>Transportadora</th><th>Coletado em</th><th>Tempo parado</th><th></th>
+      </tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>`;
+  }
+}
+
+function atualizarStatColeta(){
+  const aguard = COLETAS.filter(c=>!c.coletada_em);
+  const now = Date.now();
+  const atrasados = aguard.filter(c=>{
+    const segs = Math.floor((now - new Date(c.criado_em).getTime())/1000);
+    return segs >= TEMPO_AMARELO_MAX;
+  });
+  const hoje = (new Date()).toISOString().slice(0,10);
+  const coletadosHoje = COLETAS.filter(c=>c.coletada_em && c.coletada_em.slice(0,10)===hoje);
+  const tempoMedio = coletadosHoje.length > 0
+    ? coletadosHoje.reduce((s,c)=>s+c.segundos_parado,0)/coletadosHoje.length
+    : 0;
+
+  const set = (id,val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('col-stat-aguardando', aguard.length);
+  set('col-stat-atrasados', atrasados.length);
+  set('col-stat-coletados-hoje', coletadosHoje.length);
+  set('col-stat-tempo-medio', tempoMedio > 0 ? fmtDuracao(Math.floor(tempoMedio)) : '—');
+  // Contador na sidebar
+  const navCol = document.getElementById('nav-coleta');
+  if (navCol) navCol.textContent = aguard.length;
+}
+
+async function bipColeta(){
+  const inp = document.getElementById('col-etiq-input');
+  const fb = document.getElementById('col-feedback');
+  const transp = document.getElementById('col-transp-sel').value;
+  const etiqueta = (inp.value||'').trim().toUpperCase();
+  if (!transp) { fb.innerHTML = `<div class="col-feedback-warn">⚠ Selecione a transportadora antes de bipar.</div>`; return; }
+  if (!etiqueta) { inp.focus(); return; }
+
+  try {
+    const res = await api('POST','/api/coletas',{etiqueta, transportadora:transp});
+    fb.innerHTML = `<div class="col-feedback-ok">✓ ${etiqueta} → ${transp} · separada por ${res.colaborador_nome} (parou ${fmtDuracao(res.segundos_parado)})</div>`;
+    inp.value = ''; inp.focus();
+  } catch(e) {
+    if (e.erro === 'NÃO_SEPARADA') {
+      falar('Etiqueta não foi separada ainda');
+      fb.innerHTML = `<div class="col-feedback-err">✗ ${etiqueta} — não foi bipada na separação ainda.</div>`;
+    } else if (e.erro === 'JÁ_COLETADA') {
+      const quando = e.bipagem?.coletada_em ? tempoDecorridoFalado(e.bipagem.coletada_em) : 'anteriormente';
+      falar(`Etiqueta duplicada, já coletada ${quando}`);
+      fb.innerHTML = `<div class="col-feedback-warn">⚠ ${etiqueta} — ${e.mensagem}</div>`;
+    } else {
+      fb.innerHTML = `<div class="col-feedback-err">✗ ${e.erro||'Erro'}: ${e.mensagem||''}</div>`;
+    }
+    inp.select();
+  }
+}
+
+async function desfazerColeta(id){
+  if (!confirm('Desfazer esta coleta? A etiqueta volta para a fila de aguardando.')) return;
+  try {
+    await api('DELETE','/api/coletas/'+id);
+    toast('Coleta desfeita.','ok');
+  } catch(e){ toast('Erro: '+(e.erro||e.message),'err'); }
+}
+
+// Cadastro de transportadoras
+async function addTransp(){
+  const inp = document.getElementById('transp-nome');
+  const nome = (inp.value||'').trim();
+  if (!nome) return;
+  try {
+    await api('POST','/api/transportadoras',{nome});
+    inp.value = '';
+    toast('✓ Transportadora cadastrada.','ok');
+  } catch(e){ toast('Erro: '+(e.erro||e.message),'err'); }
+}
+
+async function delTransp(id){
+  if (!confirm('Desativar esta transportadora?')) return;
+  try {
+    await api('DELETE','/api/transportadoras/'+id);
+    toast('Desativada.','ok');
+  } catch(e){ toast('Erro: '+(e.erro||e.message),'err'); }
+}
+
+function renderTranspConfig(){
+  const grid = document.getElementById('transp-config-grid');
+  if (!grid) return;
+  if (TRANSPS.length === 0) {
+    grid.innerHTML = `<div style="color:var(--text3);font-size:13px;padding:20px;text-align:center;">Nenhuma transportadora cadastrada.</div>`;
+    return;
+  }
+  grid.innerHTML = TRANSPS.map(t=>`
+    <div class="config-item">
+      <div class="config-name">🚚 ${t.nome}</div>
+      <button class="del-btn" onclick="delTransp(${t.id})" title="Desativar">×</button>
+    </div>
+  `).join('');
+}
+
+// Atualizar tempo parado a cada 60s (sem refazer tudo)
+setInterval(()=>{
+  if (document.getElementById('panel-coleta')?.classList.contains('active') && abaColetaAtiva==='aguardando') {
+    renderColetas();
+  }
+  atualizarStatColeta();
+}, 60000);
+
 // ── Selects ───────────────────────────────────────────────────
 function populateSelects() {
   const cs = S.colaboradores.sort((a,b)=>a.nome.localeCompare(b.nome));
@@ -1019,32 +1375,83 @@ function getMktColor(nome) {
   return m ? m.cor : 'var(--text2)';
 }
 
-function falar(texto) {
+// ── Áudio: beep + voz feminina ────────────────────────────────
+function beep(){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type='sine'; osc.frequency.value=880; // Lá agudo
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+0.18);
+    osc.start(); osc.stop(ctx.currentTime+0.2);
+    setTimeout(()=>ctx.close(), 250);
+  }catch(e){}
+}
+
+function escolherVoz(){
+  const vozes = speechSynthesis.getVoices();
+  if(!vozes.length) return null;
+  // Prioriza vozes femininas em PT-BR, depois qualquer PT-BR, depois qualquer PT
+  const femininas = ['Maria','Luciana','Camila','Vitoria','Vitória','Helena','female','Female'];
+  const ptBR = vozes.filter(v => v.lang==='pt-BR' || v.lang==='pt_BR');
+  // tenta achar feminina entre as PT-BR
+  for(const nome of femininas){
+    const f = ptBR.find(v => v.name.toLowerCase().includes(nome.toLowerCase()));
+    if(f) return f;
+  }
+  // fallback: Google PT-BR (geralmente é feminina)
+  const google = ptBR.find(v => v.name.toLowerCase().includes('google'));
+  if(google) return google;
+  // qualquer PT-BR
+  if(ptBR.length) return ptBR[0];
+  // qualquer PT
+  return vozes.find(v => v.lang.startsWith('pt')) || null;
+}
+
+function falar(texto, opts={}) {
   try {
     if (!('speechSynthesis' in window)) return;
+    if (opts.beep !== false) beep();
 
-    window.speechSynthesis.cancel();
-
-    const msg = new SpeechSynthesisUtterance(texto);
-
-    const vozes = speechSynthesis.getVoices();
-
-    const vozBoa =
-      vozes.find(v => v.name.includes('Google') && v.lang === 'pt-BR') ||
-      vozes.find(v => v.lang === 'pt-BR');
-
-    if (vozBoa) msg.voice = vozBoa;
-
-    msg.lang = 'pt-BR';
-    msg.rate = 1.05;
-    msg.pitch = 1;
-    msg.volume = 1;
-
-    speechSynthesis.speak(msg);
-
+    // Aguarda um instante pro beep não competir com a voz
+    setTimeout(()=>{
+      window.speechSynthesis.cancel();
+      const msg = new SpeechSynthesisUtterance(texto);
+      const voz = escolherVoz();
+      if (voz) msg.voice = voz;
+      msg.lang = 'pt-BR';
+      msg.rate = opts.rate || 1.05;
+      msg.pitch = opts.pitch || 1.1; // levemente mais alto = mais feminino
+      msg.volume = 1;
+      speechSynthesis.speak(msg);
+    }, opts.beep === false ? 0 : 220);
   } catch (e) {
-    console.log('Erro no áudio');
+    console.log('Erro no áudio:', e.message);
   }
+}
+
+// Garante que vozes carregam (alguns navegadores carregam async)
+if ('speechSynthesis' in window) {
+  speechSynthesis.onvoiceschanged = () => {};
+}
+
+// Helper: formata tempo decorrido em fala natural
+function tempoDecorridoFalado(dataISO){
+  const ms = Date.now() - new Date(dataISO).getTime();
+  const segs = Math.max(1, Math.floor(ms/1000));
+  if (segs < 60) return `há ${segs} segundos`;
+  if (segs < 3600) {
+    const m = Math.floor(segs/60);
+    return m === 1 ? 'há 1 minuto' : `há ${m} minutos`;
+  }
+  if (segs < 86400) {
+    const h = Math.floor(segs/3600);
+    return h === 1 ? 'há 1 hora' : `há ${h} horas`;
+  }
+  const d = Math.floor(segs/86400);
+  return d === 1 ? 'há 1 dia' : `há ${d} dias`;
 }
 
 // ── Bipagem ───────────────────────────────────────────────────
@@ -1084,8 +1491,9 @@ async function bipar() {
 
     if (err.duplicata) {
       const d = err.duplicata;
+      const quando = tempoDecorridoFalado(d.criado_em || `${d.data}T${d.hora}`);
 
-      falar(`Etiqueta já bipada para ${d.colaborador_nome}`);
+      falar(`Etiqueta duplicada, já bipada ${quando}`);
 
       toast(
         `ETIQUETA DUPLICADA!\n${d.etiqueta} — ${d.colaborador_nome} (${d.marketplace_nome}) em ${d.data} ${d.hora}`,
