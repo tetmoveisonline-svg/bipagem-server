@@ -114,7 +114,6 @@ async function initDB() {
 
     CREATE INDEX IF NOT EXISTS idx_bipagens_etiqueta ON bipagens(etiqueta);
     CREATE INDEX IF NOT EXISTS idx_bipagens_criado_em ON bipagens(criado_em);
-    CREATE INDEX IF NOT EXISTS idx_bipagens_coletada_em ON bipagens(coletada_em);
 
     CREATE TABLE IF NOT EXISTS transportadoras (
       id SERIAL PRIMARY KEY,
