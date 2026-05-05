@@ -106,11 +106,22 @@ async function initDB() {
       usuario_nome TEXT,
       data TEXT,
       hora TEXT,
+      coletada_em TIMESTAMPTZ,
+      transportadora TEXT,
+      coletada_por TEXT,
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
 
     CREATE INDEX IF NOT EXISTS idx_bipagens_etiqueta ON bipagens(etiqueta);
     CREATE INDEX IF NOT EXISTS idx_bipagens_criado_em ON bipagens(criado_em);
+    CREATE INDEX IF NOT EXISTS idx_bipagens_coletada_em ON bipagens(coletada_em);
+
+    CREATE TABLE IF NOT EXISTS transportadoras (
+      id SERIAL PRIMARY KEY,
+      nome TEXT UNIQUE NOT NULL,
+      ativa BOOLEAN DEFAULT TRUE,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
 
     CREATE TABLE IF NOT EXISTS pendencias (
       id TEXT PRIMARY KEY,
@@ -183,6 +194,22 @@ CREATE TABLE IF NOT EXISTS producao_pedido_insumos (
 
   // Migração: adicionar coluna tema se ainda não existe (bancos pré-existentes)
   await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS tema TEXT DEFAULT 'dark'`);
+
+  // Migração: colunas de coleta na tabela bipagens (bancos pré-existentes)
+  await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS coletada_em TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS transportadora TEXT`);
+  await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS coletada_por TEXT`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_coletada_em ON bipagens(coletada_em)`);
+
+  // Seed de transportadoras padrão
+  const transps = await pool.query('SELECT id FROM transportadoras LIMIT 1');
+  if (transps.rowCount === 0) {
+    const lista = ['Amazon Logistics','Mercado Envios','Jadlog','Loggi','Total Express','Correios','Shopee Xpress','Shein Logistics'];
+    for (const nome of lista) {
+      await pool.query('INSERT INTO transportadoras (nome) VALUES ($1) ON CONFLICT (nome) DO NOTHING', [nome]);
+    }
+    console.log('[seed] transportadoras criadas:', lista.length);
+  }
 
   const admin = await pool.query(`SELECT id FROM usuarios WHERE role = 'admin' LIMIT 1`);
   if (admin.rowCount === 0) {
@@ -734,6 +761,158 @@ app.delete('/api/bipagens/:id', autenticar, async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ erro: 'Erro ao remover bipagem.' });
+  }
+});
+
+// ── COLETA (transportadora) ───────────────────────────────────
+// Lista de transportadoras
+app.get('/api/transportadoras', autenticar, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT * FROM transportadoras WHERE ativa = TRUE ORDER BY nome`);
+    res.json(r.rows);
+  } catch (e) {
+    console.error('GET /api/transportadoras:', e.message);
+    res.status(500).json({ erro: 'Erro ao listar transportadoras.' });
+  }
+});
+
+// Cadastrar transportadora
+app.post('/api/transportadoras', autenticar, async (req, res) => {
+  try {
+    const nome = (req.body.nome || '').trim();
+    if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
+    const r = await pool.query(
+      `INSERT INTO transportadoras (nome) VALUES ($1) ON CONFLICT (nome) DO UPDATE SET ativa=TRUE RETURNING *`,
+      [nome]
+    );
+    broadcast('transportadora:add', r.rows[0]);
+    res.json(r.rows[0]);
+  } catch (e) {
+    console.error('POST /api/transportadoras:', e.message);
+    res.status(500).json({ erro: 'Erro ao cadastrar.' });
+  }
+});
+
+// Desativar transportadora
+app.delete('/api/transportadoras/:id', autenticar, async (req, res) => {
+  try {
+    await pool.query(`UPDATE transportadoras SET ativa=FALSE WHERE id=$1`, [req.params.id]);
+    broadcast('transportadora:del', { id: parseInt(req.params.id) });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: 'Erro ao remover.' });
+  }
+});
+
+// Listar pedidos aguardando coleta + filtros
+// query params: status=aguardando|coletado|todos · de · ate · transportadora · mkt
+app.get('/api/coletas', autenticar, async (req, res) => {
+  try {
+    const { status = 'aguardando', de, ate, transportadora, mkt } = req.query;
+    const where = [];
+    const vals = [];
+
+    if (status === 'aguardando') where.push('coletada_em IS NULL');
+    else if (status === 'coletado') where.push('coletada_em IS NOT NULL');
+
+    if (transportadora) {
+      vals.push(transportadora);
+      where.push(`transportadora = $${vals.length}`);
+    }
+    if (mkt) {
+      vals.push(mkt);
+      where.push(`marketplace_nome = $${vals.length}`);
+    }
+    if (de && !ate) {
+      vals.push(de);
+      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = $${vals.length}`);
+    }
+    if (de && ate) {
+      vals.push(de);
+      where.push(`criado_em >= $${vals.length}::date`);
+      vals.push(ate);
+      where.push(`criado_em < ($${vals.length}::date + interval '1 day')`);
+    }
+
+    const sql = `
+      SELECT *, EXTRACT(EPOCH FROM (COALESCE(coletada_em, NOW()) - criado_em)) AS segundos_parado
+      FROM bipagens
+      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ORDER BY criado_em ASC
+    `;
+    const r = await pool.query(sql, vals);
+    res.json(r.rows.map(row => ({
+      ...toISO(row),
+      coletada_em: row.coletada_em ? row.coletada_em.toISOString() : null,
+      segundos_parado: parseInt(row.segundos_parado || 0)
+    })));
+  } catch (e) {
+    console.error('GET /api/coletas:', e.message);
+    res.status(500).json({ erro: 'Erro ao listar coletas.' });
+  }
+});
+
+// Registrar coleta (transportadora bipou)
+app.post('/api/coletas', autenticar, async (req, res) => {
+  try {
+    const etiqueta = (req.body.etiqueta || '').trim().toUpperCase();
+    const transportadora = (req.body.transportadora || '').trim();
+    if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
+    if (!transportadora) return res.status(400).json({ erro: 'Selecione a transportadora.' });
+
+    // 1) Verifica se a etiqueta foi bipada na separação
+    const bipagem = await pool.query(`SELECT * FROM bipagens WHERE etiqueta = $1 LIMIT 1`, [etiqueta]);
+    if (bipagem.rowCount === 0) {
+      return res.status(404).json({ erro: 'NÃO_SEPARADA', mensagem: 'Esta etiqueta ainda não foi bipada na separação.' });
+    }
+
+    const b = bipagem.rows[0];
+
+    // 2) Verifica se já foi coletada
+    if (b.coletada_em) {
+      return res.status(409).json({
+        erro: 'JÁ_COLETADA',
+        mensagem: `Esta etiqueta já foi coletada em ${new Date(b.coletada_em).toLocaleString('pt-BR')} por ${b.transportadora || '?'}.`,
+        bipagem: { ...toISO(b), coletada_em: b.coletada_em.toISOString() }
+      });
+    }
+
+    // 3) Marca como coletada
+    const r = await pool.query(`
+      UPDATE bipagens
+      SET coletada_em = NOW(), transportadora = $1, coletada_por = $2
+      WHERE id = $3
+      RETURNING *,
+        EXTRACT(EPOCH FROM (coletada_em - criado_em)) AS segundos_parado
+    `, [transportadora, req.usuario.nome, b.id]);
+
+    const atualizado = {
+      ...toISO(r.rows[0]),
+      coletada_em: r.rows[0].coletada_em.toISOString(),
+      segundos_parado: parseInt(r.rows[0].segundos_parado || 0)
+    };
+    broadcast('coleta:add', atualizado);
+    console.log(`POST coleta: ${etiqueta} → ${transportadora} (parado ${atualizado.segundos_parado}s)`);
+    res.json(atualizado);
+  } catch (e) {
+    console.error('POST /api/coletas:', e.message);
+    res.status(500).json({ erro: 'Erro ao registrar coleta.' });
+  }
+});
+
+// Desfazer coleta (caso bipou errado)
+app.delete('/api/coletas/:id', autenticar, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      UPDATE bipagens
+      SET coletada_em = NULL, transportadora = NULL, coletada_por = NULL
+      WHERE id = $1 RETURNING *
+    `, [req.params.id]);
+    if (r.rowCount === 0) return res.status(404).json({ erro: 'Não encontrada.' });
+    broadcast('coleta:del', { id: req.params.id });
+    res.json({ ok: true, bipagem: toISO(r.rows[0]) });
+  } catch (e) {
+    res.status(500).json({ erro: 'Erro ao desfazer coleta.' });
   }
 });
 
