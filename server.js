@@ -95,6 +95,34 @@ async function initDB() {
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
 
+    -- Produtividade: tipos de atividade com peso
+    CREATE TABLE IF NOT EXISTS atividades (
+      id SERIAL PRIMARY KEY,
+      nome TEXT UNIQUE NOT NULL,
+      peso NUMERIC(5,2) NOT NULL DEFAULT 1,
+      ativa BOOLEAN DEFAULT TRUE,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Atribuição mensal de atividade por colaborador
+    CREATE TABLE IF NOT EXISTS colaborador_atividade (
+      id SERIAL PRIMARY KEY,
+      colaborador_id INTEGER NOT NULL REFERENCES colaboradores(id) ON DELETE CASCADE,
+      atividade_id INTEGER NOT NULL REFERENCES atividades(id) ON DELETE CASCADE,
+      mes TEXT NOT NULL,
+      criado_em TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(colaborador_id, mes)
+    );
+
+    -- Meta global mensal
+    CREATE TABLE IF NOT EXISTS metas_mensais (
+      id SERIAL PRIMARY KEY,
+      mes TEXT UNIQUE NOT NULL,
+      meta_global INTEGER NOT NULL,
+      criado_em TIMESTAMPTZ DEFAULT NOW(),
+      atualizado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS bipagens (
       id TEXT PRIMARY KEY,
       etiqueta TEXT UNIQUE NOT NULL,
@@ -208,6 +236,21 @@ CREATE TABLE IF NOT EXISTS producao_pedido_insumos (
       await pool.query('INSERT INTO transportadoras (nome) VALUES ($1) ON CONFLICT (nome) DO NOTHING', [nome]);
     }
     console.log('[seed] transportadoras criadas:', lista.length);
+  }
+
+  // Seed de atividades padrão
+  const ativs = await pool.query('SELECT id FROM atividades LIMIT 1');
+  if (ativs.rowCount === 0) {
+    const lista = [
+      { nome: 'Separação Normal', peso: 1.00 },
+      { nome: 'KIT',              peso: 2.00 },
+      { nome: 'Arrumar Galpão',   peso: 2.00 },
+      { nome: 'Ajudante',         peso: 0.75 },
+    ];
+    for (const a of lista) {
+      await pool.query('INSERT INTO atividades (nome, peso) VALUES ($1, $2) ON CONFLICT (nome) DO NOTHING', [a.nome, a.peso]);
+    }
+    console.log('[seed] atividades criadas:', lista.length);
   }
 
   const admin = await pool.query(`SELECT id FROM usuarios WHERE role = 'admin' LIMIT 1`);
@@ -984,6 +1027,152 @@ app.delete('/api/coletas/:id', autenticar, async (req, res) => {
   } catch (e) {
     res.status(500).json({ erro: 'Erro ao desfazer coleta.' });
   }
+});
+
+// ── PRODUTIVIDADE: Atividades, Atribuições, Metas ─────────────
+
+// Listar atividades
+app.get('/api/atividades', autenticar, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT * FROM atividades WHERE ativa = TRUE ORDER BY peso DESC, nome');
+    res.json(r.rows.map(a => ({ ...a, peso: parseFloat(a.peso) })));
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Criar atividade
+app.post('/api/atividades', autenticar, async (req, res) => {
+  try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    const nome = (req.body.nome || '').trim();
+    const peso = parseFloat(req.body.peso);
+    if (!nome) return res.status(400).json({ erro: 'Nome obrigatório.' });
+    if (isNaN(peso) || peso <= 0) return res.status(400).json({ erro: 'Peso deve ser > 0.' });
+    const r = await pool.query(
+      `INSERT INTO atividades (nome, peso) VALUES ($1, $2)
+       ON CONFLICT (nome) DO UPDATE SET peso = EXCLUDED.peso, ativa = TRUE RETURNING *`,
+      [nome, peso]
+    );
+    const ativ = { ...r.rows[0], peso: parseFloat(r.rows[0].peso) };
+    broadcast('atividade:upsert', ativ);
+    res.json(ativ);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Atualizar peso da atividade
+app.put('/api/atividades/:id', autenticar, async (req, res) => {
+  try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    const peso = parseFloat(req.body.peso);
+    const nome = (req.body.nome || '').trim();
+    if (isNaN(peso) || peso <= 0) return res.status(400).json({ erro: 'Peso inválido.' });
+    const r = await pool.query(
+      `UPDATE atividades SET peso = $1, nome = COALESCE(NULLIF($2,''), nome) WHERE id = $3 RETURNING *`,
+      [peso, nome, req.params.id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ erro: 'Atividade não encontrada.' });
+    const ativ = { ...r.rows[0], peso: parseFloat(r.rows[0].peso) };
+    broadcast('atividade:upsert', ativ);
+    res.json(ativ);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Desativar atividade
+app.delete('/api/atividades/:id', autenticar, async (req, res) => {
+  try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    await pool.query('UPDATE atividades SET ativa = FALSE WHERE id = $1', [req.params.id]);
+    broadcast('atividade:del', { id: parseInt(req.params.id) });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Listar atribuições de um mês (col_atividade) — retorna lista de colaboradores com sua atividade do mês
+// Param: ?mes=YYYY-MM (default: mês atual)
+app.get('/api/atribuicoes', autenticar, async (req, res) => {
+  try {
+    const mes = req.query.mes || new Date().toISOString().slice(0,7);
+    const r = await pool.query(`
+      SELECT c.id AS colaborador_id, c.nome AS colaborador_nome,
+             ca.atividade_id, a.nome AS atividade_nome, a.peso AS atividade_peso
+      FROM colaboradores c
+      LEFT JOIN colaborador_atividade ca ON ca.colaborador_id = c.id AND ca.mes = $1
+      LEFT JOIN atividades a ON a.id = ca.atividade_id
+      ORDER BY c.nome
+    `, [mes]);
+    res.json({
+      mes,
+      atribuicoes: r.rows.map(a => ({
+        colaborador_id: a.colaborador_id,
+        colaborador_nome: a.colaborador_nome,
+        atividade_id: a.atividade_id,
+        atividade_nome: a.atividade_nome,
+        atividade_peso: a.atividade_peso !== null ? parseFloat(a.atividade_peso) : null,
+      }))
+    });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Atribuir atividade a um colaborador num mês (upsert)
+app.post('/api/atribuicoes', autenticar, async (req, res) => {
+  try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    const colaborador_id = parseInt(req.body.colaborador_id);
+    const atividade_id = req.body.atividade_id ? parseInt(req.body.atividade_id) : null;
+    const mes = (req.body.mes || new Date().toISOString().slice(0,7)).trim();
+    if (!colaborador_id) return res.status(400).json({ erro: 'colaborador_id obrigatório.' });
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido (use YYYY-MM).' });
+
+    if (atividade_id === null) {
+      // Remover atribuição
+      await pool.query('DELETE FROM colaborador_atividade WHERE colaborador_id = $1 AND mes = $2', [colaborador_id, mes]);
+      broadcast('atribuicao:del', { colaborador_id, mes });
+      return res.json({ ok: true });
+    }
+    const r = await pool.query(`
+      INSERT INTO colaborador_atividade (colaborador_id, atividade_id, mes)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (colaborador_id, mes) DO UPDATE SET atividade_id = EXCLUDED.atividade_id
+      RETURNING *
+    `, [colaborador_id, atividade_id, mes]);
+    broadcast('atribuicao:upsert', r.rows[0]);
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Listar metas mensais (todas)
+app.get('/api/metas', autenticar, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT * FROM metas_mensais ORDER BY mes DESC');
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Pegar/criar meta de um mês específico
+app.get('/api/metas/:mes', autenticar, async (req, res) => {
+  try {
+    const mes = req.params.mes;
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
+    const r = await pool.query('SELECT * FROM metas_mensais WHERE mes = $1', [mes]);
+    res.json(r.rows[0] || { mes, meta_global: null });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+// Definir meta de um mês (upsert)
+app.put('/api/metas/:mes', autenticar, async (req, res) => {
+  try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    const mes = req.params.mes;
+    const meta = parseInt(req.body.meta_global);
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
+    if (!meta || meta <= 0) return res.status(400).json({ erro: 'Meta inválida.' });
+    const r = await pool.query(`
+      INSERT INTO metas_mensais (mes, meta_global) VALUES ($1, $2)
+      ON CONFLICT (mes) DO UPDATE SET meta_global = EXCLUDED.meta_global, atualizado_em = NOW()
+      RETURNING *
+    `, [mes, meta]);
+    broadcast('meta:upsert', r.rows[0]);
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 // ── Pendências ───────────────────────────────────────────────
