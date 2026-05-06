@@ -1853,10 +1853,10 @@ async function atribuirAtividade(colaboradorId, atividadeId){
 }
 
 // ── META DO DIA ───────────────────────────────────────────────
-// Configuração do expediente
-const META_HORA_INICIO = 8;   // 8h
-const META_HORA_FIM = 18;     // 18h
-const META_OCIOSO_LIMITE_MIN = 60; // 60 min sem bipar = ocioso
+// Configuração do expediente (tempo corrido — método 2)
+const META_HORA_INICIO = 8;          // 08h00
+const META_HORA_FIM = 17 + 20/60;    // 17h20
+const META_OCIOSO_LIMITE_MIN = 60;   // 60 min sem bipar = ocioso
 
 let metaData = null; // { meta_global, fator_base, atribuicoes, mes }
 
@@ -1943,7 +1943,7 @@ function renderMetaDia(){
   const diaStr = agora.toLocaleDateString('pt-BR',{day:'2-digit',month:'long'});
   const horaStr = agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
   const pctExp = Math.round(fr * 100);
-  sub.innerHTML = `${semanaTxt} · ${diaStr} · ${horaStr} · <span style="color:var(--warn);">${pctExp}% do expediente</span> (${META_HORA_INICIO}h–${META_HORA_FIM}h)`;
+  sub.innerHTML = `${semanaTxt} · ${diaStr} · ${horaStr} · <span style="color:var(--warn);">${pctExp}% do expediente</span> (08h–17h20)`;
 
   // Sem meta cadastrada
   if (!metaData.meta_global) {
