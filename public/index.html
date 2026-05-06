@@ -1817,14 +1817,14 @@ function renderAtribuicoes(){
     cont.innerHTML = `<div style="color:var(--text3);font-size:12px;padding:10px 0;">Nenhum colaborador cadastrado. Vá em "Colaboradores" para cadastrar.</div>`;
     return;
   }
-  // Calcula meta individual ponderada (precisa das atividades atribuídas)
+  // Calcula meta individual ponderada (peso = dificuldade, então meta = fator / peso)
   const meta = META_ATUAL?.meta_global || 0;
-  const somaPesosAtivos = ATRIBUICOES.filter(a => a.atividade_peso).reduce((s,a)=>s+a.atividade_peso, 0);
-  const fatorBase = (meta && somaPesosAtivos > 0) ? meta / somaPesosAtivos : 0;
+  const somaInversoAtivos = ATRIBUICOES.filter(a => a.atividade_peso).reduce((s,a)=>s + (1/a.atividade_peso), 0);
+  const fatorBase = (meta && somaInversoAtivos > 0) ? meta / somaInversoAtivos : 0;
 
   cont.innerHTML = `<div class="atrib-grid">${ATRIBUICOES.map(a => {
     const semAtrib = !a.atividade_id;
-    const metaInd = (fatorBase && a.atividade_peso) ? Math.round(fatorBase * a.atividade_peso) : 0;
+    const metaInd = (fatorBase && a.atividade_peso) ? Math.round(fatorBase / a.atividade_peso) : 0;
     return `
       <div class="atrib-card ${semAtrib?'sem-atribuicao':''}">
         <div>
@@ -1970,8 +1970,8 @@ function renderMetaDia(){
     return;
   }
 
-  const somaPesos = ativosComPeso.reduce((s,a)=>s+parseFloat(a.atividade_peso),0);
-  const fatorDia = metaDiariaEquipe / somaPesos;
+  const somaInverso = ativosComPeso.reduce((s,a)=>s + (1/parseFloat(a.atividade_peso)),0);
+  const fatorDia = metaDiariaEquipe / somaInverso;
 
   // Bipagens reais de hoje
   const bipMap = bipagensHojePorColab();
@@ -1979,7 +1979,7 @@ function renderMetaDia(){
   // Calcula linha por linha
   const linhas = ativosComPeso.map(a => {
     const peso = parseFloat(a.atividade_peso);
-    const metaInd = Math.round(fatorDia * peso);
+    const metaInd = Math.round(fatorDia / peso);
     const esperadoAgora = Math.round(metaInd * fr);
     const dados = bipMap[a.colaborador_id] || { qtd: 0, ultimo: null };
     const realizado = dados.qtd;
