@@ -260,6 +260,38 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .col-pill.zero{opacity:.4;}
 .col-pill .col-pill-count{font-family:var(--mono);opacity:.7;font-weight:500;}
 
+/* PESOS & METAS */
+.ativ-row{display:grid;grid-template-columns:1fr 110px 60px 36px;gap:10px;align-items:center;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);margin-bottom:6px;}
+.ativ-row .ativ-nome{font-size:13px;font-weight:500;}
+.ativ-row .ativ-peso-display{font-family:var(--mono);font-size:13px;color:var(--accent);text-align:right;font-weight:600;}
+.ativ-row .ativ-peso-edit{padding:4px 8px;background:var(--surface);border:0.5px solid var(--border2);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:12px;text-align:right;width:100%;box-sizing:border-box;}
+.atrib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;}
+.atrib-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+.atrib-card .atrib-nome{font-size:13px;font-weight:500;}
+.atrib-card .atrib-meta-individual{font-size:10px;color:var(--text3);font-family:var(--mono);}
+.atrib-card select{padding:5px 8px;background:var(--surface);border:0.5px solid var(--border2);border-radius:4px;color:var(--text);font-size:12px;min-width:130px;}
+.atrib-card.sem-atribuicao{opacity:.5;}
+
+/* META DO DIA */
+.meta-progress-card{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px 16px;margin-bottom:14px;}
+.meta-progress-bar{height:8px;background:var(--surface2);border-radius:4px;overflow:hidden;position:relative;}
+.meta-progress-bar .meta-fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--accent),var(--accent2));}
+.meta-progress-bar .meta-marker{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--warn);}
+.meta-alert{background:rgba(255,77,77,.08);border-left:3px solid var(--danger);border-radius:4px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+.meta-alert.warn{background:rgba(255,181,71,.08);border-left-color:var(--warn);}
+.meta-alert.ok{background:rgba(0,229,160,.08);border-left-color:var(--accent);}
+.meta-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;}
+.meta-card{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:12px;}
+.meta-card.acima{border-color:var(--accent);}
+.meta-card.atencao{border-color:var(--warn);}
+.meta-card.abaixo{border-color:var(--danger);}
+.meta-card.ocioso{border-color:var(--danger);}
+.meta-card-pill{font-size:9px;padding:2px 7px;border-radius:8px;font-weight:600;}
+.meta-mini-bar{height:5px;background:var(--surface2);border-radius:3px;overflow:hidden;position:relative;margin-bottom:5px;}
+.meta-empty{padding:32px;text-align:center;color:var(--text3);font-size:13px;background:var(--surface);border:1px solid var(--border);border-radius:6px;}
+.meta-copy-btn{width:100%;padding:5px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:4px;color:var(--text);font-size:10px;cursor:pointer;margin-top:6px;}
+.meta-copy-btn:hover{border-color:var(--accent);color:var(--accent);}
+
 </style>
 </head>
 <body>
@@ -289,7 +321,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     <div class="brand">
       <div class="brand-icon">&#9783;</div>
       <div>
-        <div class="brand-text">Controle de Bipagem</div>
+        <div class="brand-text">EEA Móveis · Operação</div>
         <div class="brand-sub" id="relogio"></div>
       </div>
     </div>
@@ -310,6 +342,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="sidebar-section">Operação</div>
       <div class="nav-item active" onclick="switchPanel('bipagem',this)">&#9783; Bipagem <span class="count" id="nav-bip">0</span></div>
       <div class="nav-item" onclick="switchPanel('produtividade',this)">&#9685; Produtividade <span class="count" id="nav-prod">0</span></div>
+      <div class="nav-item" onclick="switchPanel('meta',this)">🎯 Meta do Dia <span class="count" id="nav-meta-alert">0</span></div>
       <div class="nav-item" onclick="switchPanel('coleta',this)">&#128666; Aguardando Coleta <span class="count" id="nav-coleta">0</span></div>
       <div class="nav-item" onclick="switchPanel('pendencias',this)">&#9888; Pendências <span class="count" id="nav-pend">0</span></div>
       <div class="nav-item" onclick="switchPanel('retorno',this)">&#8617; Retorno <span class="count" id="nav-ret">0</span></div>      
@@ -325,6 +358,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item" onclick="switchPanel('colaboradores',this)">&#128100; Colaboradores</div>
       <div class="nav-item" onclick="switchPanel('marketplaces',this)">&#128722; Marketplaces</div>
       <div class="nav-item" onclick="switchPanel('transportadoras',this)">&#128667; Transportadoras</div>
+      <div class="nav-item" id="nav-pesos" onclick="switchPanel('pesos',this)" style="display:none;">⚖ Pesos & Metas</div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Produção</div>
       <div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
@@ -405,6 +439,18 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
             <div class="prod-ranking" id="prod-ranking"></div>
           </div>
         </div>
+      </div>
+
+      <!-- META DO DIA -->
+      <div class="panel" id="panel-meta">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:1rem;">
+          <div>
+            <div class="page-title" style="margin-bottom:4px;">🎯 Meta do Dia</div>
+            <div id="meta-subtitulo" style="font-size:12px;color:var(--text2);">Carregando...</div>
+          </div>
+          <div id="meta-info-mes" style="text-align:right;font-size:10px;color:var(--text3);font-family:var(--mono);"></div>
+        </div>
+        <div id="meta-conteudo"></div>
       </div>
 
       <!-- PENDÊNCIAS -->
@@ -801,6 +847,46 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div class="config-grid" id="transp-config-grid"></div>
       </div>
 
+      <!-- PESOS & METAS -->
+      <div class="panel" id="panel-pesos">
+        <div class="page-title">⚖ Pesos & Metas</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:1.25rem;">Configure as atividades com seus pesos, atribua a cada colaborador o tipo de atividade do mês, e defina a meta global.</div>
+
+        <!-- Selecionador de mês -->
+        <div class="add-form" style="margin-bottom:1.25rem;">
+          <div class="add-form-title">Mês de referência</div>
+          <div class="add-row" style="gap:10px;align-items:flex-end;">
+            <div class="field" style="max-width:200px;">
+              <label>Mês</label>
+              <input type="month" id="pesos-mes" onchange="carregarPesos()"/>
+            </div>
+            <div class="field">
+              <label>Meta global do mês (peças)</label>
+              <input type="number" id="pesos-meta" placeholder="ex: 25000" onchange="salvarMeta()"/>
+            </div>
+            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);" id="pesos-meta-status"></div>
+          </div>
+        </div>
+
+        <!-- Atividades cadastro -->
+        <div class="add-form" style="margin-bottom:1.25rem;">
+          <div class="add-form-title">Cadastro de atividades</div>
+          <div class="add-row" style="margin-bottom:.75rem;">
+            <div class="field"><label>Nome da atividade</label><input type="text" id="ativ-nome" placeholder="ex: KIT Especial" onkeydown="if(event.key==='Enter')addAtividade()"/></div>
+            <div class="field" style="max-width:120px;"><label>Peso</label><input type="number" id="ativ-peso" placeholder="1.0" step="0.05" min="0.01"/></div>
+            <button class="btn btn-primary" onclick="addAtividade()">+ Cadastrar</button>
+          </div>
+          <div id="atividades-list"></div>
+        </div>
+
+        <!-- Atribuição mensal -->
+        <div class="add-form">
+          <div class="add-form-title">Atribuição mensal · <span id="pesos-mes-display" style="color:var(--accent);"></span></div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:10px;font-family:var(--mono);">Para cada colaborador, escolha qual atividade ele realiza neste mês. Deixe em "—" se ele não está atuando.</div>
+          <div id="atribuicoes-list"></div>
+        </div>
+      </div>
+
       <!-- TEMA -->
       <div class="panel" id="panel-tema">
         <div class="page-title">Escolha de Tema</div>
@@ -956,13 +1042,16 @@ function handleWS(event, data) {
       if (!S.bipagens.find(b=>b.id===data.id)) {
         S.bipagens.unshift(data);
         renderBipagem(); renderHistorico(); renderProdutividade(); updateCounts();
+        if (typeof metaData !== 'undefined' && metaData && document.getElementById('panel-meta')?.classList.contains('active')) renderMetaDia();
         if (data.usuario_id !== usuarioLogado?.id)
           toast(`↓ ${data.etiqueta} — ${data.marketplace_nome} (${data.colaborador_nome})`, 'info', 2500);
       }
       break;
     case 'bipagem:del':
       S.bipagens = S.bipagens.filter(b=>b.id!==data.id);
-      renderBipagem(); renderHistorico(); renderProdutividade(); updateCounts(); break;
+      renderBipagem(); renderHistorico(); renderProdutividade(); updateCounts();
+      if (typeof metaData !== 'undefined' && metaData && document.getElementById('panel-meta')?.classList.contains('active')) renderMetaDia();
+      break;
     case 'pendencia:add':
       if (!S.pendencias.find(p=>p.id===data.id)) { S.pendencias.unshift(data); renderPendencias(); updateCounts(); } break;
     case 'pendencia:del':
@@ -1041,7 +1130,10 @@ async function iniciarApp() {
   document.getElementById('app').classList.add('visible');
   document.getElementById('user-display').textContent = usuarioLogado.nome || usuarioLogado.username;
   aplicarTema(usuarioLogado.tema || 'dark');
-  if (usuarioLogado.role === 'admin') document.getElementById('nav-usuarios').style.display = 'flex';
+  if (usuarioLogado.role === 'admin') {
+    document.getElementById('nav-usuarios').style.display = 'flex';
+    document.getElementById('nav-pesos').style.display = 'flex';
+  }
 
   const estado = await api('GET','/api/estado');
   S = estado;
@@ -1053,6 +1145,8 @@ async function iniciarApp() {
   }
   // Carregar coletas + transportadoras em background pro contador da sidebar
   carregarColetas().catch(()=>{});
+  // Carregar meta em background pro badge da sidebar
+  carregarMetaDia().catch(()=>{});
   connectWS();
   document.getElementById('inp-etiq').focus();
 }
@@ -1074,6 +1168,8 @@ function switchPanel(name, el) {
   if (name==='tema') renderTemaGrid();
   if (name==='coleta') { carregarColetas(); setTimeout(()=>document.getElementById('col-etiq-input')?.focus(),100); }
   if (name==='transportadoras') renderTranspConfig();
+  if (name==='pesos') carregarPesos();
+  if (name==='meta') carregarMetaDia();
 }
 
 // ── TEMA ──────────────────────────────────────────────────────
@@ -1607,12 +1703,461 @@ function renderTranspConfig(){
   `).join('');
 }
 
+// ── PESOS & METAS ─────────────────────────────────────────────
+let ATIVIDADES = [];
+let ATRIBUICOES = []; // [{colaborador_id, colaborador_nome, atividade_id, atividade_nome, atividade_peso}]
+let META_ATUAL = null;
+
+function mesAtualISO(){ return new Date().toISOString().slice(0,7); }
+
+async function carregarPesos(){
+  const inp = document.getElementById('pesos-mes');
+  if (!inp.value) inp.value = mesAtualISO();
+  const mes = inp.value;
+  document.getElementById('pesos-mes-display').textContent = formatarMesPT(mes);
+
+  try{
+    const [ativs, atrib, meta] = await Promise.all([
+      api('GET','/api/atividades'),
+      api('GET','/api/atribuicoes?mes='+mes),
+      api('GET','/api/metas/'+mes)
+    ]);
+    ATIVIDADES = ativs;
+    ATRIBUICOES = atrib.atribuicoes;
+    META_ATUAL = meta;
+    renderAtividades();
+    renderAtribuicoes();
+    renderMeta();
+  }catch(e){
+    toast('Erro ao carregar: '+(e.erro||e.message),'err');
+  }
+}
+
+function formatarMesPT(mes){
+  const [a,m] = mes.split('-');
+  const nomes = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  return `${nomes[parseInt(m)]} ${a}`;
+}
+
+function renderMeta(){
+  const inp = document.getElementById('pesos-meta');
+  const status = document.getElementById('pesos-meta-status');
+  inp.value = META_ATUAL?.meta_global || '';
+  if (META_ATUAL?.meta_global) {
+    const ativos = ATRIBUICOES.filter(a => a.atividade_id).length;
+    const metaPorPessoa = ativos > 0 ? Math.round(META_ATUAL.meta_global / ativos) : 0;
+    status.innerHTML = `<span style="color:var(--text2);">Definida</span> · ${ativos} ativos · meta indiv. base: <span style="color:var(--accent);">${metaPorPessoa}</span>`;
+  } else {
+    status.innerHTML = '<span style="color:var(--warn);">Sem meta definida</span>';
+  }
+}
+
+async function salvarMeta(){
+  const mes = document.getElementById('pesos-mes').value;
+  const meta = parseInt(document.getElementById('pesos-meta').value);
+  if (!mes || !meta || meta <= 0) { toast('Meta inválida.','warn'); return; }
+  try{
+    META_ATUAL = await api('PUT','/api/metas/'+mes,{ meta_global: meta });
+    renderMeta();
+    toast('✓ Meta salva.','ok');
+  }catch(e){ toast('Erro: '+(e.erro||e.message),'err'); }
+}
+
+function renderAtividades(){
+  const cont = document.getElementById('atividades-list');
+  if (!cont) return;
+  if (ATIVIDADES.length === 0) {
+    cont.innerHTML = `<div style="color:var(--text3);font-size:12px;padding:10px 0;">Nenhuma atividade cadastrada.</div>`;
+    return;
+  }
+  cont.innerHTML = ATIVIDADES.map(a => `
+    <div class="ativ-row">
+      <div class="ativ-nome">${a.nome}</div>
+      <input type="number" class="ativ-peso-edit" value="${a.peso}" step="0.05" min="0.01" onblur="atualizarPesoAtividade(${a.id}, this.value)" title="Peso (Enter ou Tab para salvar)"/>
+      <div class="ativ-peso-display">peso ${a.peso}</div>
+      <button class="del-btn" onclick="delAtividade(${a.id}, '${a.nome.replace(/'/g,"\\'")}')" title="Desativar">×</button>
+    </div>
+  `).join('');
+}
+
+async function addAtividade(){
+  const nome = document.getElementById('ativ-nome').value.trim();
+  const peso = parseFloat(document.getElementById('ativ-peso').value);
+  if (!nome || isNaN(peso) || peso <= 0) { toast('Preencha nome e peso > 0.','warn'); return; }
+  try{
+    await api('POST','/api/atividades',{ nome, peso });
+    document.getElementById('ativ-nome').value = '';
+    document.getElementById('ativ-peso').value = '';
+    await carregarPesos();
+    toast('✓ Atividade cadastrada.','ok');
+  }catch(e){ toast('Erro: '+(e.erro||e.message),'err'); }
+}
+
+async function atualizarPesoAtividade(id, peso){
+  const p = parseFloat(peso);
+  if (isNaN(p) || p <= 0) return;
+  try{
+    await api('PUT','/api/atividades/'+id,{ peso: p });
+    await carregarPesos();
+  }catch(e){ toast('Erro: '+(e.erro||e.message),'err'); }
+}
+
+async function delAtividade(id, nome){
+  if (!confirm(`Desativar a atividade "${nome}"? Os históricos antigos preservam o registro, mas ela não aparecerá nos novos meses.`)) return;
+  try{
+    await api('DELETE','/api/atividades/'+id);
+    await carregarPesos();
+  }catch(e){ toast('Erro: '+(e.erro||e.message),'err'); }
+}
+
+function renderAtribuicoes(){
+  const cont = document.getElementById('atribuicoes-list');
+  if (!cont) return;
+  if (ATRIBUICOES.length === 0) {
+    cont.innerHTML = `<div style="color:var(--text3);font-size:12px;padding:10px 0;">Nenhum colaborador cadastrado. Vá em "Colaboradores" para cadastrar.</div>`;
+    return;
+  }
+  // Calcula meta individual ponderada (precisa das atividades atribuídas)
+  const meta = META_ATUAL?.meta_global || 0;
+  const somaPesosAtivos = ATRIBUICOES.filter(a => a.atividade_peso).reduce((s,a)=>s+a.atividade_peso, 0);
+  const fatorBase = (meta && somaPesosAtivos > 0) ? meta / somaPesosAtivos : 0;
+
+  cont.innerHTML = `<div class="atrib-grid">${ATRIBUICOES.map(a => {
+    const semAtrib = !a.atividade_id;
+    const metaInd = (fatorBase && a.atividade_peso) ? Math.round(fatorBase * a.atividade_peso) : 0;
+    return `
+      <div class="atrib-card ${semAtrib?'sem-atribuicao':''}">
+        <div>
+          <div class="atrib-nome">${a.colaborador_nome}</div>
+          <div class="atrib-meta-individual">${semAtrib ? '— sem atividade' : `meta: ${metaInd} · peso ${a.atividade_peso}`}</div>
+        </div>
+        <select onchange="atribuirAtividade(${a.colaborador_id}, this.value)">
+          <option value="">— sem atividade —</option>
+          ${ATIVIDADES.map(at => `<option value="${at.id}" ${at.id===a.atividade_id?'selected':''}>${at.nome} (peso ${at.peso})</option>`).join('')}
+        </select>
+      </div>
+    `;
+  }).join('')}</div>`;
+}
+
+async function atribuirAtividade(colaboradorId, atividadeId){
+  const mes = document.getElementById('pesos-mes').value;
+  try{
+    await api('POST','/api/atribuicoes',{
+      colaborador_id: colaboradorId,
+      atividade_id: atividadeId || null,
+      mes
+    });
+    await carregarPesos();
+  }catch(e){ toast('Erro: '+(e.erro||e.message),'err'); }
+}
+
+// ── META DO DIA ───────────────────────────────────────────────
+// Configuração do expediente
+const META_HORA_INICIO = 8;   // 8h
+const META_HORA_FIM = 18;     // 18h
+const META_OCIOSO_LIMITE_MIN = 60; // 60 min sem bipar = ocioso
+
+let metaData = null; // { meta_global, fator_base, atribuicoes, mes }
+
+async function carregarMetaDia(){
+  const cont = document.getElementById('meta-conteudo');
+  cont.innerHTML = `<div class="meta-empty">⏳ Carregando dados...</div>`;
+  try {
+    const mes = mesAtualISO();
+    const [meta, atrib, ativs] = await Promise.all([
+      api('GET','/api/metas/'+mes),
+      api('GET','/api/atribuicoes?mes='+mes),
+      api('GET','/api/atividades')
+    ]);
+    metaData = {
+      mes,
+      meta_global: meta?.meta_global || null,
+      atribuicoes: atrib.atribuicoes,
+      atividades: ativs
+    };
+    renderMetaDia();
+  } catch(e) {
+    cont.innerHTML = `<div class="meta-empty" style="color:var(--danger);">Erro ao carregar: ${e.erro||e.message}</div>`;
+  }
+}
+
+// Quantos dias úteis (seg-sex) tem o mês YYYY-MM
+function diasUteisDoMes(mes){
+  const [ano, m] = mes.split('-').map(Number);
+  const ultimo = new Date(ano, m, 0).getDate();
+  let count = 0;
+  for (let d=1; d<=ultimo; d++) {
+    const dow = new Date(ano, m-1, d).getDay();
+    if (dow >= 1 && dow <= 5) count++;
+  }
+  return count;
+}
+
+// Fração do expediente decorrida (0-1)
+function fracaoExpedienteAtual(){
+  const agora = new Date();
+  const h = agora.getHours() + agora.getMinutes()/60 + agora.getSeconds()/3600;
+  if (h <= META_HORA_INICIO) return 0;
+  if (h >= META_HORA_FIM) return 1;
+  return (h - META_HORA_INICIO) / (META_HORA_FIM - META_HORA_INICIO);
+}
+
+// Conta bipagens de hoje por colaborador (do array global S.bipagens)
+function bipagensHojePorColab(){
+  const hoje = new Date().toISOString().slice(0,10);
+  const tzOffset = -3 * 60; // BR
+  const map = {};
+  S.bipagens.forEach(b => {
+    if (!b.colaborador_id) return;
+    // criado_em é ISO; comparamos pela data BR
+    const dt = new Date(b.criado_em);
+    const dtBR = new Date(dt.getTime() + (dt.getTimezoneOffset() + tzOffset) * 60000);
+    if (dtBR.toISOString().slice(0,10) !== hoje) return;
+    if (!map[b.colaborador_id]) map[b.colaborador_id] = { qtd: 0, ultimo: null };
+    map[b.colaborador_id].qtd++;
+    if (!map[b.colaborador_id].ultimo || dt > new Date(map[b.colaborador_id].ultimo)) {
+      map[b.colaborador_id].ultimo = b.criado_em;
+    }
+  });
+  return map;
+}
+
+function fmtMinutos(min){
+  if (min < 1) return 'agora';
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min/60);
+  const m = min % 60;
+  return m ? `${h}h${m}min` : `${h}h`;
+}
+
+function renderMetaDia(){
+  const cont = document.getElementById('meta-conteudo');
+  const sub = document.getElementById('meta-subtitulo');
+  const infoMes = document.getElementById('meta-info-mes');
+  if (!metaData) return;
+
+  const fr = fracaoExpedienteAtual();
+  const agora = new Date();
+  const semanaTxt = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][agora.getDay()];
+  const diaStr = agora.toLocaleDateString('pt-BR',{day:'2-digit',month:'long'});
+  const horaStr = agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const pctExp = Math.round(fr * 100);
+  sub.innerHTML = `${semanaTxt} · ${diaStr} · ${horaStr} · <span style="color:var(--warn);">${pctExp}% do expediente</span> (${META_HORA_INICIO}h–${META_HORA_FIM}h)`;
+
+  // Sem meta cadastrada
+  if (!metaData.meta_global) {
+    infoMes.innerHTML = `${formatarMesPT(metaData.mes)} · sem meta`;
+    cont.innerHTML = `<div class="meta-empty">
+      <div style="font-size:14px;margin-bottom:8px;">⚖ Meta mensal ainda não definida</div>
+      <div style="font-size:11px;">Vá em <strong>⚖ Pesos & Metas</strong> e defina a meta do mês ${formatarMesPT(metaData.mes)} para começar.</div>
+    </div>`;
+    return;
+  }
+
+  // Cálculos do dia
+  const diasUteis = diasUteisDoMes(metaData.mes);
+  const metaDiariaEquipe = Math.round(metaData.meta_global / diasUteis);
+  infoMes.innerHTML = `${formatarMesPT(metaData.mes)} · meta ${metaData.meta_global.toLocaleString('pt-BR')}<br>${diasUteis} dias úteis · ~${metaDiariaEquipe.toLocaleString('pt-BR')}/dia`;
+
+  // Atribuições com peso (só ativos)
+  const ativosComPeso = metaData.atribuicoes.filter(a => a.atividade_id && a.atividade_peso);
+  if (ativosComPeso.length === 0) {
+    cont.innerHTML = `<div class="meta-empty">
+      <div style="font-size:14px;margin-bottom:8px;">⚖ Nenhum colaborador atribuído neste mês</div>
+      <div style="font-size:11px;">Vá em <strong>⚖ Pesos & Metas</strong> e atribua atividades aos colaboradores ativos em ${formatarMesPT(metaData.mes)}.</div>
+    </div>`;
+    return;
+  }
+
+  const somaPesos = ativosComPeso.reduce((s,a)=>s+parseFloat(a.atividade_peso),0);
+  const fatorDia = metaDiariaEquipe / somaPesos;
+
+  // Bipagens reais de hoje
+  const bipMap = bipagensHojePorColab();
+
+  // Calcula linha por linha
+  const linhas = ativosComPeso.map(a => {
+    const peso = parseFloat(a.atividade_peso);
+    const metaInd = Math.round(fatorDia * peso);
+    const esperadoAgora = Math.round(metaInd * fr);
+    const dados = bipMap[a.colaborador_id] || { qtd: 0, ultimo: null };
+    const realizado = dados.qtd;
+    const diff = realizado - esperadoAgora;
+    const ultimoMin = dados.ultimo ? Math.floor((Date.now() - new Date(dados.ultimo).getTime())/60000) : null;
+    const ocioso = realizado > 0 && ultimoMin !== null && ultimoMin >= META_OCIOSO_LIMITE_MIN;
+
+    // Status
+    let status, cor, pillBg, pillTxt;
+    if (ocioso) {
+      status = 'OCIOSO'; cor = 'ocioso'; pillBg = 'rgba(255,77,77,.15)'; pillTxt = '#ff4d4d';
+    } else if (diff >= 0 && realizado >= esperadoAgora) {
+      if (diff > esperadoAgora * 0.05) { status = '✓ ACIMA'; cor = 'acima'; pillBg = 'rgba(0,229,160,.15)'; pillTxt = 'var(--accent)'; }
+      else { status = 'NA META'; cor = ''; pillBg = 'rgba(0,229,160,.15)'; pillTxt = 'var(--accent)'; }
+    } else if (diff >= -esperadoAgora * 0.10) {
+      status = 'ATENÇÃO'; cor = 'atencao'; pillBg = 'rgba(255,181,71,.15)'; pillTxt = 'var(--warn)';
+    } else {
+      status = '⚠ ABAIXO'; cor = 'abaixo'; pillBg = 'rgba(255,77,77,.15)'; pillTxt = '#ff4d4d';
+    }
+
+    return { ...a, peso, metaInd, esperadoAgora, realizado, diff, ultimoMin, ocioso, status, cor, pillBg, pillTxt };
+  });
+
+  // Totais agregados
+  const totalRealizado = linhas.reduce((s,l)=>s+l.realizado,0);
+  const totalEsperado = Math.round(metaDiariaEquipe * fr);
+  const diffTotal = totalRealizado - totalEsperado;
+  const pctRealizado = Math.min(100, (totalRealizado / metaDiariaEquipe) * 100);
+  const pctEsperado = fr * 100;
+
+  // Contadores p/ alerta
+  const abaixo = linhas.filter(l => l.cor === 'abaixo').length;
+  const ociosos = linhas.filter(l => l.cor === 'ocioso').length;
+  const atencao = linhas.filter(l => l.cor === 'atencao').length;
+
+  // Atualiza badge da sidebar
+  const navAlert = document.getElementById('nav-meta-alert');
+  if (navAlert) {
+    const total = abaixo + ociosos;
+    navAlert.textContent = total;
+    navAlert.style.background = total > 0 ? 'rgba(255,77,77,.2)' : '';
+    navAlert.style.color = total > 0 ? '#ff4d4d' : '';
+  }
+
+  // Banner de alerta (só se houver)
+  let banner = '';
+  if (abaixo > 0 || ociosos > 0) {
+    const parts = [];
+    if (abaixo > 0) parts.push(`${abaixo} abaixo da meta`);
+    if (ociosos > 0) parts.push(`${ociosos} ocioso${ociosos>1?'s':''} há mais de ${META_OCIOSO_LIMITE_MIN}min`);
+    const detalhes = linhas.filter(l=>l.cor==='abaixo'||l.cor==='ocioso').map(l => l.ocioso ? `${l.colaborador_nome} sem bipar há ${fmtMinutos(l.ultimoMin)}` : `${l.colaborador_nome} ${l.diff}`).join(' · ');
+    banner = `<div class="meta-alert">
+      <div>
+        <div style="font-size:12px;color:var(--danger);font-weight:600;">⚠ ${parts.join(' · ')}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px;">${detalhes}</div>
+      </div>
+      <button onclick="copiarTodosWhatsApp()" style="padding:6px 12px;background:var(--danger);color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;">📋 Copiar avisos</button>
+    </div>`;
+  } else if (atencao === 0) {
+    banner = `<div class="meta-alert ok">
+      <div style="font-size:12px;color:var(--accent);font-weight:600;">✓ Equipe no ritmo · todos dentro ou acima do esperado</div>
+    </div>`;
+  }
+
+  // Cards
+  const cards = linhas.map(l => {
+    const pctRealCard = Math.min(100, (l.realizado/l.metaInd)*100);
+    const ultimoTxt = l.ultimoMin === null ? 'sem bipagens hoje' : `último: ${fmtMinutos(l.ultimoMin)}`;
+    const ultimoCor = l.ocioso ? 'var(--danger)' : 'var(--text2)';
+    const diffCor = l.diff > 0 ? 'var(--accent)' : (l.diff < 0 ? (l.cor==='abaixo'||l.cor==='ocioso'?'var(--danger)':'var(--warn)') : 'var(--text2)');
+    const diffTxt = l.diff > 0 ? `+${l.diff}` : `${l.diff}`;
+    const numeroCor = l.cor==='abaixo'||l.cor==='ocioso' ? 'var(--danger)' : (l.cor==='atencao' ? 'var(--warn)' : (l.cor==='acima' ? 'var(--accent)' : 'var(--text)'));
+    const barCor = l.cor==='abaixo'||l.cor==='ocioso' ? 'var(--danger)' : (l.cor==='atencao' ? 'var(--warn)' : 'var(--accent)');
+    const showCopy = l.cor==='abaixo' || l.cor==='ocioso' || l.cor==='atencao';
+
+    return `<div class="meta-card ${l.cor}">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <div>
+          <div style="font-size:13px;font-weight:600;">${l.colaborador_nome.toUpperCase()}</div>
+          <div style="font-size:10px;color:var(--text2);font-family:var(--mono);">${l.atividade_nome} · peso ${l.peso}</div>
+        </div>
+        <span class="meta-card-pill" style="background:${l.pillBg};color:${l.pillTxt};">${l.status}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+        <div style="font-size:22px;font-weight:600;color:${numeroCor};font-family:var(--mono);">${l.realizado}</div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">esp. ${l.esperadoAgora} / meta ${l.metaInd}</div>
+      </div>
+      <div class="meta-mini-bar">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:${pctRealCard}%;background:${barCor};"></div>
+        <div class="meta-marker" style="left:${Math.min(100,pctEsperado)}%;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;font-family:var(--mono);color:var(--text2);">
+        <span style="color:${ultimoCor};">${ultimoTxt}${l.ocioso?' ⚠':''}</span>
+        <span style="color:${diffCor};">${diffTxt}</span>
+      </div>
+      ${showCopy ? `<button class="meta-copy-btn" onclick="copiarMsgWhatsApp(${l.colaborador_id})">📋 Copiar p/ WhatsApp</button>` : ''}
+    </div>`;
+  }).join('');
+
+  // Cabeçalho geral
+  const totalMarkerColor = diffTotal >= 0 ? 'var(--accent)' : 'var(--danger)';
+  const totalDiffTxt = diffTotal > 0 ? `+${diffTotal} acima do esperado` : (diffTotal < 0 ? `${diffTotal} do esperado` : 'no ritmo certo');
+  const geral = `<div class="meta-progress-card">
+    <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+      <div>
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);letter-spacing:.08em;">Meta diária da equipe</div>
+        <div style="font-size:22px;font-weight:600;margin-top:2px;">
+          <span style="color:var(--accent);">${totalRealizado.toLocaleString('pt-BR')}</span>
+          <span style="color:var(--text3);">/ ${metaDiariaEquipe.toLocaleString('pt-BR')}</span>
+          <span style="font-size:13px;color:var(--text2);font-weight:400;">peças (${Math.round(pctRealizado)}%)</span>
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);letter-spacing:.08em;">Esperado às ${horaStr}</div>
+        <div style="font-size:18px;font-weight:600;color:var(--warn);margin-top:2px;">~${totalEsperado.toLocaleString('pt-BR')} peças</div>
+        <div style="font-size:11px;color:${totalMarkerColor};font-family:var(--mono);">${totalDiffTxt}</div>
+      </div>
+    </div>
+    <div class="meta-progress-bar">
+      <div class="meta-fill" style="width:${pctRealizado}%;"></div>
+      <div class="meta-marker" style="left:${pctEsperado}%;"></div>
+    </div>
+  </div>`;
+
+  cont.innerHTML = geral + banner + `<div class="meta-cards">${cards}</div>`;
+
+  // Guarda linhas pra mensagens
+  metaData._linhas = linhas;
+}
+
+// Mensagens WhatsApp
+function gerarMsgWhatsApp(linha){
+  const horasRestantes = (META_HORA_FIM - Math.max(META_HORA_INICIO, new Date().getHours() + new Date().getMinutes()/60));
+  const restante = linha.metaInd - linha.realizado;
+  const ritmoNecessario = horasRestantes > 0 ? Math.ceil(restante / horasRestantes) : 0;
+
+  if (linha.ocioso) {
+    return `${linha.colaborador_nome}, você está sem bipar há ${fmtMinutos(linha.ultimoMin)} e está ${Math.abs(linha.diff)} abaixo do esperado pra esse horário. Tudo bem? Pra bater meta hoje, precisa fazer mais ${restante} nas próximas ${Math.floor(horasRestantes)}h${Math.round((horasRestantes%1)*60)}min — ritmo de ~${ritmoNecessario}/h.`;
+  }
+  return `${linha.colaborador_nome}, você está ${Math.abs(linha.diff)} abaixo do esperado pra esse horário (${linha.realizado} vs ${linha.esperadoAgora}). Pra bater meta hoje, precisa fazer mais ${restante} nas próximas ${Math.floor(horasRestantes)}h${Math.round((horasRestantes%1)*60)}min — ritmo de ~${ritmoNecessario}/h.`;
+}
+
+async function copiarMsgWhatsApp(colaboradorId){
+  if (!metaData?._linhas) return;
+  const linha = metaData._linhas.find(l => l.colaborador_id === colaboradorId);
+  if (!linha) return;
+  const msg = gerarMsgWhatsApp(linha);
+  try {
+    await navigator.clipboard.writeText(msg);
+    toast(`✓ Mensagem para ${linha.colaborador_nome} copiada!`,'ok');
+  } catch(e) {
+    toast('Erro ao copiar. Texto: '+msg.slice(0,50)+'...','warn');
+  }
+}
+
+async function copiarTodosWhatsApp(){
+  if (!metaData?._linhas) return;
+  const problemas = metaData._linhas.filter(l => l.cor==='abaixo'||l.cor==='ocioso');
+  if (problemas.length === 0) return;
+  const msg = problemas.map(gerarMsgWhatsApp).join('\n\n');
+  try {
+    await navigator.clipboard.writeText(msg);
+    toast(`✓ ${problemas.length} mensagens copiadas para o clipboard.`,'ok');
+  } catch(e) {
+    toast('Erro ao copiar.','err');
+  }
+}
+
 // Atualizar tempo parado a cada 60s (sem refazer tudo)
 setInterval(()=>{
   if (document.getElementById('panel-coleta')?.classList.contains('active') && abaColetaAtiva==='aguardando') {
     renderColetas();
   }
   atualizarStatColeta();
+  // Re-render Meta do Dia se estiver aberta (atualiza tempo ocioso e fator esperado)
+  if (document.getElementById('panel-meta')?.classList.contains('active') && metaData) {
+    renderMetaDia();
+  }
 }, 60000);
 
 // ── Selects ───────────────────────────────────────────────────
