@@ -1175,6 +1175,185 @@ app.put('/api/metas/:mes', autenticar, async (req, res) => {
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
+// ── FECHAMENTO MENSAL ─────────────────────────────────────────
+
+// Status do fechamento de um mês: count pendentes, count coletadas, etc.
+app.get('/api/fechamento/:mes/status', autenticar, async (req, res) => {
+  try {
+    const mes = req.params.mes;
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
+
+    const r = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE coletada_em IS NOT NULL) AS coletadas,
+        COUNT(*) FILTER (WHERE coletada_em IS NULL) AS pendentes,
+        COUNT(*) AS total
+      FROM bipagens
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+    `, [mes]);
+
+    const stats = r.rows[0];
+    res.json({
+      mes,
+      total: parseInt(stats.total),
+      coletadas: parseInt(stats.coletadas),
+      pendentes: parseInt(stats.pendentes),
+      pode_fechar: parseInt(stats.pendentes) === 0 && parseInt(stats.total) > 0
+    });
+  } catch (e) {
+    console.error('GET /api/fechamento/:mes/status:', e.message);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Lista das pendências (etiquetas bipadas no mês mas ainda não coletadas)
+app.get('/api/fechamento/:mes/pendentes', autenticar, async (req, res) => {
+  try {
+    const mes = req.params.mes;
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
+
+    const r = await pool.query(`
+      SELECT *,
+        EXTRACT(EPOCH FROM (NOW() - criado_em)) AS segundos_parado
+      FROM bipagens
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+        AND coletada_em IS NULL
+      ORDER BY criado_em
+    `, [mes]);
+
+    res.json(r.rows.map(b => ({
+      ...toISO(b),
+      segundos_parado: parseInt(b.segundos_parado || 0)
+    })));
+  } catch (e) {
+    console.error('GET /api/fechamento/:mes/pendentes:', e.message);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Dump completo do mês (pra gerar Excel no front)
+app.get('/api/fechamento/:mes/dados', autenticar, async (req, res) => {
+  try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    const mes = req.params.mes;
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
+
+    // Bipagens do mês com flag de "tardia"
+    const bip = await pool.query(`
+      SELECT *,
+        (coletada_em IS NOT NULL AND TO_CHAR(coletada_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') > $1) AS coletada_tardia
+      FROM bipagens
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+      ORDER BY criado_em
+    `, [mes]);
+
+    // Pendências/retornos do mês
+    const pend = await pool.query(`
+      SELECT * FROM pendencias
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+      ORDER BY criado_em
+    `, [mes]);
+
+    const ret = await pool.query(`
+      SELECT * FROM retornos
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+      ORDER BY criado_em
+    `, [mes]);
+
+    // Atribuições do mês (pra ranking ponderado)
+    const atrib = await pool.query(`
+      SELECT c.id AS colaborador_id, c.nome AS colaborador_nome,
+             a.nome AS atividade_nome, a.peso AS atividade_peso
+      FROM colaboradores c
+      LEFT JOIN colaborador_atividade ca ON ca.colaborador_id = c.id AND ca.mes = $1
+      LEFT JOIN atividades a ON a.id = ca.atividade_id
+      ORDER BY c.nome
+    `, [mes]);
+
+    const meta = await pool.query('SELECT * FROM metas_mensais WHERE mes = $1', [mes]);
+
+    res.json({
+      mes,
+      bipagens: bip.rows.map(b => ({
+        ...toISO(b),
+        coletada_em: b.coletada_em ? b.coletada_em.toISOString() : null,
+        coletada_tardia: !!b.coletada_tardia
+      })),
+      pendencias: pend.rows.map(toISO),
+      retornos: ret.rows.map(toISO),
+      atribuicoes: atrib.rows.map(a => ({
+        ...a,
+        atividade_peso: a.atividade_peso != null ? parseFloat(a.atividade_peso) : null
+      })),
+      meta: meta.rows[0] ? { ...meta.rows[0], meta_global: parseInt(meta.rows[0].meta_global) } : null
+    });
+  } catch (e) {
+    console.error('GET /api/fechamento/:mes/dados:', e.message);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Confirma o fechamento e DELETA os dados do mês (só após confirmação do front)
+app.post('/api/fechamento/:mes/confirmar', autenticar, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    const mes = req.params.mes;
+    if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
+
+    // Não deixa fechar mês corrente nem futuro
+    const mesAtual = new Date().toISOString().slice(0,7);
+    if (mes >= mesAtual) return res.status(400).json({ erro: 'Não é permitido fechar o mês corrente ou futuro.' });
+
+    // Verificar se há pendências (segurança extra mesmo já checado no front)
+    const chk = await client.query(`
+      SELECT COUNT(*) AS pend FROM bipagens
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+        AND coletada_em IS NULL
+    `, [mes]);
+    if (parseInt(chk.rows[0].pend) > 0) {
+      return res.status(409).json({ erro: 'Existem etiquetas pendentes. Resolva antes de fechar.' });
+    }
+
+    await client.query('BEGIN');
+
+    const delBip = await client.query(`
+      DELETE FROM bipagens
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+    `, [mes]);
+    const delPend = await client.query(`
+      DELETE FROM pendencias
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+    `, [mes]);
+    const delRet = await client.query(`
+      DELETE FROM retornos
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo','YYYY-MM') = $1
+    `, [mes]);
+
+    await client.query('COMMIT');
+
+    console.log(`[fechamento] mês ${mes} fechado por ${req.usuario.nome}: ${delBip.rowCount} bipagens, ${delPend.rowCount} pendências, ${delRet.rowCount} retornos removidos.`);
+
+    broadcast('fechamento:done', { mes, removidos: { bipagens: delBip.rowCount, pendencias: delPend.rowCount, retornos: delRet.rowCount } });
+
+    res.json({
+      ok: true,
+      mes,
+      removidos: {
+        bipagens: delBip.rowCount,
+        pendencias: delPend.rowCount,
+        retornos: delRet.rowCount
+      }
+    });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(()=>{});
+    console.error('POST /api/fechamento/:mes/confirmar:', e.message);
+    res.status(500).json({ erro: e.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── Pendências ───────────────────────────────────────────────
 app.post('/api/pendencias', autenticar, async (req, res) => {
   try {
