@@ -292,6 +292,26 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .meta-copy-btn{width:100%;padding:5px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:4px;color:var(--text);font-size:10px;cursor:pointer;margin-top:6px;}
 .meta-copy-btn:hover{border-color:var(--accent);color:var(--accent);}
 
+/* FECHAMENTO MENSAL */
+.fech-banner{padding:18px 22px;border-radius:8px;margin-bottom:1.25rem;border-left:4px solid;}
+.fech-banner.verde{background:rgba(0,229,160,.06);border-left-color:var(--accent);}
+.fech-banner.amarelo{background:rgba(255,181,71,.06);border-left-color:var(--warn);}
+.fech-banner.vermelho{background:rgba(255,77,77,.06);border-left-color:var(--danger);animation:pulse-soft 2s ease-in-out infinite;}
+.fech-banner.cinza{background:var(--surface);border-left-color:var(--border2);}
+@keyframes pulse-soft{0%,100%{box-shadow:0 0 0 0 rgba(255,77,77,.15);}50%{box-shadow:0 0 0 6px rgba(255,77,77,0);}}
+.fech-banner-title{font-size:16px;font-weight:600;margin-bottom:6px;}
+.fech-banner-msg{font-size:13px;color:var(--text2);line-height:1.5;}
+.fech-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0;}
+.fech-stat{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;}
+.fech-stat-label{font-size:10px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);letter-spacing:.08em;}
+.fech-stat-value{font-size:22px;font-weight:600;font-family:var(--mono);margin-top:2px;}
+.fech-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.fech-pendentes-list{background:var(--surface);border:1px solid var(--border);border-radius:6px;max-height:380px;overflow:auto;}
+.fech-pend-row{display:grid;grid-template-columns:1fr 1.2fr 1fr 90px;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);align-items:center;font-size:12px;}
+.fech-pend-row:last-child{border-bottom:none;}
+.fech-pend-row .pend-etiq{font-family:var(--mono);font-size:12px;}
+.fech-pend-row .pend-tempo{color:var(--danger);font-family:var(--mono);font-weight:600;}
+
 </style>
 </head>
 <body>
@@ -359,6 +379,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item" onclick="switchPanel('marketplaces',this)">&#128722; Marketplaces</div>
       <div class="nav-item" onclick="switchPanel('transportadoras',this)">&#128667; Transportadoras</div>
       <div class="nav-item" id="nav-pesos" onclick="switchPanel('pesos',this)" style="display:none;">⚖ Pesos & Metas</div>
+      <div class="nav-item" id="nav-fechamento" onclick="switchPanel('fechamento',this)" style="display:none;">📈 Fechamento Mensal <span class="count" id="nav-fechamento-alert" style="display:none;">!</span></div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Produção</div>
       <div class="nav-item" onclick="switchPanel('producao',this)">🏭 Produção</div>
@@ -887,6 +908,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         </div>
       </div>
 
+      <!-- FECHAMENTO MENSAL -->
+      <div class="panel" id="panel-fechamento">
+        <div class="page-title">📈 Fechamento Mensal</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:1.25rem;">Encerre o mês anterior gerando relatório completo em Excel e libere o espaço no sistema.</div>
+        <div id="fechamento-conteudo">
+          <div style="padding:32px;text-align:center;color:var(--text3);">⏳ Carregando...</div>
+        </div>
+      </div>
+
       <!-- TEMA -->
       <div class="panel" id="panel-tema">
         <div class="page-title">Escolha de Tema</div>
@@ -1133,6 +1163,7 @@ async function iniciarApp() {
   if (usuarioLogado.role === 'admin') {
     document.getElementById('nav-usuarios').style.display = 'flex';
     document.getElementById('nav-pesos').style.display = 'flex';
+    document.getElementById('nav-fechamento').style.display = 'flex';
   }
 
   const estado = await api('GET','/api/estado');
@@ -1147,6 +1178,8 @@ async function iniciarApp() {
   carregarColetas().catch(()=>{});
   // Carregar meta em background pro badge da sidebar
   carregarMetaDia().catch(()=>{});
+  // Checar fechamento pendente do mês anterior (admin only)
+  checarFechamentoBackground().catch(()=>{});
   connectWS();
   document.getElementById('inp-etiq').focus();
 }
@@ -1170,6 +1203,7 @@ function switchPanel(name, el) {
   if (name==='transportadoras') renderTranspConfig();
   if (name==='pesos') carregarPesos();
   if (name==='meta') carregarMetaDia();
+  if (name==='fechamento') carregarFechamento();
 }
 
 // ── TEMA ──────────────────────────────────────────────────────
@@ -2145,6 +2179,345 @@ async function copiarTodosWhatsApp(){
     toast(`✓ ${problemas.length} mensagens copiadas para o clipboard.`,'ok');
   } catch(e) {
     toast('Erro ao copiar.','err');
+  }
+}
+
+// ── FECHAMENTO MENSAL ─────────────────────────────────────────
+const FECH_DIA_LIMITE = 5; // dia do mês a partir do qual mostra alerta vermelho
+
+// Mês anterior em formato YYYY-MM
+function mesAnteriorISO(){
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return d.toISOString().slice(0,7);
+}
+
+async function checarFechamentoBackground(){
+  // Chamado no iniciarApp pra atualizar o badge da sidebar
+  if (!usuarioLogado || usuarioLogado.role !== 'admin') return;
+  try {
+    const mesAnt = mesAnteriorISO();
+    const status = await api('GET','/api/fechamento/'+mesAnt+'/status');
+    const navBadge = document.getElementById('nav-fechamento-alert');
+    if (!navBadge) return;
+    if (status.total === 0) {
+      navBadge.style.display = 'none';
+      return;
+    }
+    const hoje = new Date().getDate();
+    if (status.pode_fechar) {
+      navBadge.textContent = '✓';
+      navBadge.style.background = 'rgba(0,229,160,.2)';
+      navBadge.style.color = 'var(--accent)';
+      navBadge.style.display = 'inline-flex';
+    } else if (hoje >= FECH_DIA_LIMITE) {
+      navBadge.textContent = status.pendentes;
+      navBadge.style.background = 'rgba(255,77,77,.2)';
+      navBadge.style.color = 'var(--danger)';
+      navBadge.style.display = 'inline-flex';
+    } else {
+      navBadge.textContent = status.pendentes;
+      navBadge.style.background = 'rgba(255,181,71,.2)';
+      navBadge.style.color = 'var(--warn)';
+      navBadge.style.display = 'inline-flex';
+    }
+  } catch(e) {
+    // silencioso
+  }
+}
+
+async function carregarFechamento(){
+  const cont = document.getElementById('fechamento-conteudo');
+  cont.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text3);">⏳ Carregando...</div>`;
+  try {
+    const mesAnt = mesAnteriorISO();
+    const status = await api('GET','/api/fechamento/'+mesAnt+'/status');
+    renderFechamento(status);
+  } catch(e) {
+    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro ao carregar: ${e.erro || e.message}</div>`;
+  }
+}
+
+function renderFechamento(status){
+  const cont = document.getElementById('fechamento-conteudo');
+  const mes = status.mes;
+  const mesPT = formatarMesPT(mes);
+  const hoje = new Date().getDate();
+
+  // Caso 1: Não há nada do mês anterior
+  if (status.total === 0) {
+    cont.innerHTML = `<div class="fech-banner cinza">
+      <div class="fech-banner-title">Nada para fechar</div>
+      <div class="fech-banner-msg">Não há registros de bipagem do mês de <strong>${mesPT}</strong>. O sistema só permite fechar meses anteriores ao corrente.</div>
+    </div>`;
+    return;
+  }
+
+  let banner, actions, pendList = '';
+
+  // Caso 2: Pode fechar (verde)
+  if (status.pode_fechar) {
+    banner = `<div class="fech-banner verde">
+      <div class="fech-banner-title" style="color:var(--accent);">✓ ${mesPT} pronto para fechamento</div>
+      <div class="fech-banner-msg">Todas as ${status.total.toLocaleString('pt-BR')} etiquetas do mês já foram coletadas. Você pode gerar o relatório completo em Excel e liberar o espaço no sistema.</div>
+      <div class="fech-stats">
+        <div class="fech-stat"><div class="fech-stat-label">Total bipado</div><div class="fech-stat-value" style="color:var(--text);">${status.total.toLocaleString('pt-BR')}</div></div>
+        <div class="fech-stat"><div class="fech-stat-label">Coletadas</div><div class="fech-stat-value" style="color:var(--accent);">${status.coletadas.toLocaleString('pt-BR')}</div></div>
+        <div class="fech-stat"><div class="fech-stat-label">Pendentes</div><div class="fech-stat-value" style="color:var(--text2);">0</div></div>
+      </div>
+      <div class="fech-actions">
+        <button class="btn btn-primary" onclick="iniciarFechamento('${mes}')" style="background:var(--accent);color:#000;">📦 Gerar Excel e fechar ${mesPT}</button>
+      </div>
+    </div>`;
+  }
+  // Caso 3: Pendências, mas dentro do prazo (amarelo)
+  else if (hoje < FECH_DIA_LIMITE) {
+    banner = `<div class="fech-banner amarelo">
+      <div class="fech-banner-title" style="color:var(--warn);">Aguardando coletas de ${mesPT}</div>
+      <div class="fech-banner-msg"><strong>${status.pendentes.toLocaleString('pt-BR')}</strong> etiquetas de ${mesPT} ainda aguardam coleta da transportadora. Quando todas forem coletadas, você poderá fechar o mês. ${hoje < FECH_DIA_LIMITE ? `Você tem até o dia <strong>${FECH_DIA_LIMITE}</strong> para resolver naturalmente — depois disso, será obrigatório.` : ''}</div>
+      <div class="fech-stats">
+        <div class="fech-stat"><div class="fech-stat-label">Total bipado</div><div class="fech-stat-value" style="color:var(--text);">${status.total.toLocaleString('pt-BR')}</div></div>
+        <div class="fech-stat"><div class="fech-stat-label">Coletadas</div><div class="fech-stat-value" style="color:var(--accent);">${status.coletadas.toLocaleString('pt-BR')}</div></div>
+        <div class="fech-stat"><div class="fech-stat-label">Pendentes</div><div class="fech-stat-value" style="color:var(--warn);">${status.pendentes.toLocaleString('pt-BR')}</div></div>
+      </div>
+      <div class="fech-actions">
+        <button class="btn" onclick="verPendentesFechamento('${mes}')" style="background:var(--surface2);">Ver pendências</button>
+      </div>
+    </div>`;
+  }
+  // Caso 4: Pendências passou do prazo (vermelho)
+  else {
+    banner = `<div class="fech-banner vermelho">
+      <div class="fech-banner-title" style="color:var(--danger);">⚠ ATENÇÃO: pendências de ${mesPT} precisam ser resolvidas</div>
+      <div class="fech-banner-msg">Estamos no dia <strong>${hoje}</strong> e ainda há <strong>${status.pendentes.toLocaleString('pt-BR')}</strong> etiquetas de ${mesPT} sem coleta. Resolva-as antes de fechar o mês — pode bipar a coleta retroativamente, marcar como retorno ou cancelar.</div>
+      <div class="fech-stats">
+        <div class="fech-stat"><div class="fech-stat-label">Total bipado</div><div class="fech-stat-value" style="color:var(--text);">${status.total.toLocaleString('pt-BR')}</div></div>
+        <div class="fech-stat"><div class="fech-stat-label">Coletadas</div><div class="fech-stat-value" style="color:var(--accent);">${status.coletadas.toLocaleString('pt-BR')}</div></div>
+        <div class="fech-stat"><div class="fech-stat-label">Pendentes</div><div class="fech-stat-value" style="color:var(--danger);">${status.pendentes.toLocaleString('pt-BR')}</div></div>
+      </div>
+      <div class="fech-actions">
+        <button class="btn btn-primary" onclick="verPendentesFechamento('${mes}')" style="background:var(--danger);color:#fff;">Ver pendências e resolver</button>
+      </div>
+    </div>`;
+  }
+
+  cont.innerHTML = banner + '<div id="fech-pend-area"></div>';
+}
+
+async function verPendentesFechamento(mes){
+  const area = document.getElementById('fech-pend-area');
+  area.innerHTML = `<div style="padding:18px;color:var(--text3);">⏳ Carregando pendências...</div>`;
+  try {
+    const lista = await api('GET','/api/fechamento/'+mes+'/pendentes');
+    if (lista.length === 0) {
+      area.innerHTML = `<div style="padding:18px;color:var(--accent);">✓ Nenhuma pendência. Recarregue a tela.</div>`;
+      return;
+    }
+    const linhas = lista.map(b => {
+      const dt = new Date(b.criado_em);
+      const dataStr = dt.toLocaleDateString('pt-BR') + ' ' + dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+      const dias = Math.floor(b.segundos_parado / 86400);
+      const horas = Math.floor((b.segundos_parado % 86400) / 3600);
+      const tempo = dias > 0 ? `${dias}d ${horas}h` : `${horas}h`;
+      return `<div class="fech-pend-row">
+        <div class="pend-etiq">${b.etiqueta}</div>
+        <div>${b.marketplace_nome || '-'} · ${b.colaborador_nome || '-'}</div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">${dataStr}</div>
+        <div class="pend-tempo">há ${tempo}</div>
+      </div>`;
+    }).join('');
+
+    area.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px;margin-top:10px;">
+        <div style="font-size:13px;font-weight:600;margin-bottom:10px;">📋 ${lista.length.toLocaleString('pt-BR')} pendências de ${formatarMesPT(mes)}</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5;">
+          Vá em <strong>🚚 Aguardando Coleta</strong> para bipar coletas retroativas (transportadora chegou tarde),
+          ou em <strong>↩ Retorno</strong> caso a etiqueta tenha voltado.
+          As etiquetas resolvidas saem automaticamente desta lista.
+        </div>
+        <div class="fech-pendentes-list">${linhas}</div>
+      </div>`;
+  } catch(e) {
+    area.innerHTML = `<div style="padding:18px;color:var(--danger);">Erro: ${e.erro || e.message}</div>`;
+  }
+}
+
+async function iniciarFechamento(mes){
+  const mesPT = formatarMesPT(mes);
+  if (!confirm(`📦 Iniciar fechamento de ${mesPT}?\n\n1. Vou gerar o Excel completo agora\n2. Você revisa o arquivo na sua máquina\n3. Confirma e o sistema apaga os dados desse mês\n\nDeseja prosseguir?`)) return;
+
+  const cont = document.getElementById('fech-pend-area');
+  cont.innerHTML = `<div style="padding:18px;color:var(--text2);">⏳ Carregando dados completos do mês...</div>`;
+
+  try {
+    const dados = await api('GET','/api/fechamento/'+mes+'/dados');
+    cont.innerHTML = `<div style="padding:18px;color:var(--text2);">⏳ Gerando Excel (${dados.bipagens.length.toLocaleString('pt-BR')} bipagens)...</div>`;
+
+    // Gera Excel via SheetJS
+    const fileName = await gerarExcelFechamento(mes, dados);
+
+    // Etapa de confirmação
+    cont.innerHTML = `
+      <div class="fech-banner verde">
+        <div class="fech-banner-title" style="color:var(--accent);">✓ Excel gerado e baixado: ${fileName}</div>
+        <div class="fech-banner-msg" style="margin-bottom:14px;">
+          <strong>Antes de confirmar, verifique:</strong><br>
+          • O arquivo foi baixado na sua pasta de Downloads?<br>
+          • Você consegue abrir o Excel e ver os dados?<br>
+          • As 4 abas estão preenchidas (Resumo, Bipagens, Coletas, Pendências/Retornos)?
+        </div>
+        <div class="fech-banner-msg" style="background:rgba(255,77,77,.06);padding:10px 14px;border-radius:4px;color:var(--danger);">
+          ⚠ <strong>Atenção:</strong> ao confirmar, todas as ${dados.bipagens.length.toLocaleString('pt-BR')} bipagens de ${mesPT} serão <strong>permanentemente apagadas</strong> do sistema. Esta ação NÃO PODE ser desfeita.
+        </div>
+        <div class="fech-actions" style="margin-top:14px;">
+          <button class="btn" onclick="carregarFechamento()" style="background:var(--surface2);">Cancelar</button>
+          <button class="btn btn-primary" onclick="confirmarFechamento('${mes}','${fileName}')" style="background:var(--danger);color:#fff;">🗑 Confirmar fechamento e apagar dados</button>
+        </div>
+      </div>`;
+  } catch(e) {
+    cont.innerHTML = `<div style="padding:18px;color:var(--danger);">Erro ao gerar Excel: ${e.erro || e.message}</div>`;
+  }
+}
+
+async function gerarExcelFechamento(mes, dados){
+  if (typeof XLSX === 'undefined') throw new Error('Biblioteca Excel não carregada. Recarregue a página (F5).');
+
+  const wb = XLSX.utils.book_new();
+  const mesPT = formatarMesPT(mes);
+
+  // ── Aba 1: RESUMO ──────────────────────────────────────────
+  const colabStats = {};
+  dados.bipagens.forEach(b => {
+    const k = b.colaborador_nome || '-';
+    if (!colabStats[k]) colabStats[k] = { qtd: 0, coletadas: 0, tardias: 0 };
+    colabStats[k].qtd++;
+    if (b.coletada_em) colabStats[k].coletadas++;
+    if (b.coletada_tardia) colabStats[k].tardias++;
+  });
+  const mktStats = {};
+  dados.bipagens.forEach(b => {
+    const k = b.marketplace_nome || '-';
+    if (!mktStats[k]) mktStats[k] = { qtd: 0, coletadas: 0 };
+    mktStats[k].qtd++;
+    if (b.coletada_em) mktStats[k].coletadas++;
+  });
+
+  // Ranking ponderado (com pesos da Fase 1)
+  const pesoMap = {};
+  dados.atribuicoes.forEach(a => { if (a.atividade_peso) pesoMap[a.colaborador_nome] = a.atividade_peso; });
+  const ranking = Object.keys(colabStats).map(nome => {
+    const peso = pesoMap[nome] || 1;
+    const score = colabStats[nome].qtd * peso;
+    return { nome, qtd: colabStats[nome].qtd, peso, score, coletadas: colabStats[nome].coletadas, tardias: colabStats[nome].tardias };
+  }).sort((a,b) => b.score - a.score);
+  const totalScore = ranking.reduce((s,r)=>s+r.score, 0);
+  ranking.forEach(r => { r.competencia = totalScore > 0 ? (r.score/totalScore*100).toFixed(1)+'%' : '0%'; });
+
+  const totalBip = dados.bipagens.length;
+  const totalColetado = dados.bipagens.filter(b => b.coletada_em).length;
+  const totalTardio = dados.bipagens.filter(b => b.coletada_tardia).length;
+  const metaTxt = dados.meta ? dados.meta.meta_global : '—';
+  const atingMeta = (dados.meta && dados.meta.meta_global > 0) ? ((totalBip/dados.meta.meta_global)*100).toFixed(1)+'%' : '—';
+
+  const resumoRows = [
+    [`RELATÓRIO DE FECHAMENTO — ${mesPT}`],
+    [`Gerado em ${new Date().toLocaleString('pt-BR')}`],
+    [],
+    ['INDICADORES GERAIS'],
+    ['Total bipado', totalBip],
+    ['Total coletado', totalColetado],
+    ['Coletas tardias (no mês seguinte)', totalTardio],
+    ['Meta global', metaTxt],
+    ['Atingimento da meta', atingMeta],
+    [],
+    ['RANKING POR COLABORADOR'],
+    ['Posição','Colaborador','Qtd Bipada','Peso','Score','Competência %','Coletadas','Tardias'],
+    ...ranking.map((r,i) => [i+1, r.nome, r.qtd, r.peso, r.score, r.competencia, r.coletadas, r.tardias]),
+    [],
+    ['VOLUME POR MARKETPLACE'],
+    ['Marketplace','Qtd Bipada','Coletadas','% Coletado'],
+    ...Object.keys(mktStats).map(k => [k, mktStats[k].qtd, mktStats[k].coletadas, mktStats[k].qtd>0 ? (mktStats[k].coletadas/mktStats[k].qtd*100).toFixed(1)+'%' : '0%']),
+  ];
+  const wsResumo = XLSX.utils.aoa_to_sheet(resumoRows);
+  // Larguras de coluna
+  wsResumo['!cols'] = [{wch:14},{wch:30},{wch:14},{wch:8},{wch:10},{wch:14},{wch:12},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo');
+
+  // ── Aba 2: BIPAGENS ────────────────────────────────────────
+  const bipRows = [
+    ['Etiqueta','Marketplace','Colaborador','Bipou em','Coletada em','Transportadora','Coletada por','Coleta tardia']
+  ];
+  dados.bipagens.forEach(b => {
+    bipRows.push([
+      b.etiqueta,
+      b.marketplace_nome || '-',
+      b.colaborador_nome || '-',
+      new Date(b.criado_em).toLocaleString('pt-BR'),
+      b.coletada_em ? new Date(b.coletada_em).toLocaleString('pt-BR') : '',
+      b.transportadora || '',
+      b.coletada_por || '',
+      b.coletada_tardia ? 'SIM' : ''
+    ]);
+  });
+  const wsBip = XLSX.utils.aoa_to_sheet(bipRows);
+  wsBip['!cols'] = [{wch:18},{wch:16},{wch:14},{wch:18},{wch:18},{wch:16},{wch:18},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, wsBip, 'Bipagens');
+
+  // ── Aba 3: COLETAS ────────────────────────────────────────
+  const colRows = [
+    ['Etiqueta','Marketplace','Colaborador','Bipou em','Coletada em','Transportadora','Tempo até coleta (h)','Tardia']
+  ];
+  dados.bipagens.filter(b => b.coletada_em).forEach(b => {
+    const horas = ((new Date(b.coletada_em) - new Date(b.criado_em))/3600000).toFixed(1);
+    colRows.push([
+      b.etiqueta,
+      b.marketplace_nome || '-',
+      b.colaborador_nome || '-',
+      new Date(b.criado_em).toLocaleString('pt-BR'),
+      new Date(b.coletada_em).toLocaleString('pt-BR'),
+      b.transportadora || '',
+      horas,
+      b.coletada_tardia ? 'SIM' : ''
+    ]);
+  });
+  const wsCol = XLSX.utils.aoa_to_sheet(colRows);
+  wsCol['!cols'] = [{wch:18},{wch:16},{wch:14},{wch:18},{wch:18},{wch:16},{wch:18},{wch:8}];
+  XLSX.utils.book_append_sheet(wb, wsCol, 'Coletas');
+
+  // ── Aba 4: PENDÊNCIAS / RETORNOS ──────────────────────────
+  const prRows = [
+    ['Tipo','Etiqueta','Colaborador','Trânsito','Observação','Registrado em']
+  ];
+  dados.pendencias.forEach(p => prRows.push(['Pendência', p.etiqueta, p.colaborador_nome||'', p.transito||'', p.obs||'', new Date(p.criado_em).toLocaleString('pt-BR')]));
+  dados.retornos.forEach(r => prRows.push(['Retorno', r.etiqueta||'', r.colaborador_nome||'', '', r.obs||'', new Date(r.criado_em).toLocaleString('pt-BR')]));
+  const wsPR = XLSX.utils.aoa_to_sheet(prRows);
+  wsPR['!cols'] = [{wch:12},{wch:18},{wch:14},{wch:14},{wch:35},{wch:18}];
+  XLSX.utils.book_append_sheet(wb, wsPR, 'Pendências e Retornos');
+
+  // Gera e baixa
+  const fileName = `Fechamento_${mes}_EEA.xlsx`;
+  XLSX.writeFile(wb, fileName);
+  return fileName;
+}
+
+async function confirmarFechamento(mes, fileName){
+  if (!confirm(`🗑 CONFIRMAÇÃO FINAL\n\nVai apagar permanentemente todos os dados de ${formatarMesPT(mes)}.\n\nVocê tem certeza que o Excel "${fileName}" foi salvo corretamente?\n\nEsta ação NÃO PODE ser desfeita.`)) return;
+
+  try {
+    const r = await api('POST','/api/fechamento/'+mes+'/confirmar');
+    toast(`✓ Fechamento concluído: ${r.removidos.bipagens.toLocaleString('pt-BR')} bipagens removidas.`,'ok',5000);
+
+    // Recarrega tudo (estado fica desatualizado depois desse delete em massa)
+    const estado = await api('GET','/api/estado');
+    S = estado;
+    populateSelects();
+    renderAll();
+    updateCounts();
+    checarFechamentoBackground();
+    carregarFechamento();
+  } catch(e) {
+    toast('Erro: '+(e.erro||e.message),'err');
   }
 }
 
