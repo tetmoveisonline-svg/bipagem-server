@@ -893,6 +893,97 @@ app.post('/api/coletas', autenticar, async (req, res) => {
   }
 });
 
+// Modo Carregamento — retorna sempre 200 com 'resultado' estruturado
+// resultado: NAO_ENCONTRADA | DUPLICADA | OK | TROCOU_TRANSPORTADORA
+app.post('/api/coletas/carregamento', autenticar, async (req, res) => {
+  try {
+    const etiqueta = (req.body.etiqueta || '').trim().toUpperCase();
+    const transportadora = (req.body.transportadora || '').trim();
+    if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
+    if (!transportadora) return res.status(400).json({ erro: 'Selecione a transportadora.' });
+
+    // 1) Existe no sistema?
+    const bip = await pool.query('SELECT * FROM bipagens WHERE etiqueta = $1 LIMIT 1', [etiqueta]);
+    if (bip.rowCount === 0) {
+      // Não grava nada
+      return res.json({
+        resultado: 'NAO_ENCONTRADA',
+        etiqueta,
+        mensagem: 'Etiqueta não foi bipada na separação.'
+      });
+    }
+    const b = bip.rows[0];
+
+    // 2) Já foi coletada? (DUPLICADA — não grava nada)
+    if (b.coletada_em) {
+      return res.json({
+        resultado: 'DUPLICADA',
+        etiqueta,
+        mensagem: 'Etiqueta já foi carregada anteriormente.',
+        coletada_em: b.coletada_em.toISOString(),
+        coletada_por: b.coletada_por || '',
+        transportadora_anterior: b.transportadora || '',
+        bipagem: toISO(b)
+      });
+    }
+
+    // 3) Vai marcar como coletada — verifica se a transportadora bate com a marca da etiqueta
+    // (cruzamento por marketplace nome)
+    let transpUsada = transportadora;
+    let trocou = false;
+
+    // Heurística simples por prefixo do código:
+    // - "BR" → Shopee Xpress (formato Shopee)
+    // - 11 dígitos puros → ML padrão (não é regra rígida)
+    // Aqui só fazemos a troca se a etiqueta TEM `marketplace_nome` cadastrado
+    // e o nome dele bate parcialmente com alguma transportadora.
+    if (b.marketplace_nome) {
+      const mkt = b.marketplace_nome.toLowerCase();
+      const transps = await pool.query('SELECT nome FROM transportadoras');
+      const candidata = transps.rows.find(t => {
+        const tn = t.nome.toLowerCase();
+        // bate se compartilha palavra-chave: shopee, mercado, amazon, shein
+        return (mkt.includes('shopee') && tn.includes('shopee')) ||
+               (mkt.includes('mercado') && tn.includes('mercado')) ||
+               (mkt.includes('amazon') && tn.includes('amazon')) ||
+               (mkt.includes('shein') && tn.includes('shein'));
+      });
+      if (candidata && candidata.nome !== transportadora) {
+        transpUsada = candidata.nome;
+        trocou = true;
+      }
+    }
+
+    // 4) Grava a coleta
+    const r = await pool.query(`
+      UPDATE bipagens
+      SET coletada_em = NOW(), transportadora = $1, coletada_por = $2
+      WHERE id = $3
+      RETURNING *,
+        EXTRACT(EPOCH FROM (coletada_em - criado_em)) AS segundos_parado
+    `, [transpUsada, req.usuario.nome + ' (carregamento)', b.id]);
+
+    const atualizado = {
+      ...toISO(r.rows[0]),
+      coletada_em: r.rows[0].coletada_em.toISOString(),
+      segundos_parado: parseInt(r.rows[0].segundos_parado || 0)
+    };
+    broadcast('coleta:add', atualizado);
+
+    res.json({
+      resultado: trocou ? 'TROCOU_TRANSPORTADORA' : 'OK',
+      etiqueta,
+      mensagem: trocou ? `Trocou para ${transpUsada}` : 'Carregada com sucesso.',
+      transportadora_usada: transpUsada,
+      transportadora_anterior: trocou ? transportadora : null,
+      bipagem: atualizado
+    });
+  } catch (e) {
+    console.error('POST /api/coletas/carregamento:', e.message);
+    res.status(500).json({ erro: 'Erro ao processar carregamento.' });
+  }
+});
+
 // Importação em lote (romaneio da transportadora)
 app.post('/api/coletas/lote', autenticar, async (req, res) => {
   const client = await pool.connect();
