@@ -312,6 +312,153 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .fech-pend-row .pend-etiq{font-family:var(--mono);font-size:12px;}
 .fech-pend-row .pend-tempo{color:var(--danger);font-family:var(--mono);font-weight:600;}
 
+/* ─── MOBILE BACKDROP/DRAWER (escondidos por padrão) ─── */
+.menu-toggle{display:none;background:none;border:none;color:var(--text);font-size:22px;cursor:pointer;padding:4px 8px;margin-right:6px;}
+.mobile-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:90;}
+.tab-bar{display:none;}
+
+/* ─── RESPONSIVO PARA MOBILE/TABLET (≤900px) ─── */
+@media (max-width: 900px) {
+  /* HEADER */
+  .header{padding:0 14px;height:48px;}
+  .menu-toggle{display:inline-flex;align-items:center;justify-content:center;}
+  .brand-text{font-size:11px;}
+  .brand-sub{font-size:9px;}
+  .clock{font-size:10px;}
+  .ws-label{display:none;}
+  .header-right{gap:8px;}
+
+  /* LAYOUT */
+  .layout{grid-template-columns:1fr;}
+
+  /* SIDEBAR vira drawer */
+  .sidebar{
+    position:fixed;
+    top:48px;
+    left:-240px;
+    bottom:0;
+    width:240px;
+    z-index:100;
+    overflow-y:auto;
+    transition:left .25s ease;
+    border-right:1px solid var(--border);
+    padding-bottom:80px;
+  }
+  .sidebar.open{left:0;}
+  .mobile-backdrop.show{display:block;top:48px;}
+
+  /* MAIN */
+  .main{padding:1rem 0.875rem 80px;}
+
+  /* TÍTULOS */
+  .page-title{font-size:10px;margin-bottom:.875rem;}
+
+  /* STATS em 2x2 */
+  .stats-row{grid-template-columns:1fr 1fr;gap:6px;margin-bottom:1rem;}
+  .stat-card{padding:.5rem .75rem;}
+  .stat-value{font-size:20px;}
+  .stat-label{font-size:9px;}
+
+  /* INPUTS — 16px previne zoom auto do iOS */
+  input[type="text"], input[type="password"], input[type="number"],
+  input[type="email"], input[type="date"], input[type="month"],
+  input[type="file"], select, textarea{font-size:16px !important;}
+
+  /* FORMS / ADD-ROW empilha em coluna */
+  .add-form{padding:.875rem;}
+  .add-form-title{font-size:10px;}
+  .add-row{flex-direction:column;align-items:stretch;gap:8px;}
+  .add-row .field{width:100% !important;max-width:100% !important;}
+  .add-row > button{width:100%;padding:12px;}
+
+  /* GRIDS variados que podem quebrar */
+  .config-grid, .transp-config-grid, .tema-grid, .atrib-grid, .fech-stats{
+    grid-template-columns:1fr !important;
+  }
+  .meta-cards{grid-template-columns:1fr !important;}
+
+  /* TABELAS — wrap */
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  table{font-size:12px;}
+  table th, table td{padding:6px 8px;}
+
+  /* PILLS de coleta */
+  .col-pill-row{flex-wrap:wrap;gap:5px;}
+  .col-pill{font-size:11px;padding:4px 9px;}
+
+  /* META DO DIA — cards individuais */
+  .meta-progress-card{padding:12px;}
+  .meta-card{padding:10px;}
+
+  /* FECHAMENTO */
+  .fech-banner{padding:14px 16px;}
+  .fech-pend-row{grid-template-columns:1fr;gap:4px;padding:10px;}
+  .fech-pend-row .pend-tempo{justify-self:start;}
+  .fech-actions{flex-direction:column;}
+  .fech-actions button{width:100%;}
+
+  /* PESOS & METAS */
+  .ativ-row{grid-template-columns:1fr 90px 36px;gap:8px;}
+  .ativ-row .ativ-peso-display{display:none;}
+
+  /* TAB BAR INFERIOR (operação) */
+  .tab-bar{
+    display:flex;
+    position:fixed;
+    bottom:0;
+    left:0;
+    right:0;
+    background:var(--surface);
+    border-top:1px solid var(--border);
+    z-index:80;
+    padding:6px 0 max(8px, env(safe-area-inset-bottom));
+    justify-content:space-around;
+  }
+  .tab-bar .tab{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:2px;
+    padding:6px 4px;
+    color:var(--text3);
+    cursor:pointer;
+    font-size:10px;
+    border:none;
+    background:none;
+    font-family:var(--font);
+    position:relative;
+  }
+  .tab-bar .tab.active{color:var(--accent);}
+  .tab-bar .tab-icon{font-size:18px;line-height:1;}
+  .tab-bar .tab .count{
+    position:absolute;
+    top:2px;
+    right:calc(50% - 18px);
+    font-family:var(--mono);
+    font-size:9px;
+    background:var(--danger);
+    color:#fff;
+    padding:0 5px;
+    border-radius:8px;
+    min-width:14px;
+    text-align:center;
+    line-height:14px;
+    height:14px;
+  }
+  .tab-bar .tab .count:empty,
+  .tab-bar .tab .count[data-zero="true"]{display:none;}
+}
+
+/* ─── TELAS BEM PEQUENAS (≤380px) ─── */
+@media (max-width: 380px) {
+  .stats-row{grid-template-columns:1fr 1fr;}
+  .stat-value{font-size:18px;}
+  .brand-text{font-size:10px;}
+  .header-right{gap:6px;}
+  .clock{display:none;}
+}
+
 </style>
 </head>
 <body>
@@ -338,6 +485,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 <!-- APP -->
 <div class="app" id="app">
   <div class="header">
+    <button class="menu-toggle" id="menu-toggle" onclick="toggleSidebar()" aria-label="Menu">☰</button>
     <div class="brand">
       <div class="brand-icon">&#9783;</div>
       <div>
@@ -357,8 +505,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     </div>
   </div>
 
+  <!-- Backdrop pro drawer mobile -->
+  <div class="mobile-backdrop" id="mobile-backdrop" onclick="closeSidebar()"></div>
+
   <div class="layout">
-    <div class="sidebar">
+    <div class="sidebar" id="sidebar">
       <div class="sidebar-section">Operação</div>
       <div class="nav-item active" onclick="switchPanel('bipagem',this)">&#9783; Bipagem <span class="count" id="nav-bip">0</span></div>
       <div class="nav-item" onclick="switchPanel('produtividade',this)">&#9685; Produtividade <span class="count" id="nav-prod">0</span></div>
@@ -735,6 +886,31 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 
     </div>
   </div>
+
+  <!-- TAB BAR INFERIOR (aparece só em mobile) -->
+  <div class="tab-bar" id="tab-bar">
+    <button class="tab active" data-panel="bipagem" onclick="tabClick('bipagem',this)">
+      <span class="tab-icon">≡</span>
+      <span>Bipagem</span>
+    </button>
+    <button class="tab" data-panel="produtividade" onclick="tabClick('produtividade',this)">
+      <span class="tab-icon">◐</span>
+      <span>Produt.</span>
+    </button>
+    <button class="tab" data-panel="meta" onclick="tabClick('meta',this)">
+      <span class="tab-icon">🎯</span>
+      <span>Meta</span>
+      <span class="count" id="tab-meta-count" data-zero="true">0</span>
+    </button>
+    <button class="tab" data-panel="coleta" onclick="tabClick('coleta',this)">
+      <span class="tab-icon">🚚</span>
+      <span>Coleta</span>
+    </button>
+    <button class="tab" onclick="openSidebar()">
+      <span class="tab-icon">⋯</span>
+      <span>Mais</span>
+    </button>
+  </div>
 </div>
 
 <div class="toast-area" id="toast-area"></div>
@@ -988,7 +1164,59 @@ function switchPanel(name, el) {
   if (name==='pesos') carregarPesos();
   if (name==='meta') carregarMetaDia();
   if (name==='fechamento') carregarFechamento();
+  // Mobile: fecha drawer e sincroniza tab bar
+  closeSidebar();
+  syncTabBar(name);
+  // Scroll to top em mobile
+  if (window.innerWidth <= 900) window.scrollTo(0,0);
 }
+
+// ── MOBILE: drawer + tab bar ──────────────────────────────────
+function toggleSidebar(){
+  const sb = document.getElementById('sidebar');
+  const bd = document.getElementById('mobile-backdrop');
+  if (!sb) return;
+  const isOpen = sb.classList.contains('open');
+  sb.classList.toggle('open', !isOpen);
+  bd.classList.toggle('show', !isOpen);
+}
+function openSidebar(){
+  document.getElementById('sidebar')?.classList.add('open');
+  document.getElementById('mobile-backdrop')?.classList.add('show');
+}
+function closeSidebar(){
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('mobile-backdrop')?.classList.remove('show');
+}
+function tabClick(name, el){
+  // Encontra o nav-item correspondente pra manter sidebar e tab bar sincronizados
+  const nav = Array.from(document.querySelectorAll('.nav-item'))
+    .find(n => n.getAttribute('onclick')?.includes(`switchPanel('${name}'`));
+  switchPanel(name, nav || null);
+  syncTabBar(name);
+}
+function syncTabBar(name){
+  document.querySelectorAll('.tab-bar .tab').forEach(t => {
+    const panel = t.dataset.panel;
+    if (panel) t.classList.toggle('active', panel === name);
+  });
+}
+// Atualiza badge da tab "Meta" baseado no nav-meta-alert
+function syncTabMetaBadge(){
+  const navAlert = document.getElementById('nav-meta-alert');
+  const tabCount = document.getElementById('tab-meta-count');
+  if (!navAlert || !tabCount) return;
+  const v = parseInt(navAlert.textContent || '0', 10);
+  tabCount.textContent = v;
+  tabCount.dataset.zero = (v === 0) ? 'true' : 'false';
+}
+// Observa mudanças no nav-meta-alert pra atualizar a tab também
+document.addEventListener('DOMContentLoaded', () => {
+  const navAlert = document.getElementById('nav-meta-alert');
+  if (navAlert) {
+    new MutationObserver(syncTabMetaBadge).observe(navAlert, { childList:true, characterData:true, subtree:true });
+  }
+});
 
 // ── TEMA ──────────────────────────────────────────────────────
 const TEMAS=[
