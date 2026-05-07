@@ -749,6 +749,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div class="stat"><div class="stat-label">Tempo médio</div><div class="stat-value" id="col-stat-tempo-medio" style="font-size:18px;">—</div></div>
         </div>
 
+        <!-- Botão Modo Carregamento -->
+        <div style="margin-bottom:1.25rem;">
+          <button onclick="abrirModoCarregamento()" style="background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000;border:none;padding:14px 22px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;box-shadow:0 0 0 1px rgba(0,229,160,.3);">
+            🚛 Modo Carregamento
+            <span style="font-size:10px;font-weight:500;color:rgba(0,0,0,.7);font-family:var(--mono);">tela cheia · TV friendly</span>
+          </button>
+        </div>
+
         <!-- Bipagem da coleta -->
         <div class="add-form" style="margin-bottom:1.25rem;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -914,6 +922,93 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 </div>
 
 <div class="toast-area" id="toast-area"></div>
+
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<!-- MODO CARREGAMENTO (tela cheia, otimizado para TV) -->
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div id="carreg-overlay" style="display:none;position:fixed;inset:0;background:#0a0a0a;z-index:10000;color:var(--text);overflow:hidden;">
+  <input type="text" id="carreg-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+    style="position:absolute;top:-100px;left:0;width:1px;height:1px;opacity:0;"/>
+
+  <!-- ETAPA 1: SETUP -->
+  <div id="carreg-setup" style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;">
+    <div style="font-size:14px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px;">🚛 Modo Carregamento</div>
+    <div style="font-size:28px;font-weight:600;margin-bottom:36px;text-align:center;">Qual transportadora vai começar?</div>
+    <div id="carreg-transp-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;max-width:780px;width:100%;"></div>
+    <div style="font-size:12px;color:var(--text3);margin-top:24px;text-align:center;line-height:1.5;">
+      A transportadora pode trocar automaticamente quando você bipar etiqueta de outra.<br>
+      <span style="font-family:var(--mono);">[ESC]</span> volta · <span style="font-family:var(--mono);">[F11]</span> tela cheia do navegador
+    </div>
+  </div>
+
+  <!-- ETAPA 2: TELA EM USO -->
+  <div id="carreg-main" style="display:none;height:100%;flex-direction:column;">
+
+    <!-- Header -->
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;">🚛 Modo Carregamento</div>
+        <div id="carreg-transp-badge" style="background:var(--accent);color:#000;padding:5px 14px;border-radius:6px;font-size:14px;font-weight:600;transition:all .3s ease;"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div id="carreg-relogio" style="font-size:12px;color:var(--text2);font-family:var(--mono);"></div>
+        <button onclick="fecharModoCarregamento()" style="background:transparent;border:1px solid var(--border2);color:var(--text2);padding:6px 14px;border-radius:6px;font-size:11px;cursor:pointer;">✕ Sair (ESC)</button>
+      </div>
+    </div>
+
+    <!-- Body 2-col -->
+    <div style="display:grid;grid-template-columns:1fr 300px;flex:1;min-height:0;">
+
+      <!-- Coluna principal -->
+      <div style="padding:30px 32px;display:flex;flex-direction:column;justify-content:center;">
+
+        <!-- Estado: aguardando primeiro bipe -->
+        <div id="carreg-vazio" style="text-align:center;padding:40px;">
+          <div style="font-size:48px;margin-bottom:18px;color:var(--text3);">📦</div>
+          <div style="font-size:24px;color:var(--text2);margin-bottom:10px;">Aguardando primeiro bipe...</div>
+          <div style="font-size:13px;color:var(--text3);font-family:var(--mono);">Aponte o leitor para a etiqueta</div>
+        </div>
+
+        <!-- Última etiqueta + status (preenchido via JS) -->
+        <div id="carreg-feedback" style="display:none;"></div>
+
+        <!-- Stats -->
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px;">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px 16px;text-align:center;">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);letter-spacing:.08em;">Carregadas</div>
+            <div id="carreg-c-ok" style="font-size:38px;font-weight:600;color:var(--accent);font-family:var(--mono);line-height:1;margin-top:4px;">0</div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px 16px;text-align:center;">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);letter-spacing:.08em;">Duplicadas</div>
+            <div id="carreg-c-dup" style="font-size:38px;font-weight:600;color:var(--danger);font-family:var(--mono);line-height:1;margin-top:4px;">0</div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px 16px;text-align:center;">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);letter-spacing:.08em;">Não encontradas</div>
+            <div id="carreg-c-ne" style="font-size:38px;font-weight:600;color:var(--warn);font-family:var(--mono);line-height:1;margin-top:4px;">0</div>
+          </div>
+        </div>
+
+        <!-- Indicador de bipe -->
+        <div id="carreg-pulse" style="text-align:center;font-size:12px;color:var(--text3);font-family:var(--mono);letter-spacing:.1em;margin-top:18px;">
+          <span style="display:inline-block;width:8px;height:8px;background:var(--accent);border-radius:50%;margin-right:8px;animation:blink 1s ease-in-out infinite;"></span>
+          AGUARDANDO BIPE...
+        </div>
+      </div>
+
+      <!-- Coluna lateral: histórico -->
+      <div style="background:var(--surface);border-left:1px solid var(--border);padding:18px 16px;overflow:auto;">
+        <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:12px;">Últimas bipadas</div>
+        <div id="carreg-historico" style="font-family:var(--mono);font-size:11px;line-height:1.5;">
+          <div style="color:var(--text3);text-align:center;padding:20px 0;">—</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- FLASH OVERLAY (verde / vermelho) -->
+    <div id="carreg-flash" style="position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .15s ease-out;z-index:1;"></div>
+  </div>
+</div>
 
 <script>
   async function aplicarFiltro() {
@@ -1704,6 +1799,308 @@ async function confirmarImportRomaneio(){
     step2.innerHTML = `<div class="col-feedback-err">✗ Erro: ${e.erro || e.message}</div>`;
     habilitarConfirmImport();
   }
+}
+
+// ── MODO CARREGAMENTO ─────────────────────────────────────────
+let CARREG = {
+  ativo: false,
+  transportadora: null,
+  contadores: { ok: 0, dup: 0, ne: 0 },
+  historico: [],     // últimas N etiquetas processadas
+  ultimoBipe: 0,     // timestamp pra debounce
+  processando: false
+};
+const CARREG_DEBOUNCE_MS = 400; // não processa o mesmo bipe < 400ms
+const CARREG_HIST_MAX = 12;
+let carregClockTimer = null;
+
+function abrirModoCarregamento(){
+  if (!TRANSPS || TRANSPS.length === 0) {
+    toast('Cadastre transportadoras primeiro.','warn');
+    return;
+  }
+  // Reset estado
+  CARREG.ativo = true;
+  CARREG.transportadora = null;
+  CARREG.contadores = { ok: 0, dup: 0, ne: 0 };
+  CARREG.historico = [];
+
+  // Mostra setup
+  document.getElementById('carreg-overlay').style.display = 'block';
+  document.getElementById('carreg-setup').style.display = 'flex';
+  document.getElementById('carreg-main').style.display = 'none';
+
+  // Renderiza grid de transportadoras
+  renderCarregSetupGrid();
+
+  // ESC pra sair
+  document.addEventListener('keydown', carregKeyHandler);
+}
+
+function renderCarregSetupGrid(){
+  const grid = document.getElementById('carreg-transp-grid');
+  // Conta aguardando por transportadora (das coletas atuais)
+  const aguardandoMap = {};
+  if (window.COLETAS) {
+    COLETAS.filter(c => !c.coletada_em).forEach(c => {
+      const m = c.marketplace_nome || '';
+      let chave = '';
+      const mlow = m.toLowerCase();
+      if (mlow.includes('shopee')) chave = 'shopee';
+      else if (mlow.includes('mercado')) chave = 'mercado';
+      else if (mlow.includes('amazon')) chave = 'amazon';
+      else if (mlow.includes('shein')) chave = 'shein';
+      if (chave) aguardandoMap[chave] = (aguardandoMap[chave] || 0) + 1;
+    });
+  }
+  grid.innerHTML = TRANSPS.map(t => {
+    const tlow = t.nome.toLowerCase();
+    let qtd = '';
+    if (tlow.includes('shopee')) qtd = aguardandoMap.shopee || 0;
+    else if (tlow.includes('mercado')) qtd = aguardandoMap.mercado || 0;
+    else if (tlow.includes('amazon')) qtd = aguardandoMap.amazon || 0;
+    else if (tlow.includes('shein')) qtd = aguardandoMap.shein || 0;
+    return `
+      <button onclick="iniciarCarregamento('${t.nome.replace(/'/g,"\\'")}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px 12px;color:var(--text);font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;text-align:center;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)';" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text)';">
+        ${t.nome}<br>
+        ${qtd !== '' ? `<span style="font-size:11px;color:var(--text2);font-weight:400;">${qtd} aguardando</span>` : ''}
+      </button>
+    `;
+  }).join('');
+}
+
+function iniciarCarregamento(transportadora){
+  CARREG.transportadora = transportadora;
+  document.getElementById('carreg-setup').style.display = 'none';
+  document.getElementById('carreg-main').style.display = 'flex';
+  document.getElementById('carreg-transp-badge').textContent = transportadora;
+
+  // Foca o input invisível
+  setTimeout(()=>{
+    document.getElementById('carreg-input').focus();
+  }, 100);
+
+  // Relógio
+  atualizarRelogioCarreg();
+  carregClockTimer = setInterval(atualizarRelogioCarreg, 1000);
+
+  // Listener pra capturar bipes
+  document.getElementById('carreg-input').addEventListener('keydown', handleBipeCarreg);
+
+  // Re-foca o input se perder foco (clique em qualquer lugar)
+  document.addEventListener('click', refocarCarreg);
+}
+
+function atualizarRelogioCarreg(){
+  const el = document.getElementById('carreg-relogio');
+  if (!el) return;
+  el.textContent = new Date().toLocaleTimeString('pt-BR');
+}
+
+function refocarCarreg(){
+  if (!CARREG.ativo) return;
+  const inp = document.getElementById('carreg-input');
+  if (inp && document.activeElement !== inp) {
+    setTimeout(()=>inp.focus(), 50);
+  }
+}
+
+function carregKeyHandler(e){
+  if (e.key === 'Escape' && CARREG.ativo) {
+    fecharModoCarregamento();
+  }
+}
+
+async function handleBipeCarreg(e){
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const inp = e.target;
+  const etiqueta = inp.value.trim().toUpperCase();
+  inp.value = '';
+
+  if (!etiqueta) return;
+
+  // Debounce — evita processar o mesmo bipe duas vezes em < 400ms
+  const agora = Date.now();
+  if (CARREG.processando) return;
+  if (agora - CARREG.ultimoBipe < CARREG_DEBOUNCE_MS) return;
+  CARREG.ultimoBipe = agora;
+  CARREG.processando = true;
+
+  try {
+    const r = await api('POST','/api/coletas/carregamento', {
+      transportadora: CARREG.transportadora,
+      etiqueta
+    });
+
+    // Processa por tipo de resultado
+    if (r.resultado === 'NAO_ENCONTRADA') {
+      CARREG.contadores.ne++;
+      addHistoricoCarreg({ etiqueta, tipo: 'ne' });
+      mostrarFeedbackCarreg('ne', etiqueta, 'Não encontrada no sistema');
+      flashCarreg('warn');
+      beep();
+      vibrate([100, 50, 100]);
+    }
+    else if (r.resultado === 'DUPLICADA') {
+      CARREG.contadores.dup++;
+      addHistoricoCarreg({ etiqueta, tipo: 'dup', extra: 'DUPLICADA' });
+      const dt = new Date(r.coletada_em);
+      const tempoAtras = formatarTempoAtras(dt);
+      mostrarFeedbackCarreg('dup', etiqueta,
+        `JÁ CARREGADA ${tempoAtras} · por ${r.coletada_por.replace(' (carregamento)','').replace(' (romaneio)','') || '?'}`
+      );
+      flashCarreg('danger');
+      beepDuplo();
+      vibrate([200, 100, 200, 100, 200]);
+    }
+    else if (r.resultado === 'TROCOU_TRANSPORTADORA') {
+      CARREG.contadores.ok++;
+      const novaTransp = r.transportadora_usada;
+      addHistoricoCarreg({ etiqueta, tipo: 'troca', extra: `→ ${novaTransp}` });
+      // Atualiza badge da transportadora
+      CARREG.transportadora = novaTransp;
+      const badge = document.getElementById('carreg-transp-badge');
+      badge.textContent = novaTransp;
+      badge.style.background = 'var(--warn)';
+      setTimeout(()=>{ badge.style.background = 'var(--accent)'; }, 1500);
+      mostrarFeedbackCarreg('troca', etiqueta, `🔄 Trocou para ${novaTransp}`);
+      flashCarreg('warn');
+      beep();
+    }
+    else { // OK
+      CARREG.contadores.ok++;
+      addHistoricoCarreg({ etiqueta, tipo: 'ok' });
+      mostrarFeedbackCarreg('ok', etiqueta, '✓ CARREGADO');
+      flashCarreg('ok');
+      beep();
+    }
+
+    // Atualiza contadores na tela
+    document.getElementById('carreg-c-ok').textContent = CARREG.contadores.ok;
+    document.getElementById('carreg-c-dup').textContent = CARREG.contadores.dup;
+    document.getElementById('carreg-c-ne').textContent = CARREG.contadores.ne;
+
+  } catch (err) {
+    console.error('Erro carregamento:', err);
+    mostrarFeedbackCarreg('erro', etiqueta, 'Erro: '+(err.erro || err.message || 'desconhecido'));
+    flashCarreg('danger');
+  } finally {
+    CARREG.processando = false;
+    // Garante foco no input
+    setTimeout(()=>{ document.getElementById('carreg-input')?.focus(); }, 50);
+  }
+}
+
+function mostrarFeedbackCarreg(tipo, etiqueta, msg){
+  const fb = document.getElementById('carreg-feedback');
+  const vazio = document.getElementById('carreg-vazio');
+  vazio.style.display = 'none';
+  fb.style.display = 'block';
+
+  const cores = {
+    ok: { borda: 'var(--accent)', cor: 'var(--accent)', bg: 'rgba(0,229,160,.06)' },
+    dup: { borda: 'var(--danger)', cor: 'var(--danger)', bg: 'rgba(255,77,77,.06)' },
+    ne: { borda: 'var(--warn)', cor: 'var(--warn)', bg: 'rgba(255,181,71,.06)' },
+    troca: { borda: 'var(--warn)', cor: 'var(--warn)', bg: 'rgba(255,181,71,.06)' },
+    erro: { borda: 'var(--danger)', cor: 'var(--danger)', bg: 'rgba(255,77,77,.06)' }
+  };
+  const c = cores[tipo] || cores.erro;
+
+  const labelTopo = {
+    ok: 'Última etiqueta carregada',
+    dup: '⚠ ATENÇÃO',
+    ne: 'Etiqueta não encontrada',
+    troca: 'Carregada · transportadora trocou',
+    erro: 'Erro'
+  }[tipo] || '';
+
+  fb.innerHTML = `
+    <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.15em;font-family:var(--mono);margin-bottom:10px;">${labelTopo}</div>
+    <div style="background:${c.bg};border-left:6px solid ${c.borda};border-radius:4px;padding:22px 26px;">
+      <div style="font-size:${tipo==='dup'?'56':'48'}px;font-weight:600;font-family:var(--mono);color:${c.cor};letter-spacing:.04em;line-height:1.1;word-break:break-all;">${etiqueta}</div>
+      <div style="font-size:16px;color:${c.cor};font-weight:600;margin-top:10px;">${msg}</div>
+    </div>
+  `;
+}
+
+function flashCarreg(tipo){
+  const flash = document.getElementById('carreg-flash');
+  if (!flash) return;
+  const cores = {
+    ok: 'rgba(0,229,160,.15)',
+    danger: 'rgba(255,77,77,.30)',
+    warn: 'rgba(255,181,71,.18)'
+  };
+  flash.style.background = cores[tipo] || 'transparent';
+  flash.style.opacity = '1';
+  setTimeout(()=>{ flash.style.opacity = '0'; }, 300);
+}
+
+function addHistoricoCarreg(item){
+  CARREG.historico.unshift({ ...item, hora: new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) });
+  if (CARREG.historico.length > CARREG_HIST_MAX) CARREG.historico.pop();
+  renderCarregHistorico();
+}
+
+function renderCarregHistorico(){
+  const c = document.getElementById('carreg-historico');
+  if (!c) return;
+  if (CARREG.historico.length === 0) {
+    c.innerHTML = `<div style="color:var(--text3);text-align:center;padding:20px 0;">—</div>`;
+    return;
+  }
+  c.innerHTML = CARREG.historico.map(h => {
+    const cores = {
+      ok: { bg: 'rgba(0,229,160,.05)', borda: 'var(--accent)', cor: 'var(--accent)' },
+      dup: { bg: 'rgba(255,77,77,.05)', borda: 'var(--danger)', cor: 'var(--danger)' },
+      ne: { bg: 'rgba(255,181,71,.05)', borda: 'var(--warn)', cor: 'var(--warn)' },
+      troca: { bg: 'rgba(255,181,71,.05)', borda: 'var(--warn)', cor: 'var(--warn)' }
+    };
+    const c2 = cores[h.tipo] || cores.ok;
+    return `
+      <div style="padding:6px 8px;background:${c2.bg};border-left:2px solid ${c2.borda};margin-bottom:3px;">
+        <div style="color:${c2.cor};font-weight:${h.tipo!=='ok'?'600':'400'};word-break:break-all;">${h.etiqueta}</div>
+        <div style="color:var(--text3);font-size:10px;">${h.hora} · ${h.extra || h.tipo.toUpperCase()}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function fecharModoCarregamento(){
+  CARREG.ativo = false;
+  document.getElementById('carreg-overlay').style.display = 'none';
+  document.removeEventListener('keydown', carregKeyHandler);
+  document.removeEventListener('click', refocarCarreg);
+  const inp = document.getElementById('carreg-input');
+  if (inp) {
+    inp.removeEventListener('keydown', handleBipeCarreg);
+    inp.value = '';
+  }
+  if (carregClockTimer) { clearInterval(carregClockTimer); carregClockTimer = null; }
+  // Mostra resumo final
+  if (CARREG.contadores.ok + CARREG.contadores.dup + CARREG.contadores.ne > 0) {
+    toast(`Sessão encerrada · ${CARREG.contadores.ok} carregadas · ${CARREG.contadores.dup} duplicadas · ${CARREG.contadores.ne} não encontradas`, 'info', 6000);
+  }
+  // Recarrega coletas pra refletir
+  carregarColetas();
+}
+
+// Helpers de áudio/vibração
+function beepDuplo(){
+  beep();
+  setTimeout(beep, 200);
+  setTimeout(beep, 400);
+}
+function vibrate(pattern){
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e){}
+}
+function formatarTempoAtras(dt){
+  const diff = Math.floor((Date.now() - dt.getTime())/1000);
+  if (diff < 60) return `há ${diff}s`;
+  if (diff < 3600) return `há ${Math.floor(diff/60)}min`;
+  if (diff < 86400) return `há ${Math.floor(diff/3600)}h`;
+  return `há ${Math.floor(diff/86400)}d`;
 }
 
 async function desfazerColeta(id){
