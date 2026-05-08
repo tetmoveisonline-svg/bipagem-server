@@ -1396,6 +1396,177 @@ app.post('/api/fechamento/:mes/confirmar', autenticar, async (req, res) => {
   }
 });
 
+// ── OCIOSIDADE ────────────────────────────────────────────────
+// Calcula gaps de ociosidade entre bipes consecutivos do mesmo colaborador
+// Ignora: almoço 11h-12h30, fora do expediente 8h-17h20, fim de semana
+// Param: ?data=YYYY-MM-DD (default: hoje)
+app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
+  try {
+    const dataParam = req.params.data || new Date().toISOString().slice(0,10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataParam)) {
+      return res.status(400).json({ erro: 'Data inválida (use YYYY-MM-DD).' });
+    }
+
+    // Constantes do expediente (em minutos a partir de 00:00)
+    const HORA_INICIO = 8 * 60;          // 480 = 08h00
+    const HORA_FIM = 17 * 60 + 20;       // 1040 = 17h20
+    const ALMOCO_INICIO = 11 * 60;       // 660 = 11h00
+    const ALMOCO_FIM = 12 * 60 + 30;     // 750 = 12h30
+    const GAP_MINIMO = 30;                // gap >= 30min é considerado ociosidade
+    const RITMO_IDEAL_SEG = 70;           // 70s/pedido = referência
+
+    // Busca todas bipagens do dia, agrupadas por colaborador
+    const r = await pool.query(`
+      SELECT id, etiqueta, colaborador_id, colaborador_nome, criado_em,
+        (criado_em AT TIME ZONE 'America/Sao_Paulo') AS criado_em_br
+      FROM bipagens
+      WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD') = $1
+      ORDER BY colaborador_id, criado_em
+    `, [dataParam]);
+
+    // Agrupa por colaborador
+    const porColab = {};
+    r.rows.forEach(b => {
+      if (!b.colaborador_id) return;
+      if (!porColab[b.colaborador_id]) {
+        porColab[b.colaborador_id] = {
+          colaborador_id: b.colaborador_id,
+          colaborador_nome: b.colaborador_nome,
+          bipagens: []
+        };
+      }
+      // criado_em_br vem como Date com fuso ajustado
+      porColab[b.colaborador_id].bipagens.push({
+        id: b.id,
+        criado_em: b.criado_em.toISOString(),
+        minutos_dia: b.criado_em_br.getUTCHours()*60 + b.criado_em_br.getUTCMinutes() + b.criado_em_br.getUTCSeconds()/60
+      });
+    });
+
+    // Calcula eventos de ociosidade pra cada colaborador
+    const resultado = [];
+    Object.values(porColab).forEach(colab => {
+      const eventos = [];
+      let totalOcioso = 0;
+      const bps = colab.bipagens;
+
+      // Gap entre primeiro bipe e início do expediente (atraso)
+      if (bps.length > 0 && bps[0].minutos_dia > HORA_INICIO + 5) {
+        const fim = bps[0].minutos_dia;
+        const inicio = HORA_INICIO;
+        const gap = calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
+        if (gap >= GAP_MINIMO) {
+          eventos.push({
+            tipo: 'inicio_atrasado',
+            inicio_min: inicio,
+            fim_min: fim,
+            duracao_min: gap,
+            inicio_str: minToHHMM(inicio),
+            fim_str: minToHHMM(fim)
+          });
+          totalOcioso += gap;
+        }
+      }
+
+      // Gaps entre bipes
+      for (let i = 1; i < bps.length; i++) {
+        const inicio = bps[i-1].minutos_dia;
+        const fim = bps[i].minutos_dia;
+        const gap = calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
+        if (gap >= GAP_MINIMO) {
+          eventos.push({
+            tipo: 'gap',
+            inicio_min: inicio,
+            fim_min: fim,
+            duracao_min: gap,
+            inicio_str: minToHHMM(inicio),
+            fim_str: minToHHMM(fim)
+          });
+          totalOcioso += gap;
+        }
+      }
+
+      // Gap entre último bipe e fim do expediente (saiu cedo)
+      if (bps.length > 0 && bps[bps.length-1].minutos_dia < HORA_FIM - 5) {
+        // Só conta se for HOJE e já passou do horário, OU se for data passada
+        const hoje = new Date().toISOString().slice(0,10);
+        const agoraMin = (() => {
+          const d = new Date();
+          return d.getHours()*60 + d.getMinutes();
+        })();
+        const ultimoMin = bps[bps.length-1].minutos_dia;
+        const fimEfetivo = (dataParam < hoje) ? HORA_FIM : Math.min(HORA_FIM, agoraMin);
+        const gap = calcularGapEfetivo(ultimoMin, fimEfetivo, ALMOCO_INICIO, ALMOCO_FIM);
+        if (gap >= GAP_MINIMO) {
+          eventos.push({
+            tipo: dataParam < hoje ? 'saiu_cedo' : 'sem_bipar_atual',
+            inicio_min: ultimoMin,
+            fim_min: fimEfetivo,
+            duracao_min: gap,
+            inicio_str: minToHHMM(ultimoMin),
+            fim_str: minToHHMM(fimEfetivo)
+          });
+          totalOcioso += gap;
+        }
+      }
+
+      // Calcula tempo trabalhado e ritmo
+      const minutosNaJornada = HORA_FIM - HORA_INICIO - (ALMOCO_FIM - ALMOCO_INICIO); // = 470 min
+      const tempoTrabalhadoMin = minutosNaJornada - totalOcioso;
+      const ritmoSeg = bps.length > 0 ? Math.round((tempoTrabalhadoMin*60)/bps.length) : null;
+
+      resultado.push({
+        colaborador_id: colab.colaborador_id,
+        colaborador_nome: colab.colaborador_nome,
+        total_bipagens: bps.length,
+        eventos,
+        total_ocioso_min: Math.round(totalOcioso),
+        tempo_trabalhado_min: Math.round(tempoTrabalhadoMin),
+        ritmo_seg_por_pedido: ritmoSeg,
+        ritmo_ideal_seg: RITMO_IDEAL_SEG,
+        primeiro_bipe: bps.length > 0 ? minToHHMM(bps[0].minutos_dia) : null,
+        ultimo_bipe: bps.length > 0 ? minToHHMM(bps[bps.length-1].minutos_dia) : null
+      });
+    });
+
+    resultado.sort((a,b)=>b.total_ocioso_min - a.total_ocioso_min);
+
+    res.json({
+      data: dataParam,
+      colaboradores: resultado,
+      config: {
+        hora_inicio: '08:00',
+        hora_fim: '17:20',
+        almoco_inicio: '11:00',
+        almoco_fim: '12:30',
+        gap_minimo_min: GAP_MINIMO,
+        ritmo_ideal_seg: RITMO_IDEAL_SEG
+      }
+    });
+  } catch (e) {
+    console.error('GET /api/ociosidade:', e.message);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Helper: calcula gap efetivo entre dois pontos do dia (em minutos),
+// descontando interseção com a janela de almoço.
+function calcularGapEfetivo(inicio, fim, almocoInicio, almocoFim) {
+  if (fim <= inicio) return 0;
+  // Interseção com almoço
+  const overlapStart = Math.max(inicio, almocoInicio);
+  const overlapEnd = Math.min(fim, almocoFim);
+  const overlap = Math.max(0, overlapEnd - overlapStart);
+  return Math.max(0, fim - inicio - overlap);
+}
+
+// Helper: converte minutos do dia em "HH:MM"
+function minToHHMM(min) {
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+
 // ── Pendências ───────────────────────────────────────────────
 app.post('/api/pendencias', autenticar, async (req, res) => {
   try {
