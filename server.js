@@ -1398,7 +1398,7 @@ app.post('/api/fechamento/:mes/confirmar', autenticar, async (req, res) => {
 
 // ── OCIOSIDADE ────────────────────────────────────────────────
 // Calcula gaps de ociosidade entre bipes consecutivos do mesmo colaborador
-// Ignora: almoço 11h-12h30, fora do expediente 8h-17h20, fim de semana
+// Ignora: almoço 11h-12h30, fora do expediente 8h-17h00, fim de semana
 // Param: ?data=YYYY-MM-DD (default: hoje)
 app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
   try {
@@ -1410,7 +1410,7 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
 
     // Constantes do expediente (em minutos a partir de 00:00)
     const HORA_INICIO = 8 * 60;          // 480 = 08h00
-    const HORA_FIM = 17 * 60 + 20;       // 1040 = 17h20
+    const HORA_FIM = 17 * 60;            // 1020 = 17h00
     const ALMOCO_INICIO = 11 * 60;       // 660 = 11h00
     const ALMOCO_FIM = 12 * 60 + 30;     // 750 = 12h30
     const GAP_MINIMO = 30;                // gap >= 30min APÓS o crédito é ociosidade
@@ -1576,7 +1576,7 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
       colaboradores: resultado,
       config: {
         hora_inicio: '08:00',
-        hora_fim: '17:20',
+        hora_fim: '17:00',
         almoco_inicio: '11:00',
         almoco_fim: '12:30',
         gap_minimo_min: GAP_MINIMO,
