@@ -535,7 +535,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item active" onclick="switchPanel('bipagem',this)">&#9783; Bipagem <span class="count" id="nav-bip">0</span></div>
       <div class="nav-item" onclick="switchPanel('produtividade',this)">&#9685; Produtividade <span class="count" id="nav-prod">0</span></div>
       <div class="nav-item" onclick="switchPanel('meta',this)">🎯 Meta do Dia <span class="count" id="nav-meta-alert">0</span></div>
-      <div class="nav-item" onclick="switchPanel('ociosidade',this)">⏱ Ociosidade</div>
+      <div class="nav-item" id="nav-ociosidade" onclick="switchPanel('ociosidade',this)" style="display:none;">⏱ Ociosidade</div>
       <div class="nav-item" onclick="switchPanel('coleta',this)">&#128666; Aguardando Coleta <span class="count" id="nav-coleta">0</span></div>
       <div class="nav-item" onclick="switchPanel('pendencias',this)">&#9888; Pendências <span class="count" id="nav-pend">0</span></div>
       <div class="nav-item" onclick="switchPanel('retorno',this)">&#8617; Retorno <span class="count" id="nav-ret">0</span></div>      
@@ -647,7 +647,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap;gap:10px;">
           <div>
             <div class="page-title" style="margin-bottom:4px;">⏱ Histórico de Ociosidade</div>
-            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Detecção de gaps de 30min+ entre bipes (almoço 11h-12h30 não conta)</div>
+            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Cada bipe dá 50s de crédito · gap > 30min após o crédito = ociosidade · almoço 11h-12h30 não conta</div>
           </div>
           <div style="display:flex;gap:8px;align-items:flex-end;">
             <div class="field"><label>Data</label><input type="date" id="ocio-data" onchange="carregarOciosidade()" style="font-size:13px;"/></div>
@@ -1268,6 +1268,7 @@ async function iniciarApp() {
     document.getElementById('nav-usuarios').style.display = 'flex';
     document.getElementById('nav-pesos').style.display = 'flex';
     document.getElementById('nav-fechamento').style.display = 'flex';
+    document.getElementById('nav-ociosidade').style.display = 'flex';
   }
 
   const estado = await api('GET','/api/estado');
