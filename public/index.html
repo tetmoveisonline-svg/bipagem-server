@@ -2347,7 +2347,7 @@ async function atribuirAtividade(colaboradorId, atividadeId){
 // ── META DO DIA ───────────────────────────────────────────────
 // Configuração do expediente (tempo corrido — método 2)
 const META_HORA_INICIO = 8;          // 08h00
-const META_HORA_FIM = 17 + 20/60;    // 17h20
+const META_HORA_FIM = 17;            // 17h00
 const META_OCIOSO_LIMITE_MIN = 60;   // 60 min sem bipar = ocioso
 
 let metaData = null; // { meta_global, fator_base, atribuicoes, mes }
@@ -2435,7 +2435,7 @@ function renderMetaDia(){
   const diaStr = agora.toLocaleDateString('pt-BR',{day:'2-digit',month:'long'});
   const horaStr = agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
   const pctExp = Math.round(fr * 100);
-  sub.innerHTML = `${semanaTxt} · ${diaStr} · ${horaStr} · <span style="color:var(--warn);">${pctExp}% do expediente</span> (08h–17h20)`;
+  sub.innerHTML = `${semanaTxt} · ${diaStr} · ${horaStr} · <span style="color:var(--warn);">${pctExp}% do expediente</span> (08h–17h00)`;
 
   // Sem meta cadastrada
   if (!metaData.meta_global) {
@@ -3060,12 +3060,12 @@ function renderOcioResumo(){
   const cards = colabs.map(c => {
     const eventosDetalhe = c.eventos.length === 0
       ? `<span style="color:var(--accent);font-weight:500;">✓ Sem ociosidade</span>`
-      : c.eventos.slice(0, 4).map(e =>
+      : c.eventos.map(e =>
           `<div style="font-family:var(--mono);font-size:10px;color:var(--text2);padding:2px 0;">
              <span class="ocio-tipo-pill ${tipoEventoClasse(e.tipo)}" style="font-size:9px;">${tipoEventoLabel(e.tipo)}</span>
              ${e.inicio_str}–${e.fim_str} <span style="color:var(--danger);font-weight:600;">${fmtMin(e.duracao_min)}</span>
            </div>`
-        ).join('') + (c.eventos.length > 4 ? `<div style="font-size:10px;color:var(--text3);margin-top:3px;">+${c.eventos.length-4} eventos</div>` : '');
+        ).join('');
 
     const ritmoTxt = c.ritmo_seg_por_pedido
       ? `${c.ritmo_seg_por_pedido}s/pedido <span style="color:var(--text3);">(ideal ${c.ritmo_ideal_seg}s)</span>`
@@ -3157,9 +3157,9 @@ function renderOcioTimeline(){
     return `<div style="padding:40px;text-align:center;color:var(--text3);">Nenhuma bipagem registrada nesta data.</div>`;
   }
 
-  // Eixo: 08:00 (480) até 17:20 (1040) = 560 min total
+  // Eixo: 08:00 (480) até 17:00 (1020) = 540 min total
   const INICIO = 8 * 60;
-  const FIM = 17 * 60 + 20;
+  const FIM = 17 * 60;
   const RANGE = FIM - INICIO;
   const ALM_INI = 11 * 60;
   const ALM_FIM = 12 * 60 + 30;
@@ -3171,7 +3171,7 @@ function renderOcioTimeline(){
   const horaMarks = horas.map(h => {
     const p = pct(h * 60);
     return `<span style="left:${p}%;">${h}h</span>`;
-  }).join('') + `<span style="left:100%;">17h20</span>`;
+  }).join('');
 
   const linhas = colabs.map(c => {
     // Se não tem bipagens, linha vazia
