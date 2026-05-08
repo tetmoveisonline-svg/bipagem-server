@@ -1402,6 +1402,7 @@ app.post('/api/fechamento/:mes/confirmar', autenticar, async (req, res) => {
 // Param: ?data=YYYY-MM-DD (default: hoje)
 app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
   try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
     const dataParam = req.params.data || new Date().toISOString().slice(0,10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dataParam)) {
       return res.status(400).json({ erro: 'Data inválida (use YYYY-MM-DD).' });
@@ -1412,8 +1413,10 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
     const HORA_FIM = 17 * 60 + 20;       // 1040 = 17h20
     const ALMOCO_INICIO = 11 * 60;       // 660 = 11h00
     const ALMOCO_FIM = 12 * 60 + 30;     // 750 = 12h30
-    const GAP_MINIMO = 30;                // gap >= 30min é considerado ociosidade
-    const RITMO_IDEAL_SEG = 70;           // 70s/pedido = referência
+    const GAP_MINIMO = 30;                // gap >= 30min APÓS o crédito é ociosidade
+    const RITMO_IDEAL_SEG = 70;           // 70s/pedido = referência informativa
+    const CREDITO_POR_BIPE_SEG = 50;      // cada bipe dá 50s de crédito de "executando"
+    const CREDITO_POR_BIPE_MIN = CREDITO_POR_BIPE_SEG / 60; // ~0.833 min
 
     // Busca todas bipagens do dia, agrupadas por colaborador
     const r = await pool.query(`
@@ -1460,7 +1463,7 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
             tipo: 'inicio_atrasado',
             inicio_min: inicio,
             fim_min: fim,
-            duracao_min: gap,
+            duracao_min: Math.round(gap),
             inicio_str: minToHHMM(inicio),
             fim_str: minToHHMM(fim)
           });
@@ -1468,17 +1471,19 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         }
       }
 
-      // Gaps entre bipes
+      // Gaps entre bipes (desconta o crédito de execução do bipe anterior)
       for (let i = 1; i < bps.length; i++) {
         const inicio = bps[i-1].minutos_dia;
         const fim = bps[i].minutos_dia;
-        const gap = calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
+        const gapBruto = calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
+        // Desconta o crédito de 50s/bipe — só o que sobra é "ociosidade real"
+        const gap = Math.max(0, gapBruto - CREDITO_POR_BIPE_MIN);
         if (gap >= GAP_MINIMO) {
           eventos.push({
             tipo: 'gap',
             inicio_min: inicio,
             fim_min: fim,
-            duracao_min: gap,
+            duracao_min: Math.round(gap),
             inicio_str: minToHHMM(inicio),
             fim_str: minToHHMM(fim)
           });
@@ -1496,13 +1501,15 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         })();
         const ultimoMin = bps[bps.length-1].minutos_dia;
         const fimEfetivo = (dataParam < hoje) ? HORA_FIM : Math.min(HORA_FIM, agoraMin);
-        const gap = calcularGapEfetivo(ultimoMin, fimEfetivo, ALMOCO_INICIO, ALMOCO_FIM);
+        const gapBruto = calcularGapEfetivo(ultimoMin, fimEfetivo, ALMOCO_INICIO, ALMOCO_FIM);
+        // Desconta o crédito do último bipe (50s)
+        const gap = Math.max(0, gapBruto - CREDITO_POR_BIPE_MIN);
         if (gap >= GAP_MINIMO) {
           eventos.push({
             tipo: dataParam < hoje ? 'saiu_cedo' : 'sem_bipar_atual',
             inicio_min: ultimoMin,
             fim_min: fimEfetivo,
-            duracao_min: gap,
+            duracao_min: Math.round(gap),
             inicio_str: minToHHMM(ultimoMin),
             fim_str: minToHHMM(fimEfetivo)
           });
@@ -1511,9 +1518,24 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
       }
 
       // Calcula tempo trabalhado e ritmo
-      const minutosNaJornada = HORA_FIM - HORA_INICIO - (ALMOCO_FIM - ALMOCO_INICIO); // = 470 min
-      const tempoTrabalhadoMin = minutosNaJornada - totalOcioso;
-      const ritmoSeg = bps.length > 0 ? Math.round((tempoTrabalhadoMin*60)/bps.length) : null;
+      // Tempo de presença efetiva: do primeiro bipe (ou início do expediente, o que for mais tarde)
+      // até o último bipe (ou fim do expediente, o que for mais cedo)
+      // descontando o almoço quando aplicável
+      let tempoTrabalhadoMin = 0;
+      if (bps.length > 0) {
+        const presencaInicio = Math.max(HORA_INICIO, bps[0].minutos_dia);
+        const presencaFim = Math.min(HORA_FIM, bps[bps.length-1].minutos_dia);
+        const presencaTotal = calcularGapEfetivo(presencaInicio, presencaFim, ALMOCO_INICIO, ALMOCO_FIM);
+        // Tempo trabalhado = presença - tempo ocioso dentro da presença
+        // Como totalOcioso já considera só gaps efetivos (descontando almoço), basta subtrair os gaps INTERNOS
+        const ociosidadeInterna = eventos
+          .filter(e => e.tipo === 'gap')
+          .reduce((s,e) => s + e.duracao_min, 0);
+        tempoTrabalhadoMin = Math.max(0, presencaTotal - ociosidadeInterna);
+      }
+      const ritmoSeg = (bps.length > 0 && tempoTrabalhadoMin > 0)
+        ? Math.round((tempoTrabalhadoMin*60)/bps.length)
+        : null;
 
       resultado.push({
         colaborador_id: colab.colaborador_id,
@@ -1540,7 +1562,8 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         almoco_inicio: '11:00',
         almoco_fim: '12:30',
         gap_minimo_min: GAP_MINIMO,
-        ritmo_ideal_seg: RITMO_IDEAL_SEG
+        ritmo_ideal_seg: RITMO_IDEAL_SEG,
+        credito_por_bipe_seg: CREDITO_POR_BIPE_SEG
       }
     });
   } catch (e) {
