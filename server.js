@@ -1453,9 +1453,35 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
       let totalOcioso = 0;
       const bps = colab.bipagens;
 
-      // Gap entre primeiro bipe e início do expediente (atraso)
-      if (bps.length > 0 && bps[0].minutos_dia > HORA_INICIO + 5) {
-        const fim = bps[0].minutos_dia;
+      // ── OPÇÃO C (HÍBRIDA) ─────────────────────────────────
+      // Bipes antes do expediente são reconhecidos como "trabalho extra" mas NÃO
+      // entram na detecção de ociosidade (que só acontece dentro de 8h-17h20).
+      // O ritmo SIM considera todos os bipes (extras + dentro do horário).
+
+      // Identifica bipes antes do expediente
+      const bipesAntesExp = bps.filter(b => b.minutos_dia < HORA_INICIO);
+      const bipesNoExp = bps.filter(b => b.minutos_dia >= HORA_INICIO);
+      const trabalhoExtraMin = bipesAntesExp.length > 0
+        ? Math.round(HORA_INICIO - bipesAntesExp[0].minutos_dia)
+        : 0;
+
+      // Se houve trabalho antes das 8h, registra como evento informativo (não conta como ocioso)
+      if (bipesAntesExp.length > 0) {
+        eventos.push({
+          tipo: 'trabalho_extra',
+          inicio_min: bipesAntesExp[0].minutos_dia,
+          fim_min: HORA_INICIO,
+          duracao_min: trabalhoExtraMin,
+          inicio_str: minToHHMM(bipesAntesExp[0].minutos_dia),
+          fim_str: minToHHMM(HORA_INICIO),
+          extra_qtd_bipes: bipesAntesExp.length
+        });
+      }
+
+      // Gap entre início do expediente e primeiro bipe DENTRO do expediente (atraso)
+      // Só considera se NÃO houve bipe antes das 8h (se já tava trabalhando, não tá atrasado)
+      if (bipesAntesExp.length === 0 && bipesNoExp.length > 0 && bipesNoExp[0].minutos_dia > HORA_INICIO + 5) {
+        const fim = bipesNoExp[0].minutos_dia;
         const inicio = HORA_INICIO;
         const gap = calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
         if (gap >= GAP_MINIMO) {
@@ -1471,12 +1497,32 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         }
       }
 
-      // Gaps entre bipes (desconta o crédito de execução do bipe anterior)
-      for (let i = 1; i < bps.length; i++) {
-        const inicio = bps[i-1].minutos_dia;
-        const fim = bps[i].minutos_dia;
+      // Caso especial: o último bipe extra (antes das 8h) e o primeiro bipe das 8h
+      // podem formar um gap se houver muito tempo entre eles
+      if (bipesAntesExp.length > 0 && bipesNoExp.length > 0) {
+        const ultimoExtra = bipesAntesExp[bipesAntesExp.length-1];
+        const primeiroNoExp = bipesNoExp[0];
+        // Gap só conta a partir das 8h
+        const gapBruto = calcularGapEfetivo(HORA_INICIO, primeiroNoExp.minutos_dia, ALMOCO_INICIO, ALMOCO_FIM);
+        const gap = Math.max(0, gapBruto - CREDITO_POR_BIPE_MIN);
+        if (gap >= GAP_MINIMO) {
+          eventos.push({
+            tipo: 'gap',
+            inicio_min: HORA_INICIO,
+            fim_min: primeiroNoExp.minutos_dia,
+            duracao_min: Math.round(gap),
+            inicio_str: minToHHMM(HORA_INICIO),
+            fim_str: minToHHMM(primeiroNoExp.minutos_dia)
+          });
+          totalOcioso += gap;
+        }
+      }
+
+      // Gaps entre bipes DENTRO do expediente
+      for (let i = 1; i < bipesNoExp.length; i++) {
+        const inicio = bipesNoExp[i-1].minutos_dia;
+        const fim = bipesNoExp[i].minutos_dia;
         const gapBruto = calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
-        // Desconta o crédito de 50s/bipe — só o que sobra é "ociosidade real"
         const gap = Math.max(0, gapBruto - CREDITO_POR_BIPE_MIN);
         if (gap >= GAP_MINIMO) {
           eventos.push({
@@ -1491,18 +1537,17 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         }
       }
 
-      // Gap entre último bipe e fim do expediente (saiu cedo)
-      if (bps.length > 0 && bps[bps.length-1].minutos_dia < HORA_FIM - 5) {
-        // Só conta se for HOJE e já passou do horário, OU se for data passada
+      // Gap entre último bipe e fim do expediente (saiu cedo / sem bipar atual)
+      // Usa o último bipe DENTRO do expediente
+      if (bipesNoExp.length > 0 && bipesNoExp[bipesNoExp.length-1].minutos_dia < HORA_FIM - 5) {
         const hoje = new Date().toISOString().slice(0,10);
         const agoraMin = (() => {
           const d = new Date();
           return d.getHours()*60 + d.getMinutes();
         })();
-        const ultimoMin = bps[bps.length-1].minutos_dia;
+        const ultimoMin = bipesNoExp[bipesNoExp.length-1].minutos_dia;
         const fimEfetivo = (dataParam < hoje) ? HORA_FIM : Math.min(HORA_FIM, agoraMin);
         const gapBruto = calcularGapEfetivo(ultimoMin, fimEfetivo, ALMOCO_INICIO, ALMOCO_FIM);
-        // Desconta o crédito do último bipe (50s)
         const gap = Math.max(0, gapBruto - CREDITO_POR_BIPE_MIN);
         if (gap >= GAP_MINIMO) {
           eventos.push({
@@ -1517,17 +1562,14 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         }
       }
 
-      // Calcula tempo trabalhado e ritmo
-      // Tempo de presença efetiva: do primeiro bipe (ou início do expediente, o que for mais tarde)
-      // até o último bipe (ou fim do expediente, o que for mais cedo)
-      // descontando o almoço quando aplicável
+      // Cálculo do tempo trabalhado e ritmo
+      // Presença efetiva: do PRIMEIRO bipe (mesmo se antes das 8h) até o último bipe (ou fim expediente)
       let tempoTrabalhadoMin = 0;
       if (bps.length > 0) {
-        const presencaInicio = Math.max(HORA_INICIO, bps[0].minutos_dia);
+        const presencaInicio = bps[0].minutos_dia; // pode ser antes das 8h
         const presencaFim = Math.min(HORA_FIM, bps[bps.length-1].minutos_dia);
         const presencaTotal = calcularGapEfetivo(presencaInicio, presencaFim, ALMOCO_INICIO, ALMOCO_FIM);
-        // Tempo trabalhado = presença - tempo ocioso dentro da presença
-        // Como totalOcioso já considera só gaps efetivos (descontando almoço), basta subtrair os gaps INTERNOS
+        // Subtrai gaps internos (não inclui início_atrasado nem saiu_cedo)
         const ociosidadeInterna = eventos
           .filter(e => e.tipo === 'gap')
           .reduce((s,e) => s + e.duracao_min, 0);
@@ -1541,6 +1583,8 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         colaborador_id: colab.colaborador_id,
         colaborador_nome: colab.colaborador_nome,
         total_bipagens: bps.length,
+        bipes_antes_expediente: bipesAntesExp.length,
+        trabalho_extra_min: trabalhoExtraMin,
         eventos,
         total_ocioso_min: Math.round(totalOcioso),
         tempo_trabalhado_min: Math.round(tempoTrabalhadoMin),
