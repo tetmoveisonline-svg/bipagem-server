@@ -325,6 +325,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .ocio-tipo-gap{background:rgba(255,77,77,.15);color:var(--danger);}
 .ocio-tipo-inicio{background:rgba(255,181,71,.15);color:var(--warn);}
 .ocio-tipo-fim{background:rgba(77,159,255,.15);color:var(--info);}
+.ocio-tipo-extra{background:rgba(0,229,160,.15);color:var(--accent);}
 .ocio-timeline-row{display:grid;grid-template-columns:120px 1fr 80px;gap:10px;align-items:center;margin-bottom:6px;}
 .ocio-timeline-track{position:relative;height:22px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;overflow:hidden;}
 .ocio-timeline-almoco{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,rgba(255,255,255,.04) 0,rgba(255,255,255,.04) 4px,transparent 4px,transparent 8px);border-left:1px dashed var(--border2);border-right:1px dashed var(--border2);}
@@ -647,7 +648,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap;gap:10px;">
           <div>
             <div class="page-title" style="margin-bottom:4px;">⏱ Histórico de Ociosidade</div>
-            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Cada bipe dá 50s de crédito · gap > 30min após o crédito = ociosidade · almoço 11h-12h30 não conta</div>
+            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Cada bipe dá 50s de crédito · gap > 30min após o crédito = ociosidade · trabalho antes das 8h é reconhecido · almoço 11h-12h30 não conta</div>
           </div>
           <div style="display:flex;gap:8px;align-items:flex-end;">
             <div class="field"><label>Data</label><input type="date" id="ocio-data" onchange="carregarOciosidade()" style="font-size:13px;"/></div>
@@ -3025,12 +3026,14 @@ function tipoEventoLabel(t){
   if (t === 'inicio_atrasado') return 'INÍCIO TARDIO';
   if (t === 'saiu_cedo') return 'SAÍDA ANTECIPADA';
   if (t === 'sem_bipar_atual') return 'SEM BIPAR ATÉ AGORA';
+  if (t === 'trabalho_extra') return '⭐ ANTES DO EXPEDIENTE';
   return t.toUpperCase();
 }
 
 function tipoEventoClasse(t){
   if (t === 'gap') return 'ocio-tipo-gap';
   if (t === 'inicio_atrasado') return 'ocio-tipo-inicio';
+  if (t === 'trabalho_extra') return 'ocio-tipo-extra';
   return 'ocio-tipo-fim';
 }
 
@@ -3084,8 +3087,21 @@ function renderOcioResumo(){
             <div style="font-size:18px;font-weight:600;color:${corTotal};font-family:var(--mono);">${c.total_ocioso_min === 0 ? '0' : fmtMin(c.total_ocioso_min)}</div>
           </div>
         </div>
-        <div style="font-size:10px;color:var(--text2);margin-bottom:8px;font-family:var(--mono);">
-          Ritmo: ${ritmoTxt}
+        <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-family:var(--mono);font-size:10px;line-height:1.7;">
+          <div style="display:flex;justify-content:space-between;">
+            <span style="color:var(--text2);">Trabalhado:</span>
+            <span style="color:var(--accent);font-weight:600;">${fmtMin(c.tempo_trabalhado_min || 0)}</span>
+          </div>
+          ${c.trabalho_extra_min > 0 ? `
+            <div style="display:flex;justify-content:space-between;">
+              <span style="color:var(--info);">+ Antes 8h (extra):</span>
+              <span style="color:var(--info);font-weight:600;">${fmtMin(c.trabalho_extra_min)} (${c.bipes_antes_expediente} bipes)</span>
+            </div>
+          ` : ''}
+          <div style="display:flex;justify-content:space-between;">
+            <span style="color:var(--text2);">Ritmo:</span>
+            <span>${c.ritmo_seg_por_pedido ? `${c.ritmo_seg_por_pedido}s/pedido` : '—'} <span style="color:var(--text3);">(ideal ${c.ritmo_ideal_seg}s)</span></span>
+          </div>
         </div>
         <div style="border-top:1px solid var(--border);padding-top:8px;">
           ${eventosDetalhe}
