@@ -312,6 +312,27 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .fech-pend-row .pend-etiq{font-family:var(--mono);font-size:12px;}
 .fech-pend-row .pend-tempo{color:var(--danger);font-family:var(--mono);font-weight:600;}
 
+/* OCIOSIDADE */
+.ocio-tab-btn{background:transparent;border:none;color:var(--text2);padding:10px 16px;font-size:13px;cursor:pointer;border-bottom:2px solid transparent;font-family:var(--font);transition:all .15s;}
+.ocio-tab-btn:hover{color:var(--text);}
+.ocio-tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600;}
+.ocio-card{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px 16px;}
+.ocio-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;}
+.ocio-row{display:grid;grid-template-columns:1.2fr 1fr 80px 100px 1fr;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);align-items:center;font-size:12px;}
+.ocio-row:last-child{border-bottom:none;}
+.ocio-row.head{background:var(--surface);font-size:10px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);letter-spacing:.08em;font-weight:600;}
+.ocio-tipo-pill{font-size:10px;padding:2px 8px;border-radius:8px;font-weight:600;font-family:var(--mono);text-align:center;display:inline-block;}
+.ocio-tipo-gap{background:rgba(255,77,77,.15);color:var(--danger);}
+.ocio-tipo-inicio{background:rgba(255,181,71,.15);color:var(--warn);}
+.ocio-tipo-fim{background:rgba(77,159,255,.15);color:var(--info);}
+.ocio-timeline-row{display:grid;grid-template-columns:120px 1fr 80px;gap:10px;align-items:center;margin-bottom:6px;}
+.ocio-timeline-track{position:relative;height:22px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;overflow:hidden;}
+.ocio-timeline-almoco{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,rgba(255,255,255,.04) 0,rgba(255,255,255,.04) 4px,transparent 4px,transparent 8px);border-left:1px dashed var(--border2);border-right:1px dashed var(--border2);}
+.ocio-timeline-bar{position:absolute;top:0;bottom:0;background:rgba(0,229,160,.4);}
+.ocio-timeline-gap{position:absolute;top:0;bottom:0;background:rgba(255,77,77,.5);border-left:1px solid var(--danger);border-right:1px solid var(--danger);}
+.ocio-timeline-hours{position:relative;height:14px;font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:2px;}
+.ocio-timeline-hours span{position:absolute;transform:translateX(-50%);}
+
 /* ─── MOBILE BACKDROP/DRAWER (escondidos por padrão) ─── */
 .menu-toggle{display:none;background:none;border:none;color:var(--text);font-size:22px;cursor:pointer;padding:4px 8px;margin-right:6px;}
 .mobile-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:90;}
@@ -514,6 +535,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item active" onclick="switchPanel('bipagem',this)">&#9783; Bipagem <span class="count" id="nav-bip">0</span></div>
       <div class="nav-item" onclick="switchPanel('produtividade',this)">&#9685; Produtividade <span class="count" id="nav-prod">0</span></div>
       <div class="nav-item" onclick="switchPanel('meta',this)">🎯 Meta do Dia <span class="count" id="nav-meta-alert">0</span></div>
+      <div class="nav-item" onclick="switchPanel('ociosidade',this)">⏱ Ociosidade</div>
       <div class="nav-item" onclick="switchPanel('coleta',this)">&#128666; Aguardando Coleta <span class="count" id="nav-coleta">0</span></div>
       <div class="nav-item" onclick="switchPanel('pendencias',this)">&#9888; Pendências <span class="count" id="nav-pend">0</span></div>
       <div class="nav-item" onclick="switchPanel('retorno',this)">&#8617; Retorno <span class="count" id="nav-ret">0</span></div>      
@@ -618,6 +640,30 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div id="meta-info-mes" style="text-align:right;font-size:10px;color:var(--text3);font-family:var(--mono);"></div>
         </div>
         <div id="meta-conteudo"></div>
+      </div>
+
+      <!-- OCIOSIDADE -->
+      <div class="panel" id="panel-ociosidade">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="page-title" style="margin-bottom:4px;">⏱ Histórico de Ociosidade</div>
+            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Detecção de gaps de 30min+ entre bipes (almoço 11h-12h30 não conta)</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end;">
+            <div class="field"><label>Data</label><input type="date" id="ocio-data" onchange="carregarOciosidade()" style="font-size:13px;"/></div>
+          </div>
+        </div>
+
+        <!-- Abas internas: Resumo / Tabela / Timeline -->
+        <div style="display:flex;gap:6px;margin-bottom:1.25rem;border-bottom:1px solid var(--border);">
+          <button class="ocio-tab-btn active" data-view="resumo" onclick="switchOcioView('resumo')">📊 Resumo</button>
+          <button class="ocio-tab-btn" data-view="tabela" onclick="switchOcioView('tabela')">📋 Tabela</button>
+          <button class="ocio-tab-btn" data-view="timeline" onclick="switchOcioView('timeline')">📅 Timeline</button>
+        </div>
+
+        <div id="ocio-conteudo">
+          <div style="padding:32px;text-align:center;color:var(--text3);">⏳ Carregando...</div>
+        </div>
       </div>
 
       <!-- PENDÊNCIAS -->
@@ -1258,6 +1304,7 @@ function switchPanel(name, el) {
   if (name==='transportadoras') renderTranspConfig();
   if (name==='pesos') carregarPesos();
   if (name==='meta') carregarMetaDia();
+  if (name==='ociosidade') carregarOciosidade();
   if (name==='fechamento') carregarFechamento();
   // Mobile: fecha drawer e sincroniza tab bar
   closeSidebar();
@@ -2928,6 +2975,236 @@ async function confirmarFechamento(mes, fileName){
   } catch(e) {
     toast('Erro: '+(e.erro||e.message),'err');
   }
+}
+
+// ── OCIOSIDADE ────────────────────────────────────────────────
+let ocioData = null;
+let ocioView = 'resumo';
+
+function switchOcioView(view){
+  ocioView = view;
+  document.querySelectorAll('.ocio-tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === view);
+  });
+  renderOciosidade();
+}
+
+async function carregarOciosidade(){
+  const inp = document.getElementById('ocio-data');
+  if (!inp.value) inp.value = new Date().toISOString().slice(0,10);
+  const data = inp.value;
+  const cont = document.getElementById('ocio-conteudo');
+  cont.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text3);">⏳ Carregando...</div>`;
+  try {
+    const r = await api('GET','/api/ociosidade/'+data);
+    ocioData = r;
+    renderOciosidade();
+  } catch(e) {
+    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${e.erro || e.message}</div>`;
+  }
+}
+
+function renderOciosidade(){
+  if (!ocioData) return;
+  const cont = document.getElementById('ocio-conteudo');
+  if (ocioView === 'resumo') cont.innerHTML = renderOcioResumo();
+  else if (ocioView === 'tabela') cont.innerHTML = renderOcioTabela();
+  else if (ocioView === 'timeline') cont.innerHTML = renderOcioTimeline();
+}
+
+function fmtMin(min){
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min/60);
+  const m = min % 60;
+  return m ? `${h}h${m}min` : `${h}h`;
+}
+
+function tipoEventoLabel(t){
+  if (t === 'gap') return 'GAP';
+  if (t === 'inicio_atrasado') return 'INÍCIO TARDIO';
+  if (t === 'saiu_cedo') return 'SAÍDA ANTECIPADA';
+  if (t === 'sem_bipar_atual') return 'SEM BIPAR ATÉ AGORA';
+  return t.toUpperCase();
+}
+
+function tipoEventoClasse(t){
+  if (t === 'gap') return 'ocio-tipo-gap';
+  if (t === 'inicio_atrasado') return 'ocio-tipo-inicio';
+  return 'ocio-tipo-fim';
+}
+
+function renderOcioResumo(){
+  const colabs = ocioData.colaboradores;
+  if (colabs.length === 0) {
+    return `<div style="padding:40px;text-align:center;color:var(--text3);">Nenhuma bipagem registrada nesta data.</div>`;
+  }
+
+  // Stats agregados
+  const totalEventos = colabs.reduce((s,c)=>s+c.eventos.length, 0);
+  const totalOciosoMin = colabs.reduce((s,c)=>s+c.total_ocioso_min, 0);
+  const colabsComOcio = colabs.filter(c => c.total_ocioso_min > 0).length;
+
+  const stats = `
+    <div class="stats-row" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem;">
+      <div class="stat-card"><div class="stat-label">Colaboradores</div><div class="stat-value" style="font-family:var(--mono);">${colabs.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Com ociosidade</div><div class="stat-value" style="color:var(--warn);font-family:var(--mono);">${colabsComOcio}</div></div>
+      <div class="stat-card"><div class="stat-label">Eventos detectados</div><div class="stat-value" style="color:var(--danger);font-family:var(--mono);">${totalEventos}</div></div>
+      <div class="stat-card"><div class="stat-label">Tempo total ocioso</div><div class="stat-value" style="color:var(--danger);font-family:var(--mono);font-size:18px;">${fmtMin(totalOciosoMin)}</div></div>
+    </div>
+  `;
+
+  const cards = colabs.map(c => {
+    const eventosDetalhe = c.eventos.length === 0
+      ? `<span style="color:var(--accent);font-weight:500;">✓ Sem ociosidade</span>`
+      : c.eventos.slice(0, 4).map(e =>
+          `<div style="font-family:var(--mono);font-size:10px;color:var(--text2);padding:2px 0;">
+             <span class="ocio-tipo-pill ${tipoEventoClasse(e.tipo)}" style="font-size:9px;">${tipoEventoLabel(e.tipo)}</span>
+             ${e.inicio_str}–${e.fim_str} <span style="color:var(--danger);font-weight:600;">${fmtMin(e.duracao_min)}</span>
+           </div>`
+        ).join('') + (c.eventos.length > 4 ? `<div style="font-size:10px;color:var(--text3);margin-top:3px;">+${c.eventos.length-4} eventos</div>` : '');
+
+    const ritmoTxt = c.ritmo_seg_por_pedido
+      ? `${c.ritmo_seg_por_pedido}s/pedido <span style="color:var(--text3);">(ideal ${c.ritmo_ideal_seg}s)</span>`
+      : '—';
+
+    const corTotal = c.total_ocioso_min === 0 ? 'var(--accent)' : (c.total_ocioso_min < 60 ? 'var(--warn)' : 'var(--danger)');
+
+    return `
+      <div class="ocio-card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+          <div>
+            <div style="font-size:14px;font-weight:600;">${c.colaborador_nome}</div>
+            <div style="font-size:10px;color:var(--text2);font-family:var(--mono);">
+              ${c.total_bipagens} bipagens · ${c.primeiro_bipe || '—'}–${c.ultimo_bipe || '—'}
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:9px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);">Ocioso</div>
+            <div style="font-size:18px;font-weight:600;color:${corTotal};font-family:var(--mono);">${c.total_ocioso_min === 0 ? '0' : fmtMin(c.total_ocioso_min)}</div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:8px;font-family:var(--mono);">
+          Ritmo: ${ritmoTxt}
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:8px;">
+          ${eventosDetalhe}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return stats + `<div class="ocio-grid">${cards}</div>`;
+}
+
+function renderOcioTabela(){
+  const colabs = ocioData.colaboradores;
+  // Achata todos os eventos
+  const eventos = [];
+  colabs.forEach(c => {
+    c.eventos.forEach(e => {
+      eventos.push({ ...e, colaborador_nome: c.colaborador_nome });
+    });
+  });
+
+  if (eventos.length === 0) {
+    return `<div style="padding:40px;text-align:center;color:var(--accent);">✓ Nenhum evento de ociosidade nesta data.</div>`;
+  }
+
+  // Ordena por duração desc
+  eventos.sort((a,b) => b.duracao_min - a.duracao_min);
+
+  const head = `<div class="ocio-row head">
+    <div>Colaborador</div>
+    <div>Tipo</div>
+    <div>Início</div>
+    <div>Fim</div>
+    <div>Duração</div>
+  </div>`;
+
+  const linhas = eventos.map(e => `
+    <div class="ocio-row">
+      <div style="font-weight:500;">${e.colaborador_nome}</div>
+      <div><span class="ocio-tipo-pill ${tipoEventoClasse(e.tipo)}">${tipoEventoLabel(e.tipo)}</span></div>
+      <div style="font-family:var(--mono);">${e.inicio_str}</div>
+      <div style="font-family:var(--mono);">${e.fim_str}</div>
+      <div style="font-family:var(--mono);color:var(--danger);font-weight:600;">${fmtMin(e.duracao_min)}</div>
+    </div>
+  `).join('');
+
+  return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;">${head}${linhas}</div>`;
+}
+
+function renderOcioTimeline(){
+  const colabs = ocioData.colaboradores;
+  if (colabs.length === 0) {
+    return `<div style="padding:40px;text-align:center;color:var(--text3);">Nenhuma bipagem registrada nesta data.</div>`;
+  }
+
+  // Eixo: 08:00 (480) até 17:20 (1040) = 560 min total
+  const INICIO = 8 * 60;
+  const FIM = 17 * 60 + 20;
+  const RANGE = FIM - INICIO;
+  const ALM_INI = 11 * 60;
+  const ALM_FIM = 12 * 60 + 30;
+
+  const pct = (min) => Math.max(0, Math.min(100, ((min - INICIO) / RANGE) * 100));
+
+  // Header com horas
+  const horas = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+  const horaMarks = horas.map(h => {
+    const p = pct(h * 60);
+    return `<span style="left:${p}%;">${h}h</span>`;
+  }).join('') + `<span style="left:100%;">17h20</span>`;
+
+  const linhas = colabs.map(c => {
+    // Se não tem bipagens, linha vazia
+    if (c.total_bipagens === 0) {
+      return `<div class="ocio-timeline-row">
+        <div style="font-size:12px;font-weight:500;color:var(--text2);">${c.colaborador_nome}</div>
+        <div class="ocio-timeline-track">
+          <div class="ocio-timeline-almoco" style="left:${pct(ALM_INI)}%;width:${pct(ALM_FIM)-pct(ALM_INI)}%;"></div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);font-family:var(--mono);text-align:right;">sem bipes</div>
+      </div>`;
+    }
+
+    // Barra verde de "trabalhando" do primeiro ao último bipe
+    const primeiroMin = parseInt(c.primeiro_bipe.split(':')[0])*60 + parseInt(c.primeiro_bipe.split(':')[1]);
+    const ultimoMin = parseInt(c.ultimo_bipe.split(':')[0])*60 + parseInt(c.ultimo_bipe.split(':')[1]);
+
+    // Gaps em vermelho
+    const gaps = c.eventos.map(e => {
+      const left = pct(e.inicio_min);
+      const width = pct(e.fim_min) - left;
+      return `<div class="ocio-timeline-gap" style="left:${left}%;width:${width}%;" title="${tipoEventoLabel(e.tipo)} ${e.inicio_str}–${e.fim_str} (${fmtMin(e.duracao_min)})"></div>`;
+    }).join('');
+
+    return `<div class="ocio-timeline-row">
+      <div style="font-size:12px;font-weight:500;">${c.colaborador_nome}</div>
+      <div class="ocio-timeline-track">
+        <div class="ocio-timeline-almoco" style="left:${pct(ALM_INI)}%;width:${pct(ALM_FIM)-pct(ALM_INI)}%;"></div>
+        <div class="ocio-timeline-bar" style="left:${pct(primeiroMin)}%;width:${pct(ultimoMin)-pct(primeiroMin)}%;"></div>
+        ${gaps}
+      </div>
+      <div style="font-size:11px;color:var(--danger);font-family:var(--mono);text-align:right;font-weight:600;">${c.total_ocioso_min === 0 ? 'OK' : fmtMin(c.total_ocioso_min)}</div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:16px;">
+      <div style="display:flex;gap:14px;font-size:11px;color:var(--text2);margin-bottom:14px;font-family:var(--mono);align-items:center;flex-wrap:wrap;">
+        <span><span style="display:inline-block;width:14px;height:10px;background:rgba(0,229,160,.4);vertical-align:middle;margin-right:5px;"></span>Trabalhando</span>
+        <span><span style="display:inline-block;width:14px;height:10px;background:rgba(255,77,77,.5);vertical-align:middle;margin-right:5px;"></span>Ocioso</span>
+        <span><span style="display:inline-block;width:14px;height:10px;background:repeating-linear-gradient(45deg,rgba(255,255,255,.04) 0,rgba(255,255,255,.04) 4px,transparent 4px,transparent 8px);border:1px dashed var(--border2);vertical-align:middle;margin-right:5px;"></span>Almoço (11h–12h30)</span>
+      </div>
+      ${linhas}
+      <div class="ocio-timeline-row" style="margin-top:6px;">
+        <div></div>
+        <div class="ocio-timeline-hours">${horaMarks}</div>
+        <div></div>
+      </div>
+    </div>
+  `;
 }
 
 // Atualizar tempo parado a cada 60s (sem refazer tudo)
