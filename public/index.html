@@ -1988,7 +1988,7 @@ async function handleBipeCarreg(e){
       addHistoricoCarreg({ etiqueta, tipo: 'ne' });
       mostrarFeedbackCarreg('ne', etiqueta, 'Não encontrada no sistema');
       flashCarreg('warn');
-      beep();
+      somCarregNaoEncontrada();
       vibrate([100, 50, 100]);
     }
     else if (r.resultado === 'DUPLICADA') {
@@ -1996,12 +1996,17 @@ async function handleBipeCarreg(e){
       addHistoricoCarreg({ etiqueta, tipo: 'dup', extra: 'DUPLICADA' });
       const dt = new Date(r.coletada_em);
       const tempoAtras = formatarTempoAtras(dt);
+      const horaPrimeiraBip = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
       mostrarFeedbackCarreg('dup', etiqueta,
-        `JÁ CARREGADA ${tempoAtras} · por ${r.coletada_por.replace(' (carregamento)','').replace(' (romaneio)','') || '?'}`
+        `JÁ CARREGADA às ${horaPrimeiraBip} (${tempoAtras}) · por ${r.coletada_por.replace(' (carregamento)','').replace(' (romaneio)','') || '?'}`
       );
       flashCarreg('danger');
-      beepDuplo();
+      somCarregDuplicada();
       vibrate([200, 100, 200, 100, 200]);
+      // Voz falando "Duplicado, bipado às HH:MM"
+      setTimeout(()=>{
+        falar(`Duplicado. Bipado às ${horaPrimeiraBip.replace(':', ' e ')}`, { beep: false });
+      }, 750);
     }
     else if (r.resultado === 'TROCOU_TRANSPORTADORA') {
       CARREG.contadores.ok++;
@@ -2015,14 +2020,14 @@ async function handleBipeCarreg(e){
       setTimeout(()=>{ badge.style.background = 'var(--accent)'; }, 1500);
       mostrarFeedbackCarreg('troca', etiqueta, `🔄 Trocou para ${novaTransp}`);
       flashCarreg('warn');
-      beep();
+      somCarregTroca();
     }
     else { // OK
       CARREG.contadores.ok++;
       addHistoricoCarreg({ etiqueta, tipo: 'ok' });
       mostrarFeedbackCarreg('ok', etiqueta, '✓ CARREGADO');
       flashCarreg('ok');
-      beep();
+      somCarregOk();
     }
 
     // Atualiza contadores na tela
@@ -3279,6 +3284,48 @@ function beep(){
     osc.start(); osc.stop(ctx.currentTime+0.2);
     setTimeout(()=>ctx.close(), 250);
   }catch(e){}
+}
+
+// ── SONS DISTINTOS PARA MODO CARREGAMENTO ────────────────────
+// Helper genérico pra gerar um beep custom
+function _beepCustom(freq, duracao, volume=0.3, tipo='sine'){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = tipo;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(volume, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duracao);
+    osc.start();
+    osc.stop(ctx.currentTime + duracao + 0.02);
+    setTimeout(()=>ctx.close(), (duracao + 0.05) * 1000);
+  }catch(e){}
+}
+
+// ✅ OK: bip curto agudo
+function somCarregOk(){
+  _beepCustom(900, 0.10, 0.25, 'sine');
+}
+
+// ⚠️ DUPLICADA: buzina longa grave (alarme)
+function somCarregDuplicada(){
+  // Buzina dupla descendente, grave, alta
+  _beepCustom(380, 0.35, 0.4, 'square');
+  setTimeout(()=> _beepCustom(280, 0.45, 0.4, 'square'), 250);
+}
+
+// 🟡 NÃO ENCONTRADA: 2 bips médios
+function somCarregNaoEncontrada(){
+  _beepCustom(550, 0.13, 0.28, 'sine');
+  setTimeout(()=> _beepCustom(550, 0.13, 0.28, 'sine'), 180);
+}
+
+// 🔄 TROCA TRANSPORTADORA: bip duplo agudo (positivo)
+function somCarregTroca(){
+  _beepCustom(1000, 0.08, 0.25, 'sine');
+  setTimeout(()=> _beepCustom(1200, 0.10, 0.25, 'sine'), 100);
 }
 
 function escolherVoz(){
