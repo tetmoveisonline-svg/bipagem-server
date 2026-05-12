@@ -1261,30 +1261,76 @@ function connectWS() {
   };
 }
 
+// ── RENDER SCHEDULER (debounce) ───────────────────────────────
+// Em vez de re-renderizar a cada bipe, agrupa eventos numa janela de 200ms.
+// Só renderiza as abas ATIVAS — outras renderizam quando o usuário troca pra elas.
+const RENDER_DELAY_MS = 200;
+const _renderTimers = {};
+const _renderDirty = {};
+
+function agendarRender(grupo){
+  _renderDirty[grupo] = true;
+  if (_renderTimers[grupo]) return; // já tem timer agendado
+  _renderTimers[grupo] = setTimeout(() => {
+    _renderTimers[grupo] = null;
+    if (!_renderDirty[grupo]) return;
+    _renderDirty[grupo] = false;
+    executarRender(grupo);
+  }, RENDER_DELAY_MS);
+}
+
+function painelAtivo(nome){
+  return document.getElementById('panel-' + nome)?.classList.contains('active');
+}
+
+function executarRender(grupo){
+  // Sempre atualiza contadores (rápido, não vai bugar)
+  updateCounts();
+
+  if (grupo === 'bipagem') {
+    // Só renderiza o que está visível
+    if (painelAtivo('bipagem')) renderBipagem();
+    if (painelAtivo('historico')) renderHistorico();
+    if (painelAtivo('produtividade')) renderProdutividade();
+    if (painelAtivo('meta') && typeof metaData !== 'undefined' && metaData) renderMetaDia();
+  }
+  else if (grupo === 'coleta') {
+    if (painelAtivo('coleta')) {
+      renderMktPills();
+      renderColetas();
+    }
+    atualizarStatColeta();
+  }
+  else if (grupo === 'pendencias') {
+    if (painelAtivo('pendencias')) renderPendencias();
+  }
+  else if (grupo === 'retornos') {
+    if (painelAtivo('retorno')) renderRetornos();
+  }
+}
+
 function handleWS(event, data) {
   switch(event) {
     case 'bipagem:add':
       if (!S.bipagens.find(b=>b.id===data.id)) {
         S.bipagens.unshift(data);
-        renderBipagem(); renderHistorico(); renderProdutividade(); updateCounts();
-        if (typeof metaData !== 'undefined' && metaData && document.getElementById('panel-meta')?.classList.contains('active')) renderMetaDia();
+        agendarRender('bipagem');
         if (data.usuario_id !== usuarioLogado?.id)
           toast(`↓ ${data.etiqueta} — ${data.marketplace_nome} (${data.colaborador_nome})`, 'info', 2500);
       }
       break;
     case 'bipagem:del':
       S.bipagens = S.bipagens.filter(b=>b.id!==data.id);
-      renderBipagem(); renderHistorico(); renderProdutividade(); updateCounts();
-      if (typeof metaData !== 'undefined' && metaData && document.getElementById('panel-meta')?.classList.contains('active')) renderMetaDia();
+      agendarRender('bipagem');
       break;
     case 'pendencia:add':
-      if (!S.pendencias.find(p=>p.id===data.id)) { S.pendencias.unshift(data); renderPendencias(); updateCounts(); } break;
+      if (!S.pendencias.find(p=>p.id===data.id)) { S.pendencias.unshift(data); agendarRender('pendencias'); } break;
     case 'pendencia:del':
-      S.pendencias = S.pendencias.filter(p=>p.id!==data.id); renderPendencias(); updateCounts(); break;
+      S.pendencias = S.pendencias.filter(p=>p.id!==data.id); agendarRender('pendencias'); break;
     case 'retorno:add':
-      if (!S.retornos.find(r=>r.id===data.id)) { S.retornos.unshift(data); renderRetornos(); updateCounts(); } break;
+      if (!S.retornos.find(r=>r.id===data.id)) { S.retornos.unshift(data); agendarRender('retornos'); } break;
     case 'retorno:del':
-      S.retornos = S.retornos.filter(r=>r.id!==data.id); renderRetornos(); updateCounts(); break;
+      S.retornos = S.retornos.filter(r=>r.id!==data.id); agendarRender('retornos'); break;
     case 'colaborador:add':
       if (!S.colaboradores.find(c=>c.id===data.id)) { S.colaboradores.push(data); populateSelects(); renderColabs(); } break;
     case 'colaborador:del':
@@ -1301,8 +1347,7 @@ function handleWS(event, data) {
         const ci = COLETAS.findIndex(c => c.id === data.id);
         if (ci >= 0) COLETAS[ci] = data; else COLETAS.unshift(data);
       }
-      if (document.getElementById('panel-coleta').classList.contains('active')) { renderMktPills(); renderColetas(); }
-      atualizarStatColeta();
+      agendarRender('coleta');
       break;
     case 'coleta:del':
       const bI = S.bipagens.findIndex(b => b.id === data.id);
@@ -1311,8 +1356,7 @@ function handleWS(event, data) {
         const ci = COLETAS.findIndex(c => c.id === data.id);
         if (ci >= 0) COLETAS[ci] = { ...COLETAS[ci], coletada_em: null, transportadora: null, coletada_por: null };
       }
-      if (document.getElementById('panel-coleta').classList.contains('active')) { renderMktPills(); renderColetas(); }
-      atualizarStatColeta();
+      agendarRender('coleta');
       break;
     case 'transportadora:add':
       if (!TRANSPS.find(t => t.id === data.id)) TRANSPS.push(data);
@@ -1364,8 +1408,11 @@ function switchPanel(name, el) {
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   if (el) el.classList.add('active');
+  if (name==='bipagem') renderBipagem();
   if (name==='historico') renderHistorico();
   if (name==='produtividade') renderProdutividade();
+  if (name==='pendencias') renderPendencias();
+  if (name==='retorno') renderRetornos();
   if (name==='colaboradores') renderColabs();
   if (name==='marketplaces') { renderMktConfig(); renderColorPicks(); }
   if (name==='usuarios') carregarUsuarios();
