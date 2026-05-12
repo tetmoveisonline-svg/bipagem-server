@@ -150,6 +150,23 @@ async function initDB() {
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS cargas (
+      id SERIAL PRIMARY KEY,
+      numero INTEGER UNIQUE NOT NULL,
+      transportadora TEXT NOT NULL,
+      observacao TEXT DEFAULT '',
+      status TEXT DEFAULT 'aberta',
+      aberta_em TIMESTAMPTZ DEFAULT NOW(),
+      aberta_por TEXT NOT NULL,
+      fechada_em TIMESTAMPTZ,
+      fechada_por TEXT,
+      total_bipagens INTEGER DEFAULT 0,
+      total_duplicadas INTEGER DEFAULT 0,
+      total_nao_encontradas INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_cargas_status ON cargas(status);
+    CREATE INDEX IF NOT EXISTS idx_cargas_aberta_em ON cargas(aberta_em);
+
     CREATE TABLE IF NOT EXISTS pendencias (
       id TEXT PRIMARY KEY,
       etiqueta TEXT NOT NULL,
@@ -169,7 +186,9 @@ async function initDB() {
   await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS coletada_em TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS transportadora TEXT`);
   await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS coletada_por TEXT`);
+  await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS carga_id INTEGER`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_coletada_em ON bipagens(coletada_em)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_carga_id ON bipagens(carga_id)`);
 
   // Cleanup: remover módulo de Produção (descontinuado)
   // Ordem importante: filhos primeiro (FK), depois pais
@@ -899,13 +918,17 @@ app.post('/api/coletas/carregamento', autenticar, async (req, res) => {
   try {
     const etiqueta = (req.body.etiqueta || '').trim().toUpperCase();
     const transportadora = (req.body.transportadora || '').trim();
+    const cargaId = req.body.carga_id ? parseInt(req.body.carga_id) : null;
     if (!etiqueta) return res.status(400).json({ erro: 'Etiqueta obrigatória.' });
     if (!transportadora) return res.status(400).json({ erro: 'Selecione a transportadora.' });
 
     // 1) Existe no sistema?
     const bip = await pool.query('SELECT * FROM bipagens WHERE etiqueta = $1 LIMIT 1', [etiqueta]);
     if (bip.rowCount === 0) {
-      // Não grava nada
+      // Não grava nada, mas conta no contador da carga (não encontrada)
+      if (cargaId) {
+        await pool.query(`UPDATE cargas SET total_nao_encontradas = total_nao_encontradas + 1 WHERE id = $1`, [cargaId]);
+      }
       return res.json({
         resultado: 'NAO_ENCONTRADA',
         etiqueta,
@@ -914,8 +937,11 @@ app.post('/api/coletas/carregamento', autenticar, async (req, res) => {
     }
     const b = bip.rows[0];
 
-    // 2) Já foi coletada? (DUPLICADA — não grava nada)
+    // 2) Já foi coletada? (DUPLICADA — não grava nada, só contador)
     if (b.coletada_em) {
+      if (cargaId) {
+        await pool.query(`UPDATE cargas SET total_duplicadas = total_duplicadas + 1 WHERE id = $1`, [cargaId]);
+      }
       return res.json({
         resultado: 'DUPLICADA',
         etiqueta,
@@ -928,21 +954,14 @@ app.post('/api/coletas/carregamento', autenticar, async (req, res) => {
     }
 
     // 3) Vai marcar como coletada — verifica se a transportadora bate com a marca da etiqueta
-    // (cruzamento por marketplace nome)
     let transpUsada = transportadora;
     let trocou = false;
 
-    // Heurística simples por prefixo do código:
-    // - "BR" → Shopee Xpress (formato Shopee)
-    // - 11 dígitos puros → ML padrão (não é regra rígida)
-    // Aqui só fazemos a troca se a etiqueta TEM `marketplace_nome` cadastrado
-    // e o nome dele bate parcialmente com alguma transportadora.
     if (b.marketplace_nome) {
       const mkt = b.marketplace_nome.toLowerCase();
       const transps = await pool.query('SELECT nome FROM transportadoras');
       const candidata = transps.rows.find(t => {
         const tn = t.nome.toLowerCase();
-        // bate se compartilha palavra-chave: shopee, mercado, amazon, shein
         return (mkt.includes('shopee') && tn.includes('shopee')) ||
                (mkt.includes('mercado') && tn.includes('mercado')) ||
                (mkt.includes('amazon') && tn.includes('amazon')) ||
@@ -954,14 +973,19 @@ app.post('/api/coletas/carregamento', autenticar, async (req, res) => {
       }
     }
 
-    // 4) Grava a coleta
+    // 4) Grava a coleta (com carga_id se houver)
     const r = await pool.query(`
       UPDATE bipagens
-      SET coletada_em = NOW(), transportadora = $1, coletada_por = $2
-      WHERE id = $3
+      SET coletada_em = NOW(), transportadora = $1, coletada_por = $2, carga_id = $3
+      WHERE id = $4
       RETURNING *,
         EXTRACT(EPOCH FROM (coletada_em - criado_em)) AS segundos_parado
-    `, [transpUsada, req.usuario.nome + ' (carregamento)', b.id]);
+    `, [transpUsada, req.usuario.nome + ' (carregamento)', cargaId, b.id]);
+
+    // Atualiza contador da carga
+    if (cargaId) {
+      await pool.query(`UPDATE cargas SET total_bipagens = total_bipagens + 1 WHERE id = $1`, [cargaId]);
+    }
 
     const atualizado = {
       ...toISO(r.rows[0]),
@@ -981,6 +1005,167 @@ app.post('/api/coletas/carregamento', autenticar, async (req, res) => {
   } catch (e) {
     console.error('POST /api/coletas/carregamento:', e.message);
     res.status(500).json({ erro: 'Erro ao processar carregamento.' });
+  }
+});
+
+// ── CARGAS ───────────────────────────────────────────────────
+// Lista cargas (com filtros opcionais)
+// Params: ?data=YYYY-MM-DD&transportadora=...&status=aberta|finalizada
+app.get('/api/cargas', autenticar, async (req, res) => {
+  try {
+    const { data, transportadora, status } = req.query;
+    const where = [];
+    const params = [];
+    if (data) {
+      params.push(data);
+      where.push(`TO_CHAR(aberta_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD') = $${params.length}`);
+    }
+    if (transportadora) {
+      params.push(transportadora);
+      where.push(`transportadora = $${params.length}`);
+    }
+    if (status) {
+      params.push(status);
+      where.push(`status = $${params.length}`);
+    }
+    const sql = `
+      SELECT * FROM cargas
+      ${where.length ? 'WHERE '+where.join(' AND ') : ''}
+      ORDER BY aberta_em DESC
+      LIMIT 200
+    `;
+    const r = await pool.query(sql, params);
+    res.json(r.rows.map(c => ({
+      ...c,
+      aberta_em: c.aberta_em.toISOString(),
+      fechada_em: c.fechada_em ? c.fechada_em.toISOString() : null
+    })));
+  } catch (e) {
+    console.error('GET /api/cargas:', e.message);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Busca carga aberta atual (se houver) — UMA POR VEZ
+app.get('/api/cargas/aberta', autenticar, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT * FROM cargas WHERE status = 'aberta' ORDER BY aberta_em DESC LIMIT 1`);
+    if (r.rowCount === 0) return res.json(null);
+    const c = r.rows[0];
+    res.json({
+      ...c,
+      aberta_em: c.aberta_em.toISOString(),
+      fechada_em: c.fechada_em ? c.fechada_em.toISOString() : null
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Detalhes de UMA carga (com lista de bipagens)
+app.get('/api/cargas/:id', autenticar, async (req, res) => {
+  try {
+    const cargaId = parseInt(req.params.id);
+    const r = await pool.query('SELECT * FROM cargas WHERE id = $1', [cargaId]);
+    if (r.rowCount === 0) return res.status(404).json({ erro: 'Carga não encontrada.' });
+    const c = r.rows[0];
+    // Busca bipagens da carga
+    const bps = await pool.query(`
+      SELECT id, etiqueta, colaborador_nome, marketplace_nome, coletada_em, criado_em
+      FROM bipagens
+      WHERE carga_id = $1
+      ORDER BY coletada_em ASC NULLS LAST
+    `, [cargaId]);
+    res.json({
+      ...c,
+      aberta_em: c.aberta_em.toISOString(),
+      fechada_em: c.fechada_em ? c.fechada_em.toISOString() : null,
+      bipagens: bps.rows.map(b => ({
+        ...b,
+        coletada_em: b.coletada_em ? b.coletada_em.toISOString() : null,
+        criado_em: b.criado_em ? b.criado_em.toISOString() : null
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Abre uma nova carga
+app.post('/api/cargas', autenticar, async (req, res) => {
+  try {
+    const transportadora = (req.body.transportadora || '').trim();
+    const observacao = (req.body.observacao || '').trim();
+    if (!transportadora) return res.status(400).json({ erro: 'Transportadora obrigatória.' });
+
+    // Verifica se já existe carga aberta
+    const aberta = await pool.query(`SELECT id, numero FROM cargas WHERE status = 'aberta' LIMIT 1`);
+    if (aberta.rowCount > 0) {
+      return res.status(400).json({
+        erro: `Já existe uma carga aberta (#${aberta.rows[0].numero}). Finalize-a antes de abrir uma nova.`,
+        carga_aberta_id: aberta.rows[0].id
+      });
+    }
+
+    // Próximo número sequencial
+    const max = await pool.query(`SELECT COALESCE(MAX(numero),0) AS m FROM cargas`);
+    const numero = max.rows[0].m + 1;
+
+    const r = await pool.query(`
+      INSERT INTO cargas (numero, transportadora, observacao, status, aberta_por)
+      VALUES ($1, $2, $3, 'aberta', $4)
+      RETURNING *
+    `, [numero, transportadora, observacao, req.usuario.nome]);
+
+    const c = r.rows[0];
+    const result = { ...c, aberta_em: c.aberta_em.toISOString(), fechada_em: null };
+    broadcast('carga:abriu', result);
+    res.json(result);
+  } catch (e) {
+    console.error('POST /api/cargas:', e.message);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Finaliza uma carga
+app.post('/api/cargas/:id/finalizar', autenticar, async (req, res) => {
+  try {
+    const cargaId = parseInt(req.params.id);
+    const r = await pool.query(`
+      UPDATE cargas
+      SET status = 'finalizada', fechada_em = NOW(), fechada_por = $1
+      WHERE id = $2 AND status = 'aberta'
+      RETURNING *
+    `, [req.usuario.nome, cargaId]);
+    if (r.rowCount === 0) return res.status(404).json({ erro: 'Carga não encontrada ou já finalizada.' });
+
+    const c = r.rows[0];
+    const result = {
+      ...c,
+      aberta_em: c.aberta_em.toISOString(),
+      fechada_em: c.fechada_em.toISOString()
+    };
+    broadcast('carga:finalizou', result);
+    res.json(result);
+  } catch (e) {
+    console.error('POST /api/cargas/:id/finalizar:', e.message);
+    res.status(500).json({ erro: e.message });
+  }
+});
+
+// Cancela uma carga (admin only)
+app.delete('/api/cargas/:id', autenticar, async (req, res) => {
+  try {
+    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Apenas admin.' });
+    const cargaId = parseInt(req.params.id);
+    // Desvincula bipagens
+    await pool.query(`UPDATE bipagens SET carga_id = NULL WHERE carga_id = $1`, [cargaId]);
+    const r = await pool.query(`UPDATE cargas SET status='cancelada' WHERE id = $1 RETURNING numero`, [cargaId]);
+    if (r.rowCount === 0) return res.status(404).json({ erro: 'Carga não encontrada.' });
+    broadcast('carga:cancelada', { id: cargaId, numero: r.rows[0].numero });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ erro: e.message });
   }
 });
 
