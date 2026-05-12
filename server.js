@@ -1685,8 +1685,11 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         });
       }
 
-      // ── NOVA FÓRMULA POR LOTES ──────────────────
-      // Detecta lotes (separados por gap > 10min) e usa MIN(tempo_real, bipes×peso) por lote.
+      // ── FÓRMULA DOS LOTES (regra final) ──────────────────
+      // Cada lote = rajada de bipes (gap > 10min separa lotes).
+      // Tempo trabalhado por lote = MIN(tempo_até_próxima_rajada, cap)
+      // Ociosidade = tempo_até_próxima_rajada - cap, se positivo
+      // Último lote do dia: conta apenas até o último bipe (sem ociosidade após)
       const peso = pesoColabs[colab.colaborador_id] || 1;
       const ehPeso2 = peso > 1.5;
       const segPorBipe = ehPeso2 ? SEG_POR_BIPE_PESO2 : SEG_POR_BIPE_PESO1;
@@ -1694,10 +1697,10 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
 
       let tempoTrabalhadoMin = 0;
       let qtdLotes = 0;
-      const lotesDetalhe = [];  // detalhamento pro frontend
-      const pausasDetalhe = []; // pausas entre lotes
+      const lotesDetalhe = [];
+      const pausasDetalhe = [];
       if (bps.length > 0) {
-        // Agrupa bipes em lotes (gap > 10min = novo lote)
+        // Agrupa bipes em lotes (gap > 10min entre bipes = novo lote)
         const lotes = [[bps[0]]];
         for (let i = 1; i < bps.length; i++) {
           const gap = calcularGapEfetivo(bps[i-1].minutos_dia, bps[i].minutos_dia, ALMOCO_INICIO, ALMOCO_FIM);
@@ -1709,18 +1712,57 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         }
         qtdLotes = lotes.length;
 
-        // Calcula tempo de cada lote + registra pausas
         lotes.forEach((lote, idx) => {
           const inicio = lote[0].minutos_dia;
           const fim = lote[lote.length-1].minutos_dia;
-          const cap = (lote.length * segPorBipe) / 60;
-          const tempoReal = lote.length === 1
-            ? cap
-            : calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
-          const usado = Math.min(tempoReal, cap);
-          tempoTrabalhadoMin += usado;
+          const cap = (lote.length * segPorBipe) / 60; // cap em minutos
+          const ehUltimo = idx === lotes.length - 1;
 
-          // Detecta se o tempo real cruzou o almoço
+          let tempoAteProx;
+          let trabalhado;
+          let ociosoDoLote = 0;
+          let tipoUsado;
+
+          if (ehUltimo) {
+            // Último lote do dia: conta o tempo de execução real (do 1º ao último bipe)
+            // OU o cap (o que for MAIOR), porque pode ter bipado rajada
+            const tempoExecucao = lote.length === 1
+              ? cap
+              : calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
+            trabalhado = Math.max(tempoExecucao, cap);
+            tempoAteProx = trabalhado; // pro display
+            tipoUsado = trabalhado === cap ? 'cap' : 'real';
+          } else {
+            // Tem próxima rajada: usa o tempo até ela
+            const proxInicio = lotes[idx+1][0].minutos_dia;
+            tempoAteProx = calcularGapEfetivo(inicio, proxInicio, ALMOCO_INICIO, ALMOCO_FIM);
+
+            if (tempoAteProx <= cap) {
+              // Voltou rápido: conta o tempo real (foi produtivo)
+              trabalhado = tempoAteProx;
+              tipoUsado = 'real';
+            } else {
+              // Demorou mais que o esperado: cap como trabalho, resto vira ocioso
+              trabalhado = cap;
+              ociosoDoLote = tempoAteProx - cap;
+              tipoUsado = 'cap+ocio';
+              totalOcioso += ociosoDoLote;
+              // Adiciona evento de ociosidade
+              const ociosoInicio = Math.round(inicio + cap);
+              const ociosoFim = Math.round(inicio + tempoAteProx);
+              eventos.push({
+                tipo: 'gap',
+                inicio_min: ociosoInicio,
+                fim_min: ociosoFim,
+                duracao_min: Math.round(ociosoDoLote),
+                inicio_str: minToHHMM(ociosoInicio),
+                fim_str: minToHHMM(ociosoFim)
+              });
+            }
+          }
+
+          tempoTrabalhadoMin += trabalhado;
+
           const cruzouAlmoco = (fim > ALMOCO_INICIO && inicio < ALMOCO_FIM);
 
           lotesDetalhe.push({
@@ -1728,14 +1770,16 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
             inicio_str: minToHHMM(inicio),
             fim_str: minToHHMM(fim),
             bipes: lote.length,
-            tempo_real_min: Math.round(tempoReal),
+            tempo_real_min: Math.round(tempoAteProx),
             cap_min: Math.round(cap),
-            usado_min: Math.round(usado),
-            tipo_usado: usado === tempoReal ? 'real' : 'cap',
-            cruzou_almoco: cruzouAlmoco
+            usado_min: Math.round(trabalhado),
+            ocioso_min: Math.round(ociosoDoLote),
+            tipo_usado: tipoUsado,
+            cruzou_almoco: cruzouAlmoco,
+            eh_ultimo: ehUltimo
           });
 
-          // Pausa pro próximo lote
+          // Pausa pro próximo lote (intervalo do FIM do lote até INÍCIO da rajada seguinte)
           if (idx < lotes.length - 1) {
             const proxInicio = lotes[idx+1][0].minutos_dia;
             const duracaoPausa = calcularGapEfetivo(fim, proxInicio, ALMOCO_INICIO, ALMOCO_FIM);
@@ -1751,7 +1795,7 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
       // Limita ao expediente líquido (7h30)
       tempoTrabalhadoMin = Math.min(tempoTrabalhadoMin, EXPEDIENTE_LIQUIDO_MIN);
 
-      // Ritmo médio (informativo): tempo trabalhado / num bipes
+      // Ritmo médio (informativo)
       const ritmoSeg = (bps.length > 0 && tempoTrabalhadoMin > 0)
         ? Math.round((tempoTrabalhadoMin*60)/bps.length)
         : null;
