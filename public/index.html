@@ -538,6 +538,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item" onclick="switchPanel('meta',this)">🎯 Meta do Dia <span class="count" id="nav-meta-alert">0</span></div>
       <div class="nav-item" id="nav-ociosidade" onclick="switchPanel('ociosidade',this)" style="display:none;">⏱ Ociosidade</div>
       <div class="nav-item" onclick="switchPanel('coleta',this)">&#128666; Aguardando Coleta <span class="count" id="nav-coleta">0</span></div>
+      <div class="nav-item" onclick="switchPanel('cargas',this)">📦 Histórico de Cargas <span class="count" id="nav-cargas">0</span></div>
       <div class="nav-item" onclick="switchPanel('pendencias',this)">&#9888; Pendências <span class="count" id="nav-pend">0</span></div>
       <div class="nav-item" onclick="switchPanel('retorno',this)">&#8617; Retorno <span class="count" id="nav-ret">0</span></div>      
       <div class="sidebar-divider"></div>
@@ -870,6 +871,24 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div id="col-tabela"></div>
       </div>
 
+      <!-- HISTÓRICO DE CARGAS -->
+      <div class="panel" id="panel-cargas">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="page-title" style="margin-bottom:4px;">📦 Histórico de Cargas</div>
+            <div style="font-size:12px;color:var(--text2);" id="cargas-subtitulo">Lista de todas as cargas (carregamentos por transportadora)</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="field"><label>Data</label><input type="date" id="cargas-filtro-data" onchange="carregarCargas()" style="font-size:13px;"/></div>
+            <div class="field"><label>Transportadora</label><select id="cargas-filtro-transp" onchange="carregarCargas()" style="font-size:13px;"><option value="">Todas</option></select></div>
+            <div class="field"><label>Status</label><select id="cargas-filtro-status" onchange="carregarCargas()" style="font-size:13px;"><option value="">Todos</option><option value="aberta">Aberta</option><option value="finalizada">Finalizada</option><option value="cancelada">Cancelada</option></select></div>
+          </div>
+        </div>
+        <div id="cargas-conteudo">
+          <div style="padding:32px;text-align:center;color:var(--text3);">⏳ Carregando...</div>
+        </div>
+      </div>
+
       <!-- TRANSPORTADORAS -->
       <div class="panel" id="panel-transportadoras">
         <div class="page-title">Transportadoras</div>
@@ -977,14 +996,60 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   <input type="text" id="carreg-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
     style="position:absolute;top:-100px;left:0;width:1px;height:1px;opacity:0;"/>
 
-  <!-- ETAPA 1: SETUP -->
-  <div id="carreg-setup" style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;">
+  <!-- ETAPA 1A: ESCOLHA MODO (Livre vs Carga) -->
+  <div id="carreg-setup-modo" style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;">
     <div style="font-size:14px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px;">🚛 Modo Carregamento</div>
-    <div style="font-size:28px;font-weight:600;margin-bottom:36px;text-align:center;">Qual transportadora vai começar?</div>
+    <div style="font-size:28px;font-weight:600;margin-bottom:36px;text-align:center;">Como você quer carregar?</div>
+    <div id="carreg-aberta-banner" style="display:none;background:rgba(255,181,71,.08);border:1px solid var(--warn);border-radius:8px;padding:14px 22px;margin-bottom:24px;max-width:680px;text-align:center;">
+      <div style="font-size:13px;color:var(--warn);font-weight:600;margin-bottom:4px;">⚠ Existe uma carga aberta</div>
+      <div id="carreg-aberta-info" style="font-size:11px;color:var(--text2);font-family:var(--mono);"></div>
+      <button onclick="retomarCarga()" style="margin-top:8px;background:var(--warn);color:#000;border:none;padding:8px 18px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">→ Retomar essa carga</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:680px;width:100%;">
+      <button onclick="iniciarModoLivre()" class="modo-card" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px 20px;cursor:pointer;text-align:center;color:var(--text);transition:all .2s;font-family:var(--font);">
+        <div style="font-size:38px;margin-bottom:8px;">⚡</div>
+        <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Modo Livre</div>
+        <div style="font-size:11px;color:var(--text3);line-height:1.4;">Bipa sem vincular a uma carga.<br>Ideal para correções e ajustes.</div>
+      </button>
+      <button onclick="abrirSetupCarga()" class="modo-card" style="background:linear-gradient(135deg,rgba(0,229,160,.15),rgba(0,184,120,.08));border:2px solid var(--accent);border-radius:10px;padding:24px 20px;cursor:pointer;text-align:center;color:var(--text);font-family:var(--font);">
+        <div style="font-size:38px;margin-bottom:8px;">📦</div>
+        <div style="font-size:16px;font-weight:600;margin-bottom:6px;color:var(--accent);">Abrir Carga ⭐</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.4;">Cria uma carga numerada.<br>Bipa, finaliza e vê o resumo completo.</div>
+      </button>
+    </div>
+    <div style="font-size:12px;color:var(--text3);margin-top:24px;text-align:center;">
+      <span style="font-family:var(--mono);">[ESC]</span> volta
+    </div>
+  </div>
+
+  <!-- ETAPA 1B: ESCOLHA TRANSPORTADORA (Modo Livre) -->
+  <div id="carreg-setup" style="display:none;height:100%;flex-direction:column;align-items:center;justify-content:center;padding:40px;">
+    <div style="font-size:14px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px;">⚡ Modo Livre · transportadora inicial</div>
+    <div style="font-size:24px;font-weight:600;margin-bottom:30px;text-align:center;">Qual transportadora vai começar?</div>
     <div id="carreg-transp-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;max-width:780px;width:100%;"></div>
     <div style="font-size:12px;color:var(--text3);margin-top:24px;text-align:center;line-height:1.5;">
       A transportadora pode trocar automaticamente quando você bipar etiqueta de outra.<br>
-      <span style="font-family:var(--mono);">[ESC]</span> volta · <span style="font-family:var(--mono);">[F11]</span> tela cheia do navegador
+      <button onclick="voltarSetupModo()" style="background:none;border:none;color:var(--text2);cursor:pointer;text-decoration:underline;font-size:12px;">← Voltar</button>
+    </div>
+  </div>
+
+  <!-- ETAPA 1C: NOVA CARGA -->
+  <div id="carreg-setup-carga" style="display:none;height:100%;flex-direction:column;align-items:center;justify-content:center;padding:40px;">
+    <div style="max-width:520px;width:100%;">
+      <div style="font-size:14px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px;text-align:center;">📦 Nova Carga</div>
+      <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Próximo nº</div>
+      <div id="carreg-numero-proximo" style="font-size:42px;font-weight:700;color:var(--accent);font-family:var(--mono);margin-bottom:24px;">CARGA #—</div>
+
+      <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Transportadora</div>
+      <div id="carreg-carga-transp-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:20px;"></div>
+
+      <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;">Observação (opcional)</div>
+      <input type="text" id="carreg-obs-input" placeholder="Ex: motorista João · placa ABC-1234" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--text);font-size:13px;box-sizing:border-box;margin-bottom:24px;"/>
+
+      <button id="btn-criar-carga" onclick="criarCarga()" disabled style="width:100%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#000;border:none;padding:14px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;opacity:.5;">
+        🚀 Abrir Carga e Começar a Bipar
+      </button>
+      <button onclick="voltarSetupModo()" style="width:100%;margin-top:10px;background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;text-decoration:underline;">← Voltar</button>
     </div>
   </div>
 
@@ -992,13 +1057,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
   <div id="carreg-main" style="display:none;height:100%;flex-direction:column;">
 
     <!-- Header -->
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid var(--border);flex-shrink:0;">
+    <div id="carreg-header-bar" style="display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid var(--border);flex-shrink:0;transition:all .3s;">
       <div style="display:flex;align-items:center;gap:14px;">
-        <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;">🚛 Modo Carregamento</div>
+        <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.1em;" id="carreg-modo-label">🚛 Modo Carregamento</div>
         <div id="carreg-transp-badge" style="background:var(--accent);color:#000;padding:5px 14px;border-radius:6px;font-size:14px;font-weight:600;transition:all .3s ease;"></div>
+        <div id="carreg-carga-info" style="display:none;font-family:var(--mono);font-size:11px;color:var(--text2);border-left:1px solid var(--border);padding-left:14px;line-height:1.4;"></div>
       </div>
       <div style="display:flex;align-items:center;gap:14px;">
         <div id="carreg-relogio" style="font-size:12px;color:var(--text2);font-family:var(--mono);"></div>
+        <button id="btn-finalizar-carga" onclick="finalizarCargaAtual()" style="display:none;background:rgba(255,77,77,.15);border:1px solid var(--danger);color:var(--danger);padding:8px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">🔒 Finalizar Carga</button>
         <button onclick="fecharModoCarregamento()" style="background:transparent;border:1px solid var(--border2);color:var(--text2);padding:6px 14px;border-radius:6px;font-size:11px;cursor:pointer;">✕ Sair (ESC)</button>
       </div>
     </div>
@@ -1307,6 +1374,7 @@ function switchPanel(name, el) {
   if (name==='pesos') carregarPesos();
   if (name==='meta') carregarMetaDia();
   if (name==='ociosidade') carregarOciosidade();
+  if (name==='cargas') carregarCargas();
   if (name==='fechamento') carregarFechamento();
   // Mobile: fecha drawer e sincroniza tab bar
   closeSidebar();
@@ -1857,13 +1925,15 @@ let CARREG = {
   contadores: { ok: 0, dup: 0, ne: 0 },
   historico: [],     // últimas N etiquetas processadas
   ultimoBipe: 0,     // timestamp pra debounce
-  processando: false
+  processando: false,
+  carga: null,       // se modo carga, guarda o objeto da carga
+  transpEscolhida: null // pro fluxo de criação de carga
 };
-const CARREG_DEBOUNCE_MS = 400; // não processa o mesmo bipe < 400ms
+const CARREG_DEBOUNCE_MS = 400;
 const CARREG_HIST_MAX = 12;
 let carregClockTimer = null;
 
-function abrirModoCarregamento(){
+async function abrirModoCarregamento(){
   if (!TRANSPS || TRANSPS.length === 0) {
     toast('Cadastre transportadoras primeiro.','warn');
     return;
@@ -1873,17 +1943,167 @@ function abrirModoCarregamento(){
   CARREG.transportadora = null;
   CARREG.contadores = { ok: 0, dup: 0, ne: 0 };
   CARREG.historico = [];
+  CARREG.carga = null;
+  CARREG.transpEscolhida = null;
 
-  // Mostra setup
+  // Mostra a primeira tela (escolha de modo)
   document.getElementById('carreg-overlay').style.display = 'block';
-  document.getElementById('carreg-setup').style.display = 'flex';
+  document.getElementById('carreg-setup-modo').style.display = 'flex';
+  document.getElementById('carreg-setup').style.display = 'none';
+  document.getElementById('carreg-setup-carga').style.display = 'none';
   document.getElementById('carreg-main').style.display = 'none';
 
-  // Renderiza grid de transportadoras
-  renderCarregSetupGrid();
+  // Verifica se já tem carga aberta
+  try {
+    const aberta = await api('GET', '/api/cargas/aberta');
+    const banner = document.getElementById('carreg-aberta-banner');
+    if (aberta && aberta.id) {
+      const info = document.getElementById('carreg-aberta-info');
+      info.innerHTML = `CARGA #${aberta.numero} · ${aberta.transportadora} · aberta por ${aberta.aberta_por}<br>${aberta.total_bipagens || 0} bipagens até agora`;
+      banner.style.display = 'block';
+      CARREG._aberta_pendente = aberta;
+    } else {
+      banner.style.display = 'none';
+      CARREG._aberta_pendente = null;
+    }
+  } catch(e) {}
 
-  // ESC pra sair
   document.addEventListener('keydown', carregKeyHandler);
+}
+
+// Fluxo modo livre — vai pro grid de transportadoras
+function iniciarModoLivre(){
+  CARREG.carga = null;
+  document.getElementById('carreg-setup-modo').style.display = 'none';
+  document.getElementById('carreg-setup').style.display = 'flex';
+  renderCarregSetupGrid();
+}
+
+// Volta pro setup de modo
+function voltarSetupModo(){
+  document.getElementById('carreg-setup').style.display = 'none';
+  document.getElementById('carreg-setup-carga').style.display = 'none';
+  document.getElementById('carreg-setup-modo').style.display = 'flex';
+}
+
+// Abrir fluxo de nova carga
+async function abrirSetupCarga(){
+  document.getElementById('carreg-setup-modo').style.display = 'none';
+  document.getElementById('carreg-setup-carga').style.display = 'flex';
+  CARREG.transpEscolhida = null;
+  document.getElementById('carreg-obs-input').value = '';
+  document.getElementById('btn-criar-carga').disabled = true;
+  document.getElementById('btn-criar-carga').style.opacity = '0.5';
+
+  // Próximo número (estimativa: pega cargas e usa max+1)
+  try {
+    const cargas = await api('GET', '/api/cargas');
+    const max = cargas.reduce((m,c) => Math.max(m, c.numero), 0);
+    document.getElementById('carreg-numero-proximo').textContent = `CARGA #${String(max+1).padStart(3,'0')}`;
+  } catch(e) {
+    document.getElementById('carreg-numero-proximo').textContent = `CARGA #—`;
+  }
+
+  // Grid de transportadoras
+  const grid = document.getElementById('carreg-carga-transp-grid');
+  const aguardandoMap = {};
+  if (window.COLETAS) {
+    COLETAS.filter(c => !c.coletada_em).forEach(c => {
+      const m = (c.marketplace_nome || '').toLowerCase();
+      let chave = '';
+      if (m.includes('shopee')) chave = 'shopee';
+      else if (m.includes('mercado')) chave = 'mercado';
+      else if (m.includes('amazon')) chave = 'amazon';
+      else if (m.includes('shein')) chave = 'shein';
+      if (chave) aguardandoMap[chave] = (aguardandoMap[chave] || 0) + 1;
+    });
+  }
+  grid.innerHTML = TRANSPS.map(t => {
+    const tlow = t.nome.toLowerCase();
+    let qtd = '';
+    if (tlow.includes('shopee')) qtd = aguardandoMap.shopee || 0;
+    else if (tlow.includes('mercado')) qtd = aguardandoMap.mercado || 0;
+    else if (tlow.includes('amazon')) qtd = aguardandoMap.amazon || 0;
+    else if (tlow.includes('shein')) qtd = aguardandoMap.shein || 0;
+    return `<button onclick="selecionarTranspCarga('${t.nome.replace(/'/g,"\\'")}', this)" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 12px;text-align:center;color:var(--text);font-size:13px;cursor:pointer;font-family:var(--font);">${t.nome}<br>${qtd !== '' ? `<span style="font-size:10px;color:var(--text2);font-weight:400;">${qtd} aguard.</span>` : ''}</button>`;
+  }).join('');
+}
+
+function selecionarTranspCarga(nome, btn){
+  CARREG.transpEscolhida = nome;
+  // Reset borda dos outros
+  document.querySelectorAll('#carreg-carga-transp-grid button').forEach(b => {
+    b.style.border = '1px solid var(--border)';
+    b.style.color = 'var(--text)';
+  });
+  // Destaca o escolhido
+  btn.style.border = '2px solid var(--accent)';
+  btn.style.color = 'var(--accent)';
+  // Habilita o botão de criar
+  const bt = document.getElementById('btn-criar-carga');
+  bt.disabled = false;
+  bt.style.opacity = '1';
+}
+
+async function criarCarga(){
+  if (!CARREG.transpEscolhida) return;
+  const obs = document.getElementById('carreg-obs-input').value.trim();
+  try {
+    const r = await api('POST', '/api/cargas', {
+      transportadora: CARREG.transpEscolhida,
+      observacao: obs
+    });
+    CARREG.carga = r;
+    CARREG.transportadora = r.transportadora;
+    iniciarCarregamento(r.transportadora);
+  } catch(e) {
+    if (e.carga_aberta_id) {
+      toast(e.erro, 'warn', 6000);
+    } else {
+      toast('Erro: ' + (e.erro || e.message), 'err');
+    }
+  }
+}
+
+async function retomarCarga(){
+  const c = CARREG._aberta_pendente;
+  if (!c) return;
+  try {
+    const detalhe = await api('GET', '/api/cargas/' + c.id);
+    CARREG.carga = detalhe;
+    CARREG.transportadora = detalhe.transportadora;
+    CARREG.contadores = {
+      ok: detalhe.total_bipagens || 0,
+      dup: detalhe.total_duplicadas || 0,
+      ne: detalhe.total_nao_encontradas || 0
+    };
+    // Histórico: últimas 12 bipagens
+    CARREG.historico = (detalhe.bipagens || []).slice(-CARREG_HIST_MAX).reverse().map(b => ({
+      etiqueta: b.etiqueta,
+      tipo: 'ok',
+      hora: b.coletada_em ? new Date(b.coletada_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''
+    }));
+    iniciarCarregamento(detalhe.transportadora);
+  } catch(e) {
+    toast('Erro: ' + (e.erro || e.message), 'err');
+  }
+}
+
+async function finalizarCargaAtual(){
+  if (!CARREG.carga) return;
+  if (!confirm(`Finalizar CARGA #${CARREG.carga.numero}?\n\n${CARREG.contadores.ok} bipagens · ${CARREG.contadores.dup} duplicadas · ${CARREG.contadores.ne} não encontradas`)) return;
+  try {
+    const finalizada = await api('POST', '/api/cargas/' + CARREG.carga.id + '/finalizar');
+    toast(`✅ CARGA #${finalizada.numero} finalizada · ${finalizada.total_bipagens} bipagens`, 'ok', 6000);
+    fecharModoCarregamento();
+    // Vai pra aba de histórico de cargas
+    setTimeout(()=>{
+      const nav = Array.from(document.querySelectorAll('.nav-item')).find(n => n.getAttribute('onclick')?.includes('switchPanel(\'cargas\''));
+      if (nav) nav.click();
+    }, 300);
+  } catch(e) {
+    toast('Erro: ' + (e.erro || e.message), 'err');
+  }
 }
 
 function renderCarregSetupGrid(){
@@ -1920,23 +2140,50 @@ function renderCarregSetupGrid(){
 
 function iniciarCarregamento(transportadora){
   CARREG.transportadora = transportadora;
+  // Esconde todas as telas de setup
+  document.getElementById('carreg-setup-modo').style.display = 'none';
   document.getElementById('carreg-setup').style.display = 'none';
+  document.getElementById('carreg-setup-carga').style.display = 'none';
   document.getElementById('carreg-main').style.display = 'flex';
   document.getElementById('carreg-transp-badge').textContent = transportadora;
 
-  // Foca o input invisível
+  // Atualiza header conforme modo (livre ou carga)
+  const cargaInfo = document.getElementById('carreg-carga-info');
+  const btnFinalizar = document.getElementById('btn-finalizar-carga');
+  const modoLabel = document.getElementById('carreg-modo-label');
+  const headerBar = document.getElementById('carreg-header-bar');
+  if (CARREG.carga) {
+    const aberta = new Date(CARREG.carga.aberta_em);
+    cargaInfo.innerHTML = `<strong style="color:var(--accent);">CARGA #${String(CARREG.carga.numero).padStart(3,'0')}</strong> · aberta ${aberta.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}${CARREG.carga.observacao ? ' · ' + CARREG.carga.observacao : ''}`;
+    cargaInfo.style.display = 'block';
+    btnFinalizar.style.display = 'inline-block';
+    modoLabel.textContent = '📦 Modo Carga';
+    headerBar.style.background = 'linear-gradient(90deg, rgba(0,229,160,.08), transparent)';
+  } else {
+    cargaInfo.style.display = 'none';
+    btnFinalizar.style.display = 'none';
+    modoLabel.textContent = '⚡ Modo Livre';
+    headerBar.style.background = '';
+  }
+
+  // Atualiza contadores se estiver retomando carga
+  document.getElementById('carreg-c-ok').textContent = CARREG.contadores.ok;
+  document.getElementById('carreg-c-dup').textContent = CARREG.contadores.dup;
+  document.getElementById('carreg-c-ne').textContent = CARREG.contadores.ne;
+  // Re-render histórico
+  if (CARREG.historico.length > 0) {
+    renderCarregHistorico();
+    document.getElementById('carreg-vazio').style.display = 'none';
+  }
+
   setTimeout(()=>{
     document.getElementById('carreg-input').focus();
   }, 100);
 
-  // Relógio
   atualizarRelogioCarreg();
   carregClockTimer = setInterval(atualizarRelogioCarreg, 1000);
 
-  // Listener pra capturar bipes
   document.getElementById('carreg-input').addEventListener('keydown', handleBipeCarreg);
-
-  // Re-foca o input se perder foco (clique em qualquer lugar)
   document.addEventListener('click', refocarCarreg);
 }
 
@@ -1979,7 +2226,8 @@ async function handleBipeCarreg(e){
   try {
     const r = await api('POST','/api/coletas/carregamento', {
       transportadora: CARREG.transportadora,
-      etiqueta
+      etiqueta,
+      carga_id: CARREG.carga ? CARREG.carga.id : null
     });
 
     // Processa por tipo de resultado
@@ -2155,6 +2403,227 @@ function formatarTempoAtras(dt){
   if (diff < 3600) return `há ${Math.floor(diff/60)}min`;
   if (diff < 86400) return `há ${Math.floor(diff/3600)}h`;
   return `há ${Math.floor(diff/86400)}d`;
+}
+
+// ── HISTÓRICO DE CARGAS ──────────────────────────────────────
+let CARGAS = [];
+
+async function carregarCargas(){
+  const filtroData = document.getElementById('cargas-filtro-data')?.value || '';
+  const filtroTransp = document.getElementById('cargas-filtro-transp')?.value || '';
+  const filtroStatus = document.getElementById('cargas-filtro-status')?.value || '';
+
+  // Popula select de transportadoras se ainda não populou
+  const sel = document.getElementById('cargas-filtro-transp');
+  if (sel && sel.options.length <= 1 && window.TRANSPS) {
+    TRANSPS.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.nome; opt.textContent = t.nome;
+      sel.appendChild(opt);
+    });
+  }
+
+  const cont = document.getElementById('cargas-conteudo');
+  cont.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text3);">⏳ Carregando...</div>`;
+  try {
+    const params = [];
+    if (filtroData) params.push('data=' + filtroData);
+    if (filtroTransp) params.push('transportadora=' + encodeURIComponent(filtroTransp));
+    if (filtroStatus) params.push('status=' + filtroStatus);
+    const qs = params.length ? '?' + params.join('&') : '';
+    CARGAS = await api('GET', '/api/cargas' + qs);
+    renderCargas();
+  } catch(e) {
+    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${e.erro || e.message}</div>`;
+  }
+}
+
+function renderCargas(){
+  const cont = document.getElementById('cargas-conteudo');
+  if (CARGAS.length === 0) {
+    cont.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text3);">Nenhuma carga registrada com esses filtros.</div>`;
+    return;
+  }
+
+  // Stats agregados (visíveis)
+  const abertas = CARGAS.filter(c => c.status === 'aberta').length;
+  const finalizadas = CARGAS.filter(c => c.status === 'finalizada').length;
+  const totalPacotes = CARGAS.reduce((s,c) => s + (c.total_bipagens || 0), 0);
+
+  const stats = `
+    <div class="stats-row" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem;">
+      <div class="stat-card"><div class="stat-label">Total cargas</div><div class="stat-value" style="font-family:var(--mono);">${CARGAS.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Abertas</div><div class="stat-value" style="color:var(--warn);font-family:var(--mono);">${abertas}</div></div>
+      <div class="stat-card"><div class="stat-label">Finalizadas</div><div class="stat-value" style="color:var(--accent);font-family:var(--mono);">${finalizadas}</div></div>
+      <div class="stat-card"><div class="stat-label">Pacotes</div><div class="stat-value" style="font-family:var(--mono);">${totalPacotes.toLocaleString('pt-BR')}</div></div>
+    </div>
+  `;
+
+  const cards = CARGAS.map(c => {
+    const aberta = new Date(c.aberta_em);
+    const fechada = c.fechada_em ? new Date(c.fechada_em) : null;
+    let duracaoStr = '—';
+    if (fechada) {
+      const min = Math.round((fechada - aberta)/60000);
+      duracaoStr = min < 60 ? `${min}min` : `${Math.floor(min/60)}h${min%60}min`;
+    } else {
+      const min = Math.round((Date.now() - aberta.getTime())/60000);
+      duracaoStr = min < 60 ? `${min}min` : `${Math.floor(min/60)}h${min%60}min`;
+    }
+    const statusInfo = {
+      aberta: { cor: 'var(--warn)', bg: 'rgba(255,181,71,.08)', borda: 'var(--warn)', label: '⏳ EM ANDAMENTO' },
+      finalizada: { cor: 'var(--accent)', bg: 'transparent', borda: 'var(--border)', label: '✓ FINALIZADA' },
+      cancelada: { cor: 'var(--danger)', bg: 'transparent', borda: 'var(--border)', label: '✕ CANCELADA' }
+    }[c.status] || { cor: 'var(--text)', bg: 'transparent', borda: 'var(--border)', label: c.status };
+
+    return `
+      <div onclick="abrirDetalheCarga(${c.id})" style="background:${statusInfo.bg};border:1px solid ${statusInfo.borda};border-radius:8px;padding:14px 18px;display:grid;grid-template-columns:80px 1fr 100px 100px 100px;gap:14px;align-items:center;cursor:pointer;transition:all .15s;margin-bottom:8px;" onmouseover="this.style.background='var(--surface)';" onmouseout="this.style.background='${statusInfo.bg}';">
+        <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:${statusInfo.cor};">#${String(c.numero).padStart(3,'0')}</div>
+        <div>
+          <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            ${c.transportadora}
+            <span style="font-size:9px;padding:2px 8px;border-radius:8px;font-weight:600;font-family:var(--mono);background:${statusInfo.bg};color:${statusInfo.cor};border:1px solid ${statusInfo.cor};">${statusInfo.label}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">
+            ${aberta.toLocaleDateString('pt-BR')} · ${aberta.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}${fechada ? ' → ' + fechada.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''} · por ${c.aberta_por}
+            ${c.observacao ? '<br>' + c.observacao : ''}
+          </div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:9px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;">Bipados</div>
+          <div style="font-size:18px;font-weight:600;color:var(--accent);font-family:var(--mono);">${c.total_bipagens || 0}</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:9px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;">Duração</div>
+          <div style="font-size:13px;font-weight:600;font-family:var(--mono);">${duracaoStr}</div>
+        </div>
+        <div style="text-align:right;">
+          <button style="background:transparent;border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:11px;cursor:pointer;">→ Ver</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  cont.innerHTML = stats + '<div>' + cards + '</div>';
+}
+
+async function abrirDetalheCarga(id){
+  const cont = document.getElementById('cargas-conteudo');
+  cont.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text3);">⏳ Carregando...</div>`;
+  try {
+    const c = await api('GET', '/api/cargas/' + id);
+    const aberta = new Date(c.aberta_em);
+    const fechada = c.fechada_em ? new Date(c.fechada_em) : null;
+    let duracaoStr = '—';
+    if (fechada) {
+      const min = Math.round((fechada - aberta)/60000);
+      duracaoStr = min < 60 ? `${min}min` : `${Math.floor(min/60)}h${min%60}min`;
+    }
+    const ritmoSeg = (c.total_bipagens > 0 && fechada)
+      ? Math.round((fechada - aberta)/1000 / c.total_bipagens)
+      : null;
+
+    // Lista bipagens
+    const bipsHtml = (c.bipagens || []).map(b => {
+      const hora = b.coletada_em ? new Date(b.coletada_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+      return `
+        <div style="display:grid;grid-template-columns:1fr 90px 1fr 90px;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;font-family:var(--mono);">
+          <div>${b.etiqueta}</div>
+          <div style="color:var(--text2);">${hora}</div>
+          <div>${b.colaborador_nome || '—'}</div>
+          <div style="color:var(--text2);">${b.marketplace_nome || '—'}</div>
+        </div>
+      `;
+    }).join('');
+
+    cont.innerHTML = `
+      <button onclick="carregarCargas()" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:6px 14px;border-radius:6px;font-size:11px;cursor:pointer;margin-bottom:14px;">← Voltar à lista</button>
+
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size:24px;font-weight:700;margin-bottom:4px;">CARGA #${String(c.numero).padStart(3,'0')}</div>
+            <div style="font-size:13px;color:var(--text2);font-family:var(--mono);">${c.transportadora}${c.observacao ? ' · ' + c.observacao : ''}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">${aberta.toLocaleDateString('pt-BR')}</div>
+            <div style="font-size:13px;font-family:var(--mono);">${aberta.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}${fechada ? ' → ' + fechada.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) + ` <span style="color:var(--accent);">(${duracaoStr})</span>` : ' <span style="color:var(--warn);">(em andamento)</span>'}</div>
+            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">aberta por ${c.aberta_por}${c.fechada_por ? ' · finalizada por ' + c.fechada_por : ''}</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px;">
+          <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" style="color:var(--accent);font-family:var(--mono);">${c.total_bipagens || 0}</div></div>
+          <div class="stat-card"><div class="stat-label">Ritmo</div><div class="stat-value" style="font-family:var(--mono);font-size:18px;">${ritmoSeg ? ritmoSeg + 's/pacote' : '—'}</div></div>
+          <div class="stat-card"><div class="stat-label">Duplicadas</div><div class="stat-value" style="color:var(--danger);font-family:var(--mono);">${c.total_duplicadas || 0}</div></div>
+          <div class="stat-card"><div class="stat-label">Não encontradas</div><div class="stat-value" style="color:var(--warn);font-family:var(--mono);">${c.total_nao_encontradas || 0}</div></div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="copiarEtiquetasCarga(${c.id})" style="background:rgba(0,229,160,.1);border:1px solid var(--accent);color:var(--accent);padding:8px 14px;border-radius:6px;font-size:12px;cursor:pointer;">📋 Copiar etiquetas</button>
+          <button onclick="exportarCargaCSV(${c.id})" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:12px;cursor:pointer;">📥 Baixar CSV</button>
+          ${c.status === 'aberta' && (window.USUARIO_ROLE === 'admin') ? `<button onclick="cancelarCarga(${c.id})" style="background:rgba(255,77,77,.1);border:1px solid var(--danger);color:var(--danger);padding:8px 14px;border-radius:6px;font-size:12px;cursor:pointer;">✕ Cancelar carga</button>` : ''}
+        </div>
+      </div>
+
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <div style="padding:10px 14px;background:var(--surface2);font-size:10px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);letter-spacing:.08em;border-bottom:1px solid var(--border);">
+          📦 Pacotes carregados (${(c.bipagens || []).length})
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 90px 1fr 90px;gap:10px;padding:10px 14px;background:var(--surface2);font-size:10px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);font-weight:600;letter-spacing:.06em;border-bottom:1px solid var(--border);">
+          <div>Etiqueta</div><div>Hora</div><div>Separador</div><div>Marketplace</div>
+        </div>
+        <div style="max-height:500px;overflow-y:auto;">
+          ${bipsHtml || '<div style="padding:30px;text-align:center;color:var(--text3);">Nenhum pacote nesta carga ainda.</div>'}
+        </div>
+      </div>
+    `;
+  } catch(e) {
+    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${e.erro || e.message}</div>`;
+  }
+}
+
+async function copiarEtiquetasCarga(id){
+  try {
+    const c = await api('GET', '/api/cargas/' + id);
+    const lista = (c.bipagens || []).map(b => b.etiqueta).join('\n');
+    await navigator.clipboard.writeText(lista);
+    toast(`✓ ${c.bipagens.length} etiquetas copiadas`, 'ok');
+  } catch(e) {
+    toast('Erro: ' + (e.erro || e.message), 'err');
+  }
+}
+
+async function exportarCargaCSV(id){
+  try {
+    const c = await api('GET', '/api/cargas/' + id);
+    const linhas = [['Etiqueta','Data/Hora','Separador','Marketplace']];
+    (c.bipagens || []).forEach(b => {
+      const dt = b.coletada_em ? new Date(b.coletada_em).toLocaleString('pt-BR') : '';
+      linhas.push([b.etiqueta, dt, b.colaborador_nome || '', b.marketplace_nome || '']);
+    });
+    const csv = linhas.map(l => l.map(v => `"${(v||'').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `carga-${String(c.numero).padStart(3,'0')}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    toast('Erro: ' + (e.erro || e.message), 'err');
+  }
+}
+
+async function cancelarCarga(id){
+  if (!confirm('Cancelar esta carga? As bipagens já feitas continuam coletadas mas serão desvinculadas da carga.')) return;
+  try {
+    await api('DELETE', '/api/cargas/' + id);
+    toast('✓ Carga cancelada', 'ok');
+    carregarCargas();
+  } catch(e) {
+    toast('Erro: ' + (e.erro || e.message), 'err');
+  }
 }
 
 async function desfazerColeta(id){
