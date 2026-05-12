@@ -650,7 +650,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap;gap:10px;">
           <div>
             <div class="page-title" style="margin-bottom:4px;">⏱ Histórico de Ociosidade</div>
-            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Tempo trabalhado = tempo real do lote OU bipes × peso (o menor) · lotes separados por pausa > 10min · peso 1 = 30s · peso 2 = 35s</div>
+            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Trabalhado por lote = MIN(tempo até próxima rajada, bipes × peso) · sobra do cap vira ociosidade · <strong style="color:var(--info);">peso 1 = 30s/bipe</strong> · <strong style="color:#9b6cff;">peso 2 = 35s/bipe</strong></div>
           </div>
           <div style="display:flex;gap:8px;align-items:flex-end;">
             <div class="field"><label>Data</label><input type="date" id="ocio-data" onchange="carregarOciosidade()" style="font-size:13px;"/></div>
@@ -3567,15 +3567,15 @@ function renderOcioResumo(){
 
   // Stats agregados
   const totalTrabalhadoMin = colabs.reduce((s,c)=>s+(c.tempo_trabalhado_min || 0), 0);
+  const totalOciosoMin = colabs.reduce((s,c)=>s+(c.total_ocioso_min || 0), 0);
   const totalBipagens = colabs.reduce((s,c)=>s+(c.total_bipagens || 0), 0);
-  const totalExtraMin = colabs.reduce((s,c)=>s+(c.trabalho_extra_min || 0), 0);
 
   const stats = `
     <div class="stats-row" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem;">
       <div class="stat-card"><div class="stat-label">Colaboradores</div><div class="stat-value" style="font-family:var(--mono);">${colabs.length}</div></div>
       <div class="stat-card"><div class="stat-label">Total bipagens</div><div class="stat-value" style="font-family:var(--mono);">${totalBipagens.toLocaleString('pt-BR')}</div></div>
       <div class="stat-card"><div class="stat-label">Tempo total trabalhado</div><div class="stat-value" style="color:var(--accent);font-family:var(--mono);font-size:18px;">${fmtMin(totalTrabalhadoMin)}</div></div>
-      <div class="stat-card"><div class="stat-label">Trabalho antes 8h</div><div class="stat-value" style="color:var(--info);font-family:var(--mono);font-size:18px;">${totalExtraMin > 0 ? fmtMin(totalExtraMin) : '—'}</div></div>
+      <div class="stat-card"><div class="stat-label">Tempo total ocioso</div><div class="stat-value" style="color:var(--warn);font-family:var(--mono);font-size:18px;">${fmtMin(totalOciosoMin)}</div></div>
     </div>
   `;
 
@@ -3600,27 +3600,35 @@ function renderOcioResumo(){
     if (c.lotes_detalhe && c.lotes_detalhe.length > 0) {
       const itens = [];
       c.lotes_detalhe.forEach((lote, idx) => {
-        const ehReal = lote.tipo_usado === 'real';
-        const corBg = ehReal ? 'rgba(0,229,160,.06)' : 'rgba(255,181,71,.06)';
-        const corBorda = ehReal ? 'var(--accent)' : 'var(--warn)';
-        const corTotalLote = ehReal ? 'var(--accent)' : 'var(--warn)';
-        const corPillBg = ehReal ? 'rgba(0,229,160,.1)' : 'rgba(255,181,71,.15)';
-        const corPillTxt = ehReal ? 'var(--accent)' : 'var(--warn)';
-        const corPillBorda = ehReal ? 'rgba(0,229,160,.3)' : 'rgba(255,181,71,.3)';
-        const iconeUsado = ehReal ? '⚡ usou real' : '🐌 usou cap';
-        const almocoNota = lote.cruzou_almoco ? ' (almoço descontado)' : '';
+        const temOcioso = lote.ocioso_min > 0;
+        // Cores: verde se sem ociosidade, amarelo se teve ociosidade no lote
+        const corBg = temOcioso ? 'rgba(255,181,71,.06)' : 'rgba(0,229,160,.06)';
+        const corBorda = temOcioso ? 'var(--warn)' : 'var(--accent)';
+        const corTotalLote = temOcioso ? 'var(--warn)' : 'var(--accent)';
+        const corPillBg = temOcioso ? 'rgba(255,181,71,.15)' : 'rgba(0,229,160,.1)';
+        const corPillTxt = temOcioso ? 'var(--warn)' : 'var(--accent)';
+        const corPillBorda = temOcioso ? 'rgba(255,181,71,.3)' : 'rgba(0,229,160,.3)';
+        let descricao;
+        if (lote.eh_ultimo) {
+          descricao = `último lote · ${lote.bipes} bipes · cap ${fmtMin(lote.cap_min)}`;
+        } else if (temOcioso) {
+          descricao = `${lote.bipes} bipes · cap ${fmtMin(lote.cap_min)} · <span style="color:var(--warn);font-weight:600;">+${fmtMin(lote.ocioso_min)} ocioso</span>`;
+        } else {
+          descricao = `${lote.bipes} bipes · voltou em ${fmtMin(lote.usado_min)} (cap ${fmtMin(lote.cap_min)})`;
+        }
+        const almocoNota = lote.cruzou_almoco ? ' · almoço descontado' : '';
 
         itens.push(`
           <div style="background:${corBg};border-left:3px solid ${corBorda};border-radius:4px;padding:8px 10px;margin-bottom:4px;">
             <div style="display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11px;">
               <div>
                 <span style="font-size:9px;padding:2px 8px;border-radius:8px;font-weight:600;background:${corPillBg};color:${corPillTxt};border:1px solid ${corPillBorda};">LOTE ${lote.n}</span>
-                <span style="margin-left:6px;color:var(--text);">${lote.inicio_str} → ${lote.fim_str}</span>
+                <span style="margin-left:6px;color:var(--text);">${lote.inicio_str}${lote.fim_str !== lote.inicio_str ? ' → ' + lote.fim_str : ''}</span>
               </div>
               <div style="color:${corTotalLote};font-weight:600;">${fmtMin(lote.usado_min)}</div>
             </div>
             <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:3px;">
-              ${lote.bipes} bipes · real ${fmtMin(lote.tempo_real_min)}${almocoNota} · cap ${fmtMin(lote.cap_min)} <span style="color:${corTotalLote};">${iconeUsado}</span>
+              ${descricao}${almocoNota}
             </div>
           </div>
         `);
@@ -3699,9 +3707,9 @@ function renderOcioResumo(){
           <span style="font-size:9px;padding:2px 8px;border-radius:8px;background:rgba(0,229,160,.15);color:var(--accent);">⭐ ANTES DO EXPEDIENTE</span> Trabalho antes das 8h
         </div>
         <div>
-          <span style="color:var(--accent);">⚡ usou real</span> — bipou rápido, conta tempo real<br>
-          <span style="color:var(--warn);">🐌 usou cap</span> — demorou, conta só o cap (bipes × peso)<br>
-          <span style="color:var(--text3);">PAUSA</span> — intervalo > 10min entre lotes
+          <span style="color:var(--accent);">✓ Sem ociosidade</span> — voltou pegar mais antes do cap acabar<br>
+          <span style="color:var(--warn);">⚠ Com ociosidade</span> — demorou mais que o cap pra voltar<br>
+          <span style="color:var(--text3);">PAUSA</span> — intervalo entre fim do lote e início do próximo
         </div>
       </div>
     </div>
