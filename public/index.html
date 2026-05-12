@@ -650,7 +650,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap;gap:10px;">
           <div>
             <div class="page-title" style="margin-bottom:4px;">⏱ Histórico de Ociosidade</div>
-            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Cada bipe dá 50s de crédito · gap > 30min após o crédito = ociosidade · trabalho antes das 8h é reconhecido · almoço 11h-12h30 não conta</div>
+            <div id="ocio-subtitulo" style="font-size:12px;color:var(--text2);">Tempo trabalhado = tempo real do lote OU bipes × peso (o menor) · lotes separados por pausa > 10min · peso 1 = 30s · peso 2 = 35s</div>
           </div>
           <div style="display:flex;gap:8px;align-items:flex-end;">
             <div class="field"><label>Data</label><input type="date" id="ocio-data" onchange="carregarOciosidade()" style="font-size:13px;"/></div>
@@ -3566,73 +3566,148 @@ function renderOcioResumo(){
   }
 
   // Stats agregados
-  const totalEventos = colabs.reduce((s,c)=>s+c.eventos.length, 0);
-  const totalOciosoMin = colabs.reduce((s,c)=>s+c.total_ocioso_min, 0);
-  const colabsComOcio = colabs.filter(c => c.total_ocioso_min > 0).length;
+  const totalTrabalhadoMin = colabs.reduce((s,c)=>s+(c.tempo_trabalhado_min || 0), 0);
+  const totalBipagens = colabs.reduce((s,c)=>s+(c.total_bipagens || 0), 0);
+  const totalExtraMin = colabs.reduce((s,c)=>s+(c.trabalho_extra_min || 0), 0);
 
   const stats = `
     <div class="stats-row" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem;">
       <div class="stat-card"><div class="stat-label">Colaboradores</div><div class="stat-value" style="font-family:var(--mono);">${colabs.length}</div></div>
-      <div class="stat-card"><div class="stat-label">Com ociosidade</div><div class="stat-value" style="color:var(--warn);font-family:var(--mono);">${colabsComOcio}</div></div>
-      <div class="stat-card"><div class="stat-label">Eventos detectados</div><div class="stat-value" style="color:var(--danger);font-family:var(--mono);">${totalEventos}</div></div>
-      <div class="stat-card"><div class="stat-label">Tempo total ocioso</div><div class="stat-value" style="color:var(--danger);font-family:var(--mono);font-size:18px;">${fmtMin(totalOciosoMin)}</div></div>
+      <div class="stat-card"><div class="stat-label">Total bipagens</div><div class="stat-value" style="font-family:var(--mono);">${totalBipagens.toLocaleString('pt-BR')}</div></div>
+      <div class="stat-card"><div class="stat-label">Tempo total trabalhado</div><div class="stat-value" style="color:var(--accent);font-family:var(--mono);font-size:18px;">${fmtMin(totalTrabalhadoMin)}</div></div>
+      <div class="stat-card"><div class="stat-label">Trabalho antes 8h</div><div class="stat-value" style="color:var(--info);font-family:var(--mono);font-size:18px;">${totalExtraMin > 0 ? fmtMin(totalExtraMin) : '—'}</div></div>
     </div>
   `;
 
   const cards = colabs.map(c => {
     const eventosDetalhe = c.eventos.length === 0
-      ? `<span style="color:var(--accent);font-weight:500;">✓ Sem ociosidade</span>`
+      ? ''
       : c.eventos.map(e =>
           `<div style="font-family:var(--mono);font-size:10px;color:var(--text2);padding:2px 0;">
              <span class="ocio-tipo-pill ${tipoEventoClasse(e.tipo)}" style="font-size:9px;">${tipoEventoLabel(e.tipo)}</span>
-             ${e.inicio_str}–${e.fim_str} <span style="color:var(--danger);font-weight:600;">${fmtMin(e.duracao_min)}</span>
+             ${e.inicio_str}–${e.fim_str} <span style="color:var(--info);font-weight:600;">${fmtMin(e.duracao_min)}</span>
            </div>`
         ).join('');
 
-    const ritmoTxt = c.ritmo_seg_por_pedido
-      ? `${c.ritmo_seg_por_pedido}s/pedido <span style="color:var(--text3);">(ideal ${c.ritmo_ideal_seg}s)</span>`
-      : '—';
+    // Cores de peso
+    const ehP2 = c.peso_categoria === 2;
+    const pesoCorBg = ehP2 ? 'rgba(155,108,255,.15)' : 'rgba(77,159,255,.15)';
+    const pesoCor = ehP2 ? '#9b6cff' : '#4d9fff';
+    const bordaCard = ehP2 ? '#9b6cff' : 'var(--border)';
 
-    const corTotal = c.total_ocioso_min === 0 ? 'var(--accent)' : (c.total_ocioso_min < 60 ? 'var(--warn)' : 'var(--danger)');
+    // Detalhamento dos lotes intercalado com pausas
+    let lotesHTML = '';
+    if (c.lotes_detalhe && c.lotes_detalhe.length > 0) {
+      const itens = [];
+      c.lotes_detalhe.forEach((lote, idx) => {
+        const ehReal = lote.tipo_usado === 'real';
+        const corBg = ehReal ? 'rgba(0,229,160,.06)' : 'rgba(255,181,71,.06)';
+        const corBorda = ehReal ? 'var(--accent)' : 'var(--warn)';
+        const corTotalLote = ehReal ? 'var(--accent)' : 'var(--warn)';
+        const corPillBg = ehReal ? 'rgba(0,229,160,.1)' : 'rgba(255,181,71,.15)';
+        const corPillTxt = ehReal ? 'var(--accent)' : 'var(--warn)';
+        const corPillBorda = ehReal ? 'rgba(0,229,160,.3)' : 'rgba(255,181,71,.3)';
+        const iconeUsado = ehReal ? '⚡ usou real' : '🐌 usou cap';
+        const almocoNota = lote.cruzou_almoco ? ' (almoço descontado)' : '';
+
+        itens.push(`
+          <div style="background:${corBg};border-left:3px solid ${corBorda};border-radius:4px;padding:8px 10px;margin-bottom:4px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11px;">
+              <div>
+                <span style="font-size:9px;padding:2px 8px;border-radius:8px;font-weight:600;background:${corPillBg};color:${corPillTxt};border:1px solid ${corPillBorda};">LOTE ${lote.n}</span>
+                <span style="margin-left:6px;color:var(--text);">${lote.inicio_str} → ${lote.fim_str}</span>
+              </div>
+              <div style="color:${corTotalLote};font-weight:600;">${fmtMin(lote.usado_min)}</div>
+            </div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text2);margin-top:3px;">
+              ${lote.bipes} bipes · real ${fmtMin(lote.tempo_real_min)}${almocoNota} · cap ${fmtMin(lote.cap_min)} <span style="color:${corTotalLote};">${iconeUsado}</span>
+            </div>
+          </div>
+        `);
+
+        // Pausa após esse lote
+        const pausa = c.pausas_detalhe && c.pausas_detalhe.find(p => p.apos_lote === lote.n);
+        if (pausa) {
+          itens.push(`
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 12px;font-family:var(--mono);font-size:10px;color:var(--text3);">
+              <div>
+                <span style="font-size:9px;padding:2px 8px;border-radius:8px;font-weight:600;background:rgba(136,136,136,.1);color:var(--text2);border:1px solid rgba(136,136,136,.3);">PAUSA</span>
+                <span style="margin-left:6px;">${pausa.inicio_str} → ${pausa.fim_str}</span>
+              </div>
+              <div>${fmtMin(pausa.duracao_min)}</div>
+            </div>
+          `);
+        }
+      });
+      lotesHTML = `
+        <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:8px;">
+          <div style="font-size:9px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;font-weight:600;">📦 LOTES &amp; INTERVALOS</div>
+          ${itens.join('')}
+        </div>
+      `;
+    }
 
     return `
-      <div class="ocio-card">
+      <div class="ocio-card" style="border-color:${bordaCard};">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
           <div>
-            <div style="font-size:14px;font-weight:600;">${c.colaborador_nome}</div>
+            <div style="font-size:14px;font-weight:600;">
+              ${c.colaborador_nome}
+              <span style="margin-left:6px;font-size:9px;padding:2px 8px;border-radius:8px;font-weight:600;font-family:var(--mono);background:${pesoCorBg};color:${pesoCor};border:1px solid ${pesoCor}66;">PESO ${c.peso_categoria || 1}</span>
+            </div>
             <div style="font-size:10px;color:var(--text2);font-family:var(--mono);">
-              ${c.total_bipagens} bipagens · ${c.primeiro_bipe || '—'}–${c.ultimo_bipe || '—'}
+              ${c.total_bipagens} bipagens · ${c.primeiro_bipe || '—'}–${c.ultimo_bipe || '—'} · ${c.atividade_nome || ''}
             </div>
           </div>
           <div style="text-align:right;">
-            <div style="font-size:9px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);">Ocioso</div>
-            <div style="font-size:18px;font-weight:600;color:${corTotal};font-family:var(--mono);">${c.total_ocioso_min === 0 ? '0' : fmtMin(c.total_ocioso_min)}</div>
+            <div style="font-size:9px;color:var(--text2);text-transform:uppercase;font-family:var(--mono);">Trabalhado</div>
+            <div style="font-size:22px;font-weight:700;color:var(--accent);font-family:var(--mono);">${fmtMin(c.tempo_trabalhado_min || 0)}</div>
           </div>
         </div>
         <div style="background:var(--surface2);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-family:var(--mono);font-size:10px;line-height:1.7;">
           <div style="display:flex;justify-content:space-between;">
-            <span style="color:var(--text2);">Trabalhado:</span>
-            <span style="color:var(--accent);font-weight:600;">${fmtMin(c.tempo_trabalhado_min || 0)}</span>
+            <span style="color:var(--text2);">Cap por bipe:</span>
+            <span style="color:${pesoCor};font-weight:600;">${c.seg_por_bipe || 30}s (peso ${c.peso_categoria || 1})</span>
           </div>
+          ${c.qtd_lotes > 0 ? `
+            <div style="display:flex;justify-content:space-between;">
+              <span style="color:var(--text2);">Lotes:</span>
+              <span>${c.qtd_lotes} (pausa > 10min separa)</span>
+            </div>
+          ` : ''}
           ${c.trabalho_extra_min > 0 ? `
             <div style="display:flex;justify-content:space-between;">
-              <span style="color:var(--info);">+ Antes 8h (extra):</span>
+              <span style="color:var(--info);">+ Antes 8h:</span>
               <span style="color:var(--info);font-weight:600;">${fmtMin(c.trabalho_extra_min)} (${c.bipes_antes_expediente} bipes)</span>
             </div>
           ` : ''}
-          <div style="display:flex;justify-content:space-between;">
-            <span style="color:var(--text2);">Ritmo:</span>
-            <span>${c.ritmo_seg_por_pedido ? `${c.ritmo_seg_por_pedido}s/pedido` : '—'} <span style="color:var(--text3);">(ideal ${c.ritmo_ideal_seg}s)</span></span>
-          </div>
         </div>
-        <div style="border-top:1px solid var(--border);padding-top:8px;">
-          ${eventosDetalhe}
-        </div>
+        ${lotesHTML}
+        ${eventosDetalhe ? `<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;">${eventosDetalhe}</div>` : ''}
       </div>
     `;
   }).join('');
 
-  return stats + `<div class="ocio-grid">${cards}</div>`;
+  // Legenda
+  const legenda = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-top:1rem;">
+      <div style="font-size:11px;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;font-weight:600;">Legenda</div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;font-size:11px;line-height:1.6;">
+        <div>
+          <span style="font-size:9px;padding:2px 8px;border-radius:8px;background:rgba(77,159,255,.15);color:#4d9fff;border:1px solid #4d9fff66;">PESO 1</span> Separação Normal · cap 30s/bipe<br>
+          <span style="font-size:9px;padding:2px 8px;border-radius:8px;background:rgba(155,108,255,.15);color:#9b6cff;border:1px solid #9b6cff66;">PESO 2</span> KIT, Galpão · cap 35s/bipe<br>
+          <span style="font-size:9px;padding:2px 8px;border-radius:8px;background:rgba(0,229,160,.15);color:var(--accent);">⭐ ANTES DO EXPEDIENTE</span> Trabalho antes das 8h
+        </div>
+        <div>
+          <span style="color:var(--accent);">⚡ usou real</span> — bipou rápido, conta tempo real<br>
+          <span style="color:var(--warn);">🐌 usou cap</span> — demorou, conta só o cap (bipes × peso)<br>
+          <span style="color:var(--text3);">PAUSA</span> — intervalo > 10min entre lotes
+        </div>
+      </div>
+    </div>
+  `;
+
+  return stats + `<div class="ocio-grid">${cards}</div>` + legenda;
 }
 
 function renderOcioTabela(){
