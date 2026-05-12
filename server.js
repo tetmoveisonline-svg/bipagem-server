@@ -1602,10 +1602,15 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
     const HORA_FIM = 17 * 60;            // 1020 = 17h00
     const ALMOCO_INICIO = 11 * 60;       // 660 = 11h00
     const ALMOCO_FIM = 12 * 60 + 30;     // 750 = 12h30
-    const GAP_MINIMO = 30;                // gap >= 30min APÓS o crédito é ociosidade
+    const GAP_MINIMO = 30;                // gap >= 30min entre bipes consecutivos = ociosidade
     const RITMO_IDEAL_SEG = 70;           // 70s/pedido = referência informativa
-    const CREDITO_POR_BIPE_SEG = 50;      // cada bipe dá 50s de crédito de "executando"
-    const CREDITO_POR_BIPE_MIN = CREDITO_POR_BIPE_SEG / 60; // ~0.833 min
+
+    // Tempo médio por bipe segundo o peso da atividade do colaborador no mês
+    // peso 1 → 30s · peso 2 → 35s
+    const SEG_POR_BIPE_PESO1 = 30;
+    const SEG_POR_BIPE_PESO2 = 35;
+    const BONUS_PESO2_MIN = 0;
+    const EXPEDIENTE_LIQUIDO_MIN = (HORA_FIM - HORA_INICIO) - (ALMOCO_FIM - ALMOCO_INICIO); // 540 - 90 = 450min (7h30)
 
     // Busca todas bipagens do dia, agrupadas por colaborador
     const r = await pool.query(`
@@ -1615,6 +1620,21 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
       WHERE TO_CHAR(criado_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD') = $1
       ORDER BY colaborador_id, criado_em
     `, [dataParam]);
+
+    // Busca pesos do mês (atividade de cada colaborador)
+    const mesAtual = dataParam.slice(0,7); // YYYY-MM
+    const pesosR = await pool.query(`
+      SELECT ca.colaborador_id, a.peso, a.nome AS atividade_nome
+      FROM colaborador_atividade ca
+      JOIN atividades a ON a.id = ca.atividade_id
+      WHERE ca.mes = $1
+    `, [mesAtual]);
+    const pesoColabs = {};
+    const atividadeColabs = {};
+    pesosR.rows.forEach(row => {
+      pesoColabs[row.colaborador_id] = parseFloat(row.peso);
+      atividadeColabs[row.colaborador_id] = row.atividade_nome;
+    });
 
     // Agrupa por colaborador
     const porColab = {};
@@ -1642,9 +1662,9 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
       let totalOcioso = 0;
       const bps = colab.bipagens;
 
-      // ── REGRA SIMPLES: gap conta entre QUALQUER 2 bipes consecutivos ──
-      // Bipes antes das 8h são reconhecidos como trabalho extra mas NÃO criam evento "atraso"
-      // O gap entre o último bipe e o próximo (se demorar) é detectado normalmente
+      // ── NOVA REGRA: SEM GAPS ──
+      // O tempo trabalhado é calculado por bipes × peso (não depende de gaps)
+      // Só mantemos o destaque informativo de "trabalho antes do expediente"
 
       // Identifica bipes antes do expediente (informativo)
       const bipesAntesExp = bps.filter(b => b.minutos_dia < HORA_INICIO);
@@ -1665,79 +1685,73 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         });
       }
 
-      // INÍCIO TARDIO: só se NÃO houve bipe antes das 8h
-      if (bipesAntesExp.length === 0 && bps.length > 0 && bps[0].minutos_dia > HORA_INICIO + 5) {
-        const fim = bps[0].minutos_dia;
-        const inicio = HORA_INICIO;
-        const gap = calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
-        if (gap >= GAP_MINIMO) {
-          eventos.push({
-            tipo: 'inicio_atrasado',
-            inicio_min: inicio,
-            fim_min: fim,
-            duracao_min: Math.round(gap),
-            inicio_str: minToHHMM(inicio),
-            fim_str: minToHHMM(fim)
-          });
-          totalOcioso += gap;
-        }
-      }
+      // ── NOVA FÓRMULA POR LOTES ──────────────────
+      // Detecta lotes (separados por gap > 10min) e usa MIN(tempo_real, bipes×peso) por lote.
+      const peso = pesoColabs[colab.colaborador_id] || 1;
+      const ehPeso2 = peso > 1.5;
+      const segPorBipe = ehPeso2 ? SEG_POR_BIPE_PESO2 : SEG_POR_BIPE_PESO1;
+      const GAP_NOVO_LOTE_MIN = 10;
 
-      // GAPS entre bipes consecutivos (independente de horário)
-      // O último bipe dá crédito de 50s; depois disso, gap > 30min = ociosidade
-      for (let i = 1; i < bps.length; i++) {
-        const inicio = bps[i-1].minutos_dia;
-        const fim = bps[i].minutos_dia;
-        const gapBruto = calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
-        const gap = Math.max(0, gapBruto - CREDITO_POR_BIPE_MIN);
-        if (gap >= GAP_MINIMO) {
-          eventos.push({
-            tipo: 'gap',
-            inicio_min: inicio,
-            fim_min: fim,
-            duracao_min: Math.round(gap),
-            inicio_str: minToHHMM(inicio),
-            fim_str: minToHHMM(fim)
-          });
-          totalOcioso += gap;
-        }
-      }
-
-      // Gap entre último bipe e fim do expediente (saiu cedo / sem bipar atual)
-      if (bps.length > 0 && bps[bps.length-1].minutos_dia < HORA_FIM - 5) {
-        const hoje = new Date().toISOString().slice(0,10);
-        const agoraMin = (() => {
-          const d = new Date();
-          return d.getHours()*60 + d.getMinutes();
-        })();
-        const ultimoMin = bps[bps.length-1].minutos_dia;
-        const fimEfetivo = (dataParam < hoje) ? HORA_FIM : Math.min(HORA_FIM, agoraMin);
-        const gapBruto = calcularGapEfetivo(ultimoMin, fimEfetivo, ALMOCO_INICIO, ALMOCO_FIM);
-        const gap = Math.max(0, gapBruto - CREDITO_POR_BIPE_MIN);
-        if (gap >= GAP_MINIMO) {
-          eventos.push({
-            tipo: dataParam < hoje ? 'saiu_cedo' : 'sem_bipar_atual',
-            inicio_min: ultimoMin,
-            fim_min: fimEfetivo,
-            duracao_min: Math.round(gap),
-            inicio_str: minToHHMM(ultimoMin),
-            fim_str: minToHHMM(fimEfetivo)
-          });
-          totalOcioso += gap;
-        }
-      }
-
-      // Cálculo do tempo trabalhado e ritmo
       let tempoTrabalhadoMin = 0;
+      let qtdLotes = 0;
+      const lotesDetalhe = [];  // detalhamento pro frontend
+      const pausasDetalhe = []; // pausas entre lotes
       if (bps.length > 0) {
-        const presencaInicio = bps[0].minutos_dia;
-        const presencaFim = Math.min(HORA_FIM, bps[bps.length-1].minutos_dia);
-        const presencaTotal = calcularGapEfetivo(presencaInicio, presencaFim, ALMOCO_INICIO, ALMOCO_FIM);
-        const ociosidadeInterna = eventos
-          .filter(e => e.tipo === 'gap')
-          .reduce((s,e) => s + e.duracao_min, 0);
-        tempoTrabalhadoMin = Math.max(0, presencaTotal - ociosidadeInterna);
+        // Agrupa bipes em lotes (gap > 10min = novo lote)
+        const lotes = [[bps[0]]];
+        for (let i = 1; i < bps.length; i++) {
+          const gap = calcularGapEfetivo(bps[i-1].minutos_dia, bps[i].minutos_dia, ALMOCO_INICIO, ALMOCO_FIM);
+          if (gap > GAP_NOVO_LOTE_MIN) {
+            lotes.push([bps[i]]);
+          } else {
+            lotes[lotes.length-1].push(bps[i]);
+          }
+        }
+        qtdLotes = lotes.length;
+
+        // Calcula tempo de cada lote + registra pausas
+        lotes.forEach((lote, idx) => {
+          const inicio = lote[0].minutos_dia;
+          const fim = lote[lote.length-1].minutos_dia;
+          const cap = (lote.length * segPorBipe) / 60;
+          const tempoReal = lote.length === 1
+            ? cap
+            : calcularGapEfetivo(inicio, fim, ALMOCO_INICIO, ALMOCO_FIM);
+          const usado = Math.min(tempoReal, cap);
+          tempoTrabalhadoMin += usado;
+
+          // Detecta se o tempo real cruzou o almoço
+          const cruzouAlmoco = (fim > ALMOCO_INICIO && inicio < ALMOCO_FIM);
+
+          lotesDetalhe.push({
+            n: idx + 1,
+            inicio_str: minToHHMM(inicio),
+            fim_str: minToHHMM(fim),
+            bipes: lote.length,
+            tempo_real_min: Math.round(tempoReal),
+            cap_min: Math.round(cap),
+            usado_min: Math.round(usado),
+            tipo_usado: usado === tempoReal ? 'real' : 'cap',
+            cruzou_almoco: cruzouAlmoco
+          });
+
+          // Pausa pro próximo lote
+          if (idx < lotes.length - 1) {
+            const proxInicio = lotes[idx+1][0].minutos_dia;
+            const duracaoPausa = calcularGapEfetivo(fim, proxInicio, ALMOCO_INICIO, ALMOCO_FIM);
+            pausasDetalhe.push({
+              apos_lote: idx + 1,
+              inicio_str: minToHHMM(fim),
+              fim_str: minToHHMM(proxInicio),
+              duracao_min: Math.round(duracaoPausa)
+            });
+          }
+        });
       }
+      // Limita ao expediente líquido (7h30)
+      tempoTrabalhadoMin = Math.min(tempoTrabalhadoMin, EXPEDIENTE_LIQUIDO_MIN);
+
+      // Ritmo médio (informativo): tempo trabalhado / num bipes
       const ritmoSeg = (bps.length > 0 && tempoTrabalhadoMin > 0)
         ? Math.round((tempoTrabalhadoMin*60)/bps.length)
         : null;
@@ -1751,6 +1765,13 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         eventos,
         total_ocioso_min: Math.round(totalOcioso),
         tempo_trabalhado_min: Math.round(tempoTrabalhadoMin),
+        peso: peso,
+        peso_categoria: ehPeso2 ? 2 : 1,
+        atividade_nome: atividadeColabs[colab.colaborador_id] || (ehPeso2 ? 'KIT' : 'Separação Normal'),
+        seg_por_bipe: segPorBipe,
+        qtd_lotes: qtdLotes,
+        lotes_detalhe: lotesDetalhe,
+        pausas_detalhe: pausasDetalhe,
         ritmo_seg_por_pedido: ritmoSeg,
         ritmo_ideal_seg: RITMO_IDEAL_SEG,
         primeiro_bipe: bps.length > 0 ? minToHHMM(bps[0].minutos_dia) : null,
@@ -1758,7 +1779,7 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
       });
     });
 
-    resultado.sort((a,b)=>b.total_ocioso_min - a.total_ocioso_min);
+    resultado.sort((a,b)=>b.tempo_trabalhado_min - a.tempo_trabalhado_min);
 
     res.json({
       data: dataParam,
@@ -1769,8 +1790,7 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
         almoco_inicio: '11:00',
         almoco_fim: '12:30',
         gap_minimo_min: GAP_MINIMO,
-        ritmo_ideal_seg: RITMO_IDEAL_SEG,
-        credito_por_bipe_seg: CREDITO_POR_BIPE_SEG
+        ritmo_ideal_seg: RITMO_IDEAL_SEG
       }
     });
   } catch (e) {
