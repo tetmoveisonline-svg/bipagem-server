@@ -450,12 +450,15 @@ app.delete('/api/usuarios/:id', autenticar, apenasAdmin, async (req, res) => {
 // ── Estado inicial ───────────────────────────────────────────
 app.get('/api/estado', autenticar, async (req, res) => {
   try {
+    // PERFORMANCE: limita carga inicial a últimos 30 dias.
+    // Quem precisa ver mais antigo usa filtro de data no Histórico (carrega sob demanda).
+    const DIAS_RECENTES = 30;
     const [colaboradores, marketplaces, bipagens, pendencias, retornos] = await Promise.all([
       pool.query(`SELECT id, nome, criado_em FROM colaboradores ORDER BY nome ASC`),
       pool.query(`SELECT id, nome, cor, criado_em FROM marketplaces ORDER BY nome ASC`),
-      pool.query(`SELECT * FROM bipagens ORDER BY criado_em DESC`),
-      pool.query(`SELECT * FROM pendencias ORDER BY criado_em DESC`),
-      pool.query(`SELECT * FROM retornos ORDER BY criado_em DESC`)
+      pool.query(`SELECT * FROM bipagens WHERE criado_em >= NOW() - INTERVAL '${DIAS_RECENTES} days' ORDER BY criado_em DESC`),
+      pool.query(`SELECT * FROM pendencias WHERE criado_em >= NOW() - INTERVAL '${DIAS_RECENTES} days' ORDER BY criado_em DESC`),
+      pool.query(`SELECT * FROM retornos WHERE criado_em >= NOW() - INTERVAL '${DIAS_RECENTES} days' ORDER BY criado_em DESC`)
     ]);
 
     res.json({
@@ -463,7 +466,8 @@ app.get('/api/estado', autenticar, async (req, res) => {
       marketplaces: marketplaces.rows.map(toISO),
       bipagens: bipagens.rows.map(toISO),
       pendencias: pendencias.rows.map(toISO),
-      retornos: retornos.rows.map(toISO)
+      retornos: retornos.rows.map(toISO),
+      _meta: { dias_carregados: DIAS_RECENTES }
     });
   } catch (e) {
     console.error(e);
@@ -689,7 +693,7 @@ if (de && ate) {
   where.push(`criado_em < ($${vals.length}::date + interval '1 day')`);
 }
 
-    const sql = `SELECT * FROM bipagens ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY criado_em DESC`;
+    const sql = `SELECT * FROM bipagens ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY criado_em DESC LIMIT 5000`;
     const result = await pool.query(sql, vals);
     res.json(result.rows.map(toISO));
   } catch (e) {
