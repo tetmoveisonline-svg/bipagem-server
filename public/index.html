@@ -736,6 +736,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
             <tbody id="hist-tbody"><tr><td colspan="7" class="empty-state">Nenhum registro.</td></tr></tbody>
           </table>
         </div></div>
+        <!-- PAGINAÇÃO -->
+        <div id="hist-paginacao" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:8px 12px;background:var(--surface2,#1a1a1a);border-radius:6px;font-size:12px;font-family:var(--mono,monospace);flex-wrap:wrap;gap:8px;">
+          <div id="hist-pag-info" style="color:var(--text3,#888);">—</div>
+          <div id="hist-pag-controles" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"></div>
+        </div>
       </div>
       <!-- USUÁRIOS -->
       <div class="panel" id="panel-usuarios">
@@ -4301,20 +4306,51 @@ async function delRet(id) {
 }
 
 // ── Histórico ─────────────────────────────────────────────────
+// ── HISTÓRICO PAGINADO ─────────────────────────────────────────
+const HIST_POR_PAGINA = 30;
+let HIST_PAGINA = 1;
+let HIST_FILTROS_CACHE = ''; // pra detectar se filtros mudaram
+
 function renderHistorico() {
   const fC=document.getElementById('hist-colab').value;
   const fM=document.getElementById('hist-mkt').value;
   const fD=document.getElementById('hist-de').value;
   const fA=document.getElementById('hist-ate').value;
+
+  // Se os filtros mudaram, volta pra página 1
+  const filtrosAtuais = `${fC}|${fM}|${fD}|${fA}`;
+  if (filtrosAtuais !== HIST_FILTROS_CACHE) {
+    HIST_PAGINA = 1;
+    HIST_FILTROS_CACHE = filtrosAtuais;
+  }
+
   let data=[...S.bipagens];
   if(fC) data=data.filter(b=>b.colaborador_nome===fC);
   if(fM) data=data.filter(b=>b.marketplace_nome===fM);
   if(fD) data=data.filter(b=>new Date(b.criado_em)>=new Date(fD));
   if(fA) data=data.filter(b=>new Date(b.criado_em)<=new Date(fA+'T23:59:59'));
-  document.getElementById('hist-label').textContent=data.length+' registro'+(data.length!==1?'s':'');
+
+  const total = data.length;
+  const totalPaginas = Math.max(1, Math.ceil(total / HIST_POR_PAGINA));
+  if (HIST_PAGINA > totalPaginas) HIST_PAGINA = totalPaginas;
+  if (HIST_PAGINA < 1) HIST_PAGINA = 1;
+
+  document.getElementById('hist-label').textContent = total + ' registro' + (total!==1?'s':'');
+
   const tb=document.getElementById('hist-tbody');
-  if(!data.length){tb.innerHTML='<tr><td colspan="7" class="empty-state">Nenhum registro.</td></tr>';return;}
-  tb.innerHTML=data.map(b=>`<tr>
+  if(!total){
+    tb.innerHTML='<tr><td colspan="7" class="empty-state">Nenhum registro.</td></tr>';
+    document.getElementById('hist-pag-info').textContent = '—';
+    document.getElementById('hist-pag-controles').innerHTML = '';
+    return;
+  }
+
+  // Fatia só os registros da página atual
+  const inicio = (HIST_PAGINA - 1) * HIST_POR_PAGINA;
+  const fim = Math.min(inicio + HIST_POR_PAGINA, total);
+  const pagina = data.slice(inicio, fim);
+
+  tb.innerHTML=pagina.map(b=>`<tr>
     <td class="mono">${b.data}</td><td class="mono">${b.hora}</td>
     <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${b.etiqueta}</td>
     <td><span style="color:${getMktColor(b.marketplace_nome)};font-size:12px;font-weight:600;">${b.marketplace_nome}</span></td>
@@ -4322,6 +4358,55 @@ function renderHistorico() {
     <td style="font-size:11px;color:var(--text3);">${b.usuario_nome||'—'}</td>
     <td><button class="btn btn-danger-outline btn-sm" onclick="delBipHist('${b.id}')">✕</button></td>
   </tr>`).join('');
+
+  renderHistPaginacao(total, totalPaginas, inicio, fim);
+}
+
+function renderHistPaginacao(total, totalPaginas, inicio, fim) {
+  const info = document.getElementById('hist-pag-info');
+  const ctrls = document.getElementById('hist-pag-controles');
+
+  info.textContent = `Mostrando ${inicio+1}–${fim} de ${total}`;
+
+  // Botões: ‹ primeira  ‹ anterior  [páginas]  próxima ›  última ›
+  // Mostra até 5 páginas próximas da atual
+  let paginasVisiveis = [];
+  const win = 2; // 2 antes + 2 depois
+  let start = Math.max(1, HIST_PAGINA - win);
+  let end = Math.min(totalPaginas, HIST_PAGINA + win);
+  // Se sobra espaço no início ou fim, estica
+  while (end - start < win*2 && (start > 1 || end < totalPaginas)) {
+    if (start > 1) start--;
+    else if (end < totalPaginas) end++;
+    else break;
+  }
+  for (let i = start; i <= end; i++) paginasVisiveis.push(i);
+
+  const btn = (label, page, opts={}) => {
+    const dis = opts.disabled ? 'opacity:.35;pointer-events:none;' : 'cursor:pointer;';
+    const ativo = opts.active ? 'background:var(--accent,#00e5a0);color:#000;border-color:var(--accent,#00e5a0);font-weight:700;' : 'background:var(--surface,#0f0f0f);color:var(--text2,#aaa);';
+    return `<button onclick="irParaPaginaHist(${page})" style="border:1px solid var(--border,#2e2e2e);${ativo}${dis}padding:4px 10px;border-radius:4px;font-family:var(--mono,monospace);font-size:11px;min-width:32px;">${label}</button>`;
+  };
+
+  let html = '';
+  html += btn('« início', 1, { disabled: HIST_PAGINA === 1 });
+  html += btn('‹ ant', HIST_PAGINA - 1, { disabled: HIST_PAGINA === 1 });
+  if (start > 1) html += '<span style="color:var(--text3,#666);padding:0 2px;">…</span>';
+  paginasVisiveis.forEach(p => {
+    html += btn(p, p, { active: p === HIST_PAGINA });
+  });
+  if (end < totalPaginas) html += '<span style="color:var(--text3,#666);padding:0 2px;">…</span>';
+  html += btn('próx ›', HIST_PAGINA + 1, { disabled: HIST_PAGINA === totalPaginas });
+  html += btn('fim »', totalPaginas, { disabled: HIST_PAGINA === totalPaginas });
+
+  ctrls.innerHTML = html;
+}
+
+function irParaPaginaHist(p) {
+  HIST_PAGINA = p;
+  renderHistorico();
+  // Rola pro topo da tabela
+  document.getElementById('hist-tbody').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function limparFiltros(){['hist-colab','hist-mkt','hist-de','hist-ate'].forEach(id=>document.getElementById(id).value='');renderHistorico();}
