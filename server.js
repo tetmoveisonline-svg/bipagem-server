@@ -450,15 +450,21 @@ app.delete('/api/usuarios/:id', autenticar, apenasAdmin, async (req, res) => {
 // ── Estado inicial ───────────────────────────────────────────
 app.get('/api/estado', autenticar, async (req, res) => {
   try {
-    // PERFORMANCE: limita carga inicial a últimos 30 dias.
-    // Quem precisa ver mais antigo usa filtro de data no Histórico (carrega sob demanda).
-    const DIAS_RECENTES = 30;
+    // PERFORMANCE: estado inicial agora carrega só bipagens de hoje (TZ Brasil).
+    // Histórico, Produtividade com filtros e Coleta carregam sob demanda via endpoints próprios.
+    // Pendências/retornos continuam com janela de 30 dias (volume baixo, não trava).
+    const DIAS_PEND_RET = 30;
     const [colaboradores, marketplaces, bipagens, pendencias, retornos] = await Promise.all([
       pool.query(`SELECT id, nome, criado_em FROM colaboradores ORDER BY nome ASC`),
       pool.query(`SELECT id, nome, cor, criado_em FROM marketplaces ORDER BY nome ASC`),
-      pool.query(`SELECT * FROM bipagens WHERE criado_em >= NOW() - INTERVAL '${DIAS_RECENTES} days' ORDER BY criado_em DESC`),
-      pool.query(`SELECT * FROM pendencias WHERE criado_em >= NOW() - INTERVAL '${DIAS_RECENTES} days' ORDER BY criado_em DESC`),
-      pool.query(`SELECT * FROM retornos WHERE criado_em >= NOW() - INTERVAL '${DIAS_RECENTES} days' ORDER BY criado_em DESC`)
+      pool.query(`
+        SELECT * FROM bipagens
+        WHERE (criado_em AT TIME ZONE 'America/Sao_Paulo')::date
+            = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+        ORDER BY criado_em DESC
+      `),
+      pool.query(`SELECT * FROM pendencias WHERE criado_em >= NOW() - INTERVAL '${DIAS_PEND_RET} days' ORDER BY criado_em DESC`),
+      pool.query(`SELECT * FROM retornos WHERE criado_em >= NOW() - INTERVAL '${DIAS_PEND_RET} days' ORDER BY criado_em DESC`)
     ]);
 
     res.json({
@@ -467,11 +473,104 @@ app.get('/api/estado', autenticar, async (req, res) => {
       bipagens: bipagens.rows.map(toISO),
       pendencias: pendencias.rows.map(toISO),
       retornos: retornos.rows.map(toISO),
-      _meta: { dias_carregados: DIAS_RECENTES }
+      _meta: { bipagens_escopo: 'hoje', dias_pend_ret: DIAS_PEND_RET }
     });
   } catch (e) {
     console.error(e);
     res.status(500).json({ erro: 'Erro ao carregar estado inicial.' });
+  }
+});
+
+// ── BIPAGENS (paginado, com filtros server-side) ─────────────
+// Query params:
+//   page (default 1), limit (default 30, max 200)
+//   colab (nome), mkt (nome), de (YYYY-MM-DD), ate (YYYY-MM-DD)
+//   all=1 → ignora paginação (uso interno do export CSV; cap em 100k)
+app.get('/api/bipagens', autenticar, async (req, res) => {
+  try {
+    const page  = Math.max(1, toInt(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(1, toInt(req.query.limit) || 30));
+    const offset = (page - 1) * limit;
+    const all = req.query.all === '1';
+
+    const where = [];
+    const params = [];
+    let i = 1;
+
+    if (req.query.colab) { where.push(`colaborador_nome = $${i++}`); params.push(String(req.query.colab)); }
+    if (req.query.mkt)   { where.push(`marketplace_nome = $${i++}`); params.push(String(req.query.mkt));   }
+    if (req.query.de)    { where.push(`(criado_em AT TIME ZONE 'America/Sao_Paulo')::date >= $${i++}::date`); params.push(String(req.query.de)); }
+    if (req.query.ate)   { where.push(`(criado_em AT TIME ZONE 'America/Sao_Paulo')::date <= $${i++}::date`); params.push(String(req.query.ate)); }
+
+    const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const totalQ = await pool.query(`SELECT COUNT(*)::int AS total FROM bipagens ${whereSQL}`, params);
+    const total = totalQ.rows[0].total;
+
+    let rowsQ;
+    if (all) {
+      // export — cap em 100k pra não detonar a memória
+      rowsQ = await pool.query(
+        `SELECT * FROM bipagens ${whereSQL} ORDER BY criado_em DESC LIMIT 100000`,
+        params
+      );
+    } else {
+      rowsQ = await pool.query(
+        `SELECT * FROM bipagens ${whereSQL} ORDER BY criado_em DESC LIMIT $${i++} OFFSET $${i++}`,
+        [...params, limit, offset]
+      );
+    }
+
+    res.json({
+      rows: rowsQ.rows.map(toISO),
+      total,
+      page,
+      pages: Math.max(1, Math.ceil(total / limit)),
+      limit
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar bipagens.' });
+  }
+});
+
+// ── PRODUTIVIDADE agregada (server-side) ─────────────────────
+// Retorna contagem por colaborador num período.
+// Params: dia=YYYY-MM-DD (prioridade) OU mes=YYYY-MM. Sem nada = hoje.
+app.get('/api/bipagens/produtividade', autenticar, async (req, res) => {
+  try {
+    const where = [];
+    const params = [];
+    let i = 1;
+
+    if (req.query.dia) {
+      where.push(`(criado_em AT TIME ZONE 'America/Sao_Paulo')::date = $${i++}::date`);
+      params.push(String(req.query.dia));
+    } else if (req.query.mes) {
+      where.push(`to_char(criado_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM') = $${i++}`);
+      params.push(String(req.query.mes));
+    } else {
+      where.push(`(criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date`);
+    }
+
+    const whereSQL = `WHERE ${where.join(' AND ')}`;
+
+    const totalQ = await pool.query(`SELECT COUNT(*)::int AS total FROM bipagens ${whereSQL}`, params);
+    const porColabQ = await pool.query(
+      `SELECT colaborador_id AS id, COALESCE(colaborador_nome, 'SEM NOME') AS nome, COUNT(*)::int AS qtd
+       FROM bipagens ${whereSQL}
+       GROUP BY colaborador_id, colaborador_nome
+       ORDER BY qtd DESC, nome ASC`,
+      params
+    );
+
+    res.json({
+      total: totalQ.rows[0].total,
+      por_colaborador: porColabQ.rows
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao calcular produtividade.' });
   }
 });
 
@@ -542,163 +641,6 @@ app.delete('/api/marketplaces/:id', autenticar, apenasAdmin, async (req, res) =>
   } catch (e) {
     console.error(e);
     res.status(500).json({ erro: 'Erro ao remover marketplace.' });
-  }
-});
-// ── Produtividade ────────────────────────────────────────────
-app.get('/api/produtividade', autenticar, async (req, res) => {
-  try {
-    const { dia, mes } = req.query;
-
-    let where = [];
-    let valores = [];
-
-    if (dia) {
-      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 1}`);
-      valores.push(dia);
-    } else if (mes) {
-      const [ano, mesNum] = mes.split('-');
-
-      where.push(`
-        EXTRACT(YEAR FROM criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 1}
-        AND EXTRACT(MONTH FROM criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 2}
-      `);
-
-      valores.push(ano, mesNum);
-    } else {
-      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE`);
-    }
-
-    const whereSQL = where.length ? 'WHERE ' + where.join(' AND ') : '';
-
-    const result = await pool.query(`
-      SELECT colaborador_nome, COUNT(*)::int AS total
-      FROM bipagens
-      ${whereSQL}
-      GROUP BY colaborador_nome
-      ORDER BY total DESC
-    `, valores);
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ erro: 'Erro ao buscar produtividade' });
-  }
-});
-// ── Produtividade ────────────────────────────────────────────
-app.get('/api/produtividade', autenticar, async (req, res) => {
-  try {
-    const { dia, mes } = req.query;
-
-    let where = [];
-    let valores = [];
-
-    if (dia) {
-      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 1}`);
-      valores.push(dia);
-    } else if (mes) {
-      const [ano, mesNum] = mes.split('-');
-
-      where.push(`
-        EXTRACT(YEAR FROM criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 1}
-        AND EXTRACT(MONTH FROM criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 2}
-      `);
-
-      valores.push(ano, mesNum);
-    } else {
-      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE`);
-    }
-
-    const whereSQL = where.length ? 'WHERE ' + where.join(' AND ') : '';
-
-    const result = await pool.query(`
-      SELECT colaborador_nome, COUNT(*)::int AS total
-      FROM bipagens
-      ${whereSQL}
-      GROUP BY colaborador_nome
-      ORDER BY total DESC
-    `, valores);
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ erro: 'Erro ao buscar produtividade' });
-  }
-});
-// ── Bipagens ─────────────────────────────────────────────────
-app.get('/api/produtividade', autenticar, async (req, res) => {
-  try {
-    const { dia, mes } = req.query;
-
-    let where = [];
-    let valores = [];
-
-    if (dia) {
-      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 1}`);
-      valores.push(dia);
-    } else if (mes) {
-      const [ano, mesNum] = mes.split('-');
-
-      where.push(`
-        EXTRACT(YEAR FROM criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 1}
-        AND EXTRACT(MONTH FROM criado_em AT TIME ZONE 'America/Sao_Paulo') = $${valores.length + 2}
-      `);
-
-      valores.push(ano, mesNum);
-    } else {
-      where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = CURRENT_DATE`);
-    }
-
-    const whereSQL = where.length ? 'WHERE ' + where.join(' AND ') : '';
-
-    const result = await pool.query(`
-      SELECT colaborador_nome, COUNT(*)::int AS total
-      FROM bipagens
-      ${whereSQL}
-      GROUP BY colaborador_nome
-      ORDER BY total DESC
-    `, valores);
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ erro: 'Erro ao buscar produtividade' });
-  }
-});
-app.get('/api/bipagens', autenticar, async (req, res) => {
-  try {
-    const { colab, mkt, de, ate } = req.query;
-    const where = [];
-    const vals = [];
-
-    if (colab) {
-      vals.push(colab);
-      where.push(`colaborador_nome = $${vals.length}`);
-    }
-    if (mkt) {
-      vals.push(mkt);
-      where.push(`marketplace_nome = $${vals.length}`);
-    }
-    if (de && !ate) {
-  // filtro por DIA
-  vals.push(de);
-  where.push(`DATE(criado_em AT TIME ZONE 'America/Sao_Paulo') = $${vals.length}`);
-}
-
-if (de && ate) {
-  // filtro por PERÍODO (ex: mês)
-  vals.push(de);
-  where.push(`criado_em >= $${vals.length}::date`);
-
-  vals.push(ate);
-  where.push(`criado_em < ($${vals.length}::date + interval '1 day')`);
-}
-
-    const sql = `SELECT * FROM bipagens ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY criado_em DESC LIMIT 5000`;
-    const result = await pool.query(sql, vals);
-    res.json(result.rows.map(toISO));
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ erro: 'Erro ao carregar bipagens.' });
   }
 });
 
