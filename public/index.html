@@ -1317,16 +1317,21 @@ function executarRender(grupo){
 function handleWS(event, data) {
   switch(event) {
     case 'bipagem:add':
-      if (!S.bipagens.find(b=>b.id===data.id)) {
+      // Só insere no estado se for bipagem de hoje (S.bipagens só guarda hoje).
+      // Bipagens de outros dias (raríssimo, mas possível) ficam só no servidor — Histórico recarrega sob demanda.
+      if (isToday(data.criado_em) && !S.bipagens.find(b=>b.id===data.id)) {
         S.bipagens.unshift(data);
         agendarRender('bipagem');
         if (data.usuario_id !== usuarioLogado?.id)
           toast(`↓ ${data.etiqueta} — ${data.marketplace_nome} (${data.colaborador_nome})`, 'info', 2500);
       }
+      // Se Histórico estiver aberto, recarrega a página atual (a bipagem nova pode entrar nele)
+      if (painelAtivo('historico')) renderHistorico();
       break;
     case 'bipagem:del':
       S.bipagens = S.bipagens.filter(b=>b.id!==data.id);
       agendarRender('bipagem');
+      if (painelAtivo('historico')) renderHistorico();
       break;
     case 'pendencia:add':
       if (!S.pendencias.find(p=>p.id===data.id)) { S.pendencias.unshift(data); agendarRender('pendencias'); } break;
@@ -4065,7 +4070,8 @@ function limparScan() {
 
 function renderBipagem() {
   const colabId = selectedColabId;
-  const hoje    = S.bipagens.filter(b=>isToday(b.criado_em));
+  // S.bipagens já contém só bipagens de hoje (vem assim de /api/estado)
+  const hoje    = S.bipagens;
   const hojeC   = colabId ? hoje.filter(b=>b.colaborador_id===colabId) : hoje;
 
   // Stats
@@ -4124,40 +4130,49 @@ function dataLocalISO(iso) {
   return `${y}-${m}-${day}`;
 }
 
-function getProdutividadeFiltrada(){
+// Retorna { total, lista, escopo } onde escopo é 'hoje' (local) ou 'remoto' (server)
+async function getProdutividadeFiltrada(){
   const diaEl = document.getElementById('filtroDia');
   const mesEl = document.getElementById('filtroMes');
 
   const dia = diaEl ? diaEl.value : '';
   const mes = mesEl ? mesEl.value : '';
 
-  let listaBase = [...S.bipagens];
+  const hojeISO = dataLocalISO(new Date().toISOString());
+  const ehHoje = !dia && !mes;
+  const ehHojeExplicito = dia === hojeISO;
 
-  if (dia) {
-    listaBase = listaBase.filter(b => dataLocalISO(b.criado_em) === dia);
-  } else if (mes) {
-    listaBase = listaBase.filter(b => dataLocalISO(b.criado_em).startsWith(mes));
+  let listaPorColab; // [{id, nome, qtd}]
+  let total;
+
+  if (ehHoje || ehHojeExplicito) {
+    // Caminho rápido: agrega S.bipagens (que já é só hoje)
+    const mapa = new Map();
+    S.bipagens.forEach(b => {
+      const key = b.colaborador_id || b.colaborador_nome;
+      const atual = mapa.get(key) || { id: b.colaborador_id, nome: b.colaborador_nome || 'SEM NOME', qtd: 0 };
+      atual.qtd++;
+      mapa.set(key, atual);
+    });
+    listaPorColab = [...mapa.values()];
+    total = S.bipagens.length;
   } else {
-    const hoje = dataLocalISO(new Date().toISOString());
-    listaBase = listaBase.filter(b => dataLocalISO(b.criado_em) === hoje);
+    // Caminho remoto: busca agregação no servidor
+    const params = new URLSearchParams();
+    if (dia) params.set('dia', dia);
+    else if (mes) params.set('mes', mes);
+
+    try {
+      const resp = await api('GET', '/api/bipagens/produtividade?' + params.toString());
+      listaPorColab = resp.por_colaborador || [];
+      total = resp.total || 0;
+    } catch (e) {
+      console.error('Erro produtividade:', e);
+      return { total: 0, lista: [], erro: e.erro || e.message || 'falha ao carregar' };
+    }
   }
 
-  const mapa = new Map();
-
-  listaBase.forEach(b => {
-    const key = b.colaborador_id || b.colaborador_nome;
-    const atual = mapa.get(key) || {
-      id: b.colaborador_id,
-      nome: b.colaborador_nome || 'SEM NOME',
-      qtd: 0
-    };
-    atual.qtd++;
-    mapa.set(key, atual);
-  });
-
-  const total = listaBase.length;
-
-  const lista = [...mapa.values()]
+  const lista = listaPorColab
     .sort((a,b) => b.qtd - a.qtd || a.nome.localeCompare(b.nome))
     .map((x,i) => ({
       ...x,
@@ -4182,11 +4197,11 @@ function limparFiltroProdutividade() {
   renderProdutividade();
 }
 
-function renderProdutividade(){
+async function renderProdutividade(){
   const totalEl = document.getElementById('prod-total');
   if (!totalEl) return;
 
-  const { total, lista } = getProdutividadeFiltrada();
+  const { total, lista, erro } = await getProdutividadeFiltrada();
 
   totalEl.textContent = total;
   document.getElementById('nav-prod').textContent = total;
@@ -4198,6 +4213,13 @@ function renderProdutividade(){
   `;
 
   const pie = document.getElementById('prod-pie');
+
+  if (erro) {
+    pie.style.background = 'var(--surface2)';
+    document.getElementById('prod-legend').innerHTML = `<div class="empty-state" style="padding:1rem;color:var(--danger);">Erro: ${erro}</div>`;
+    document.getElementById('prod-ranking').innerHTML = '';
+    return;
+  }
 
   if (!total) {
     pie.style.background = 'var(--surface2)';
@@ -4306,16 +4328,17 @@ async function delRet(id) {
 }
 
 // ── Histórico ─────────────────────────────────────────────────
-// ── HISTÓRICO PAGINADO ─────────────────────────────────────────
+// ── HISTÓRICO PAGINADO (server-side) ─────────────────────────
 const HIST_POR_PAGINA = 30;
 let HIST_PAGINA = 1;
 let HIST_FILTROS_CACHE = ''; // pra detectar se filtros mudaram
+let HIST_REQ_TOKEN = 0;      // pra cancelar respostas atrasadas
 
-function renderHistorico() {
-  const fC=document.getElementById('hist-colab').value;
-  const fM=document.getElementById('hist-mkt').value;
-  const fD=document.getElementById('hist-de').value;
-  const fA=document.getElementById('hist-ate').value;
+async function renderHistorico() {
+  const fC = document.getElementById('hist-colab').value;
+  const fM = document.getElementById('hist-mkt').value;
+  const fD = document.getElementById('hist-de').value;
+  const fA = document.getElementById('hist-ate').value;
 
   // Se os filtros mudaram, volta pra página 1
   const filtrosAtuais = `${fC}|${fM}|${fD}|${fA}`;
@@ -4324,38 +4347,66 @@ function renderHistorico() {
     HIST_FILTROS_CACHE = filtrosAtuais;
   }
 
-  let data=[...S.bipagens];
-  if(fC) data=data.filter(b=>b.colaborador_nome===fC);
-  if(fM) data=data.filter(b=>b.marketplace_nome===fM);
-  if(fD) data=data.filter(b=>new Date(b.criado_em)>=new Date(fD));
-  if(fA) data=data.filter(b=>new Date(b.criado_em)<=new Date(fA+'T23:59:59'));
+  const tb = document.getElementById('hist-tbody');
+  const label = document.getElementById('hist-label');
+  const info = document.getElementById('hist-pag-info');
+  const ctrls = document.getElementById('hist-pag-controles');
 
-  const total = data.length;
-  const totalPaginas = Math.max(1, Math.ceil(total / HIST_POR_PAGINA));
-  if (HIST_PAGINA > totalPaginas) HIST_PAGINA = totalPaginas;
-  if (HIST_PAGINA < 1) HIST_PAGINA = 1;
+  // Loading state
+  label.textContent = '…';
+  info.textContent = 'carregando…';
 
-  document.getElementById('hist-label').textContent = total + ' registro' + (total!==1?'s':'');
+  // Token pra evitar race condition (cliques rápidos em "próxima")
+  const meuToken = ++HIST_REQ_TOKEN;
 
-  const tb=document.getElementById('hist-tbody');
-  if(!total){
-    tb.innerHTML='<tr><td colspan="7" class="empty-state">Nenhum registro.</td></tr>';
-    document.getElementById('hist-pag-info').textContent = '—';
-    document.getElementById('hist-pag-controles').innerHTML = '';
+  // Monta query string
+  const params = new URLSearchParams();
+  params.set('page', HIST_PAGINA);
+  params.set('limit', HIST_POR_PAGINA);
+  if (fC) params.set('colab', fC);
+  if (fM) params.set('mkt', fM);
+  if (fD) params.set('de', fD);
+  if (fA) params.set('ate', fA);
+
+  let resp;
+  try {
+    resp = await api('GET', '/api/bipagens?' + params.toString());
+  } catch (e) {
+    if (meuToken !== HIST_REQ_TOKEN) return; // resposta velha, ignora
+    tb.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--danger);">Erro ao carregar: ${e.erro || e.message || 'falha de rede'}</td></tr>`;
+    info.textContent = '—';
+    ctrls.innerHTML = '';
     return;
   }
 
-  // Fatia só os registros da página atual
-  const inicio = (HIST_PAGINA - 1) * HIST_POR_PAGINA;
-  const fim = Math.min(inicio + HIST_POR_PAGINA, total);
-  const pagina = data.slice(inicio, fim);
+  if (meuToken !== HIST_REQ_TOKEN) return; // resposta velha, descarta
 
-  tb.innerHTML=pagina.map(b=>`<tr>
+  const total = resp.total;
+  const totalPaginas = Math.max(1, resp.pages);
+  if (HIST_PAGINA > totalPaginas) {
+    // pediu página fora do range — volta pro fim e re-busca
+    HIST_PAGINA = totalPaginas;
+    return renderHistorico();
+  }
+
+  label.textContent = total + ' registro' + (total !== 1 ? 's' : '');
+
+  if (!total) {
+    tb.innerHTML = '<tr><td colspan="7" class="empty-state">Nenhum registro.</td></tr>';
+    info.textContent = '—';
+    ctrls.innerHTML = '';
+    return;
+  }
+
+  const inicio = (HIST_PAGINA - 1) * HIST_POR_PAGINA;
+  const fim = inicio + resp.rows.length;
+
+  tb.innerHTML = resp.rows.map(b => `<tr>
     <td class="mono">${b.data}</td><td class="mono">${b.hora}</td>
     <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${b.etiqueta}</td>
     <td><span style="color:${getMktColor(b.marketplace_nome)};font-size:12px;font-weight:600;">${b.marketplace_nome}</span></td>
     <td>${b.colaborador_nome}</td>
-    <td style="font-size:11px;color:var(--text3);">${b.usuario_nome||'—'}</td>
+    <td style="font-size:11px;color:var(--text3);">${b.usuario_nome || '—'}</td>
     <td><button class="btn btn-danger-outline btn-sm" onclick="delBipHist('${b.id}')">✕</button></td>
   </tr>`).join('');
 
@@ -4409,13 +4460,21 @@ function irParaPaginaHist(p) {
   document.getElementById('hist-tbody').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function limparFiltros(){['hist-colab','hist-mkt','hist-de','hist-ate'].forEach(id=>document.getElementById(id).value='');renderHistorico();}
+function limparFiltros(){
+  ['hist-colab','hist-mkt','hist-de','hist-ate'].forEach(id=>document.getElementById(id).value='');
+  renderHistorico();
+}
 
 async function delBipHist(id){
   if(!confirm('Remover?'))return;
   await api('DELETE',`/api/bipagens/${id}`);
-  S.bipagens=S.bipagens.filter(b=>b.id!==id);
-  renderBipagem();renderHistorico();renderProdutividade(); updateCounts();
+  // Remove de S.bipagens se estiver lá (pode ser de hoje)
+  S.bipagens = S.bipagens.filter(b=>b.id!==id);
+  // Recarrega telas
+  renderBipagem();
+  renderHistorico();
+  renderProdutividade();
+  updateCounts();
 }
 
 // ── Usuários ──────────────────────────────────────────────────
@@ -4492,24 +4551,66 @@ async function addMkt(){const nome=document.getElementById('mkt-nome').value.tri
 function renderMktConfig(){const g=document.getElementById('mkt-config-grid');if(!S.marketplaces.length){g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum marketplace.</div>';return;}g.innerHTML=S.marketplaces.map(m=>`<div class="config-chip"><div class="config-chip-left"><div class="config-chip-dot" style="background:${m.cor}"></div><span style="font-size:13px;font-weight:500;">${m.nome}</span></div><button class="config-chip-del" onclick="delMkt(${m.id})">✕</button></div>`).join('');}
 async function delMkt(id){if(!confirm('Remover?'))return;await api('DELETE',`/api/marketplaces/${id}`);S.marketplaces=S.marketplaces.filter(m=>m.id!==id);populateSelects();renderMktConfig();renderBipagem();}
 // ── Export CSV ────────────────────────────────────────────────
-function exportCSV(tipo){
-  let header,rows,filename;
-  if(tipo==='pendencias'){header=['Data','Hora','Etiqueta','Responsável','Trânsito','Pendência'];rows=S.pendencias.map(p=>[p.data,p.hora,p.etiqueta,p.colaborador_nome,p.transito,p.obs]);filename='pendencias_'+new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')+'.csv';}
-  else if(tipo==='retornos'){header=['Data','Hora','Etiqueta','Motivo'];rows=S.retornos.map(r=>[r.data,r.hora,r.etiqueta,r.motivo]);filename='retornos_'+new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')+'.csv';}
-  else{const fC=document.getElementById('hist-colab').value;const fM=document.getElementById('hist-mkt').value;let data=[...S.bipagens];if(fC)data=data.filter(b=>b.colaborador_nome===fC);if(fM)data=data.filter(b=>b.marketplace_nome===fM);header=['Data','Hora','Etiqueta','Marketplace','Colaborador','Usuário'];rows=data.map(b=>[b.data,b.hora,b.etiqueta,b.marketplace_nome,b.colaborador_nome,b.usuario_nome]);filename='historico_'+new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')+'.csv';}
-  const csv=[header,...rows].map(r=>r.map(v=>'"'+String(v||'').replace(/"/g,'""')+'"').join(',')).join('\n');
-  const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);a.download=filename;a.click();
+async function exportCSV(tipo){
+  let header, rows, filename;
+
+  if (tipo === 'pendencias') {
+    header = ['Data','Hora','Etiqueta','Responsável','Trânsito','Pendência'];
+    rows = S.pendencias.map(p => [p.data,p.hora,p.etiqueta,p.colaborador_nome,p.transito,p.obs]);
+    filename = 'pendencias_' + new Date().toLocaleDateString('pt-BR').replace(/\//g,'-') + '.csv';
+  }
+  else if (tipo === 'retornos') {
+    header = ['Data','Hora','Etiqueta','Motivo'];
+    rows = S.retornos.map(r => [r.data,r.hora,r.etiqueta,r.motivo]);
+    filename = 'retornos_' + new Date().toLocaleDateString('pt-BR').replace(/\//g,'-') + '.csv';
+  }
+  else {
+    // Histórico: busca tudo do servidor (respeita os filtros atuais)
+    const fC = document.getElementById('hist-colab').value;
+    const fM = document.getElementById('hist-mkt').value;
+    const fD = document.getElementById('hist-de').value;
+    const fA = document.getElementById('hist-ate').value;
+
+    const params = new URLSearchParams();
+    params.set('all', '1');
+    if (fC) params.set('colab', fC);
+    if (fM) params.set('mkt', fM);
+    if (fD) params.set('de', fD);
+    if (fA) params.set('ate', fA);
+
+    toast('Gerando CSV…', 'info', 2000);
+    let resp;
+    try {
+      resp = await api('GET', '/api/bipagens?' + params.toString());
+    } catch (e) {
+      toast('Erro ao exportar: ' + (e.erro || e.message || 'falha'), 'err');
+      return;
+    }
+
+    header = ['Data','Hora','Etiqueta','Marketplace','Colaborador','Usuário'];
+    rows = resp.rows.map(b => [b.data,b.hora,b.etiqueta,b.marketplace_nome,b.colaborador_nome,b.usuario_nome]);
+    filename = 'historico_' + new Date().toLocaleDateString('pt-BR').replace(/\//g,'-') + '.csv';
+  }
+
+  const csv = [header, ...rows]
+    .map(r => r.map(v => '"' + String(v||'').replace(/"/g,'""') + '"').join(','))
+    .join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csv);
+  a.download = filename;
+  a.click();
   toast('CSV exportado.','ok');
 }
 
 // ── Counts ────────────────────────────────────────────────────
 function updateCounts(){
-  const hoje=S.bipagens.filter(b=>isToday(b.criado_em));
-  const c=selectedColabId?hoje.filter(b=>b.colaborador_id===selectedColabId):hoje;
-  document.getElementById('nav-bip').textContent=c.length;
-  document.getElementById('nav-prod').textContent=hoje.length;
-  document.getElementById('nav-pend').textContent=S.pendencias.length;
-  document.getElementById('nav-ret').textContent=S.retornos.length;
+  // S.bipagens já contém só bipagens de hoje (carregadas via /api/estado)
+  const hoje = S.bipagens;
+  const c = selectedColabId ? hoje.filter(b => b.colaborador_id === selectedColabId) : hoje;
+  document.getElementById('nav-bip').textContent = c.length;
+  document.getElementById('nav-prod').textContent = hoje.length;
+  document.getElementById('nav-pend').textContent = S.pendencias.length;
+  document.getElementById('nav-ret').textContent = S.retornos.length;
 }
 
 function renderAll(){renderBipagem();renderProdutividade();renderPendencias();renderRetornos();renderColabs();renderMktConfig();renderColorPicks();updateCounts();}
