@@ -871,7 +871,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <select id="col-filter-transp" onchange="renderColetas()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r);font-size:12px;display:none;">
             <option value="">Todas transportadoras</option>
           </select>
+          <select id="col-filter-separador" onchange="filtrarPorSeparador(this.value)" title="Filtrar por separador" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r);font-size:12px;margin-left:auto;">
+            <option value="">Todos os separadores</option>
+          </select>
         </div>
+        <div id="col-sep-ativo" style="display:none;align-items:center;gap:9px;background:rgba(0,229,160,.06);border:1px solid rgba(0,229,160,.35);border-radius:var(--r);padding:8px 12px;margin-bottom:1rem;"></div>
 
         <!-- Tabela -->
         <div id="col-tabela"></div>
@@ -1302,6 +1306,7 @@ function executarRender(grupo){
   else if (grupo === 'coleta') {
     if (painelAtivo('coleta')) {
       renderMktPills();
+      renderSeparadorFiltro();
       renderColetas();
     }
     atualizarStatColeta();
@@ -1559,6 +1564,7 @@ let COLETAS = [];
 let TRANSPS = [];
 let abaColetaAtiva = 'aguardando'; // 'aguardando' | 'coletado'
 let filtroMktAtivo = ''; // '' = todos · ou nome do marketplace
+let filtroSepAtivo = ''; // '' = todos · nome do separador · ou '__sem__'
 
 // Limites de tempo (em segundos) — < 5h verde, 1d+ amarelo, 2d+ vermelho
 const TEMPO_VERDE_MAX = 5 * 3600;        // 18000s = 5h
@@ -1607,6 +1613,7 @@ function populateTranspSelect(){
 
 function populateColetaFilters(){
   renderMktPills();
+  renderSeparadorFiltro();
 }
 
 function renderMktPills(){
@@ -1654,9 +1661,61 @@ function filtrarPorMkt(nome){
   renderColetas();
 }
 
+// ── FILTRO POR SEPARADOR ──────────────────────────────────
+const SEP_VAZIO = '__sem__'; // etiquetas sem separador informado
+
+function renderSeparadorFiltro(){
+  const sel = document.getElementById('col-filter-separador');
+  if (!sel) return;
+
+  // Conta por separador de acordo com a aba ativa (mesma lógica das pílulas de marketplace)
+  const contagem = {};
+  let total = 0, semSep = 0;
+  COLETAS.forEach(c => {
+    const ehAguard = !c.coletada_em;
+    if (abaColetaAtiva === 'aguardando' && !ehAguard) return;
+    if (abaColetaAtiva === 'coletado' && ehAguard) return;
+    const nome = (c.colaborador_nome || '').trim();
+    if (!nome) { semSep++; }
+    else contagem[nome] = (contagem[nome] || 0) + 1;
+    total++;
+  });
+
+  const nomes = Object.keys(contagem).sort((a,b) => contagem[b] - contagem[a]);
+  let html = `<option value="">Todos os separadores (${total.toLocaleString('pt-BR')})</option>`;
+  nomes.forEach(n => {
+    html += `<option value="${n.replace(/"/g,'&quot;')}">${n} (${contagem[n].toLocaleString('pt-BR')})</option>`;
+  });
+  if (semSep > 0) html += `<option value="${SEP_VAZIO}">— sem separador — (${semSep.toLocaleString('pt-BR')})</option>`;
+
+  sel.innerHTML = html;
+  // mantém a seleção se o separador ainda existir na aba atual
+  const aindaExiste = filtroSepAtivo === '' || filtroSepAtivo === SEP_VAZIO
+    ? (filtroSepAtivo !== SEP_VAZIO || semSep > 0)
+    : nomes.includes(filtroSepAtivo);
+  if (!aindaExiste) filtroSepAtivo = '';
+  sel.value = filtroSepAtivo;
+  sel.style.borderColor = filtroSepAtivo ? 'var(--accent)' : 'var(--border)';
+}
+
+function filtrarPorSeparador(nome){
+  filtroSepAtivo = nome || '';
+  renderColetas();
+  const sel = document.getElementById('col-filter-separador');
+  if (sel) sel.style.borderColor = filtroSepAtivo ? 'var(--accent)' : 'var(--border)';
+}
+
+function limparFiltroSeparador(){
+  filtroSepAtivo = '';
+  const sel = document.getElementById('col-filter-separador');
+  if (sel) { sel.value = ''; sel.style.borderColor = 'var(--border)'; }
+  renderColetas();
+}
+
 function trocarAbaColeta(aba){
   abaColetaAtiva = aba;
   filtroMktAtivo = ''; // reseta filtro ao trocar de aba
+  filtroSepAtivo = '';
   const tA = document.getElementById('col-tab-aguard');
   const tH = document.getElementById('col-tab-hist');
   const transpFilter = document.getElementById('col-filter-transp');
@@ -1670,6 +1729,7 @@ function trocarAbaColeta(aba){
     transpFilter.style.display = 'inline-block';
   }
   renderMktPills();
+  renderSeparadorFiltro();
   renderColetas();
 }
 
@@ -1685,8 +1745,28 @@ function renderColetas(){
     if (abaColetaAtiva === 'coletado' && !c.coletada_em) return false;
     if (filtroMkt && c.marketplace_nome !== filtroMkt) return false;
     if (filtroTransp && c.transportadora !== filtroTransp) return false;
+    if (filtroSepAtivo) {
+      const sep = (c.colaborador_nome || '').trim();
+      if (filtroSepAtivo === SEP_VAZIO) { if (sep) return false; }
+      else if (sep !== filtroSepAtivo) return false;
+    }
     return true;
   });
+
+  // Faixa de filtro ativo por separador
+  const faixa = document.getElementById('col-sep-ativo');
+  if (faixa) {
+    if (filtroSepAtivo) {
+      const rotulo = filtroSepAtivo === SEP_VAZIO ? 'sem separador' : filtroSepAtivo;
+      faixa.style.display = 'flex';
+      faixa.innerHTML = `
+        <span style="font-size:12px;color:var(--accent);">Filtrando por separador: <b>${rotulo}</b> · <b style="font-family:var(--mono,monospace);">${lista.length.toLocaleString('pt-BR')}</b> etiqueta(s)</span>
+        <button class="btn" onclick="limparFiltroSeparador()" style="margin-left:auto;background:var(--surface2);font-size:11px;padding:4px 11px;">Limpar</button>`;
+    } else {
+      faixa.style.display = 'none';
+      faixa.innerHTML = '';
+    }
+  }
 
   // Recalcular tempo parado para itens aguardando (em tempo real ao re-renderizar)
   if (abaColetaAtiva === 'aguardando') {
