@@ -187,6 +187,10 @@ async function initDB() {
   await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS transportadora TEXT`);
   await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS coletada_por TEXT`);
   await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS carga_id INTEGER`);
+  await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS cancelada BOOLEAN DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS cancelada_em TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS cancelada_por TEXT`);
+  await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS cancelamento_motivo TEXT`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_coletada_em ON bipagens(coletada_em)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_carga_id ON bipagens(carga_id)`);
 
@@ -811,6 +815,50 @@ app.get('/api/coletas', autenticar, async (req, res) => {
 });
 
 // Registrar coleta (transportadora bipou)
+// PATCH /api/bipagens/:id/cancelar — marca a etiqueta como cancelada (qualquer usuário logado).
+// A etiqueta CONTINUA na lista de aguardando, só deixa de contar como atrasada.
+app.patch('/api/bipagens/:id/cancelar', autenticar, async (req, res) => {
+  try {
+    const motivo = (req.body.motivo || '').toString().trim() || null;
+    const r = await pool.query(`
+      UPDATE bipagens
+      SET cancelada = TRUE, cancelada_em = NOW(), cancelada_por = $1, cancelamento_motivo = $2
+      WHERE id = $3 AND coletada_em IS NULL
+      RETURNING *, EXTRACT(EPOCH FROM (NOW() - criado_em)) AS segundos_parado
+    `, [req.usuario.nome, motivo, req.params.id]);
+    if (r.rowCount === 0) {
+      return res.status(400).json({ erro: 'Etiqueta não encontrada ou já coletada.' });
+    }
+    const atualizado = { ...toISO(r.rows[0]), segundos_parado: parseInt(r.rows[0].segundos_parado || 0) };
+    broadcast('bipagem:cancelada', atualizado);
+    console.log(`CANCELADA: ${r.rows[0].etiqueta} por ${req.usuario.nome}${motivo ? ' — ' + motivo : ''}`);
+    res.json(atualizado);
+  } catch (e) {
+    console.error('PATCH cancelar:', e.message);
+    res.status(500).json({ erro: 'Erro ao cancelar etiqueta.' });
+  }
+});
+
+// PATCH /api/bipagens/:id/reabrir — desfaz o cancelamento (volta ao fluxo normal).
+app.patch('/api/bipagens/:id/reabrir', autenticar, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      UPDATE bipagens
+      SET cancelada = FALSE, cancelada_em = NULL, cancelada_por = NULL, cancelamento_motivo = NULL
+      WHERE id = $1
+      RETURNING *, EXTRACT(EPOCH FROM (NOW() - criado_em)) AS segundos_parado
+    `, [req.params.id]);
+    if (r.rowCount === 0) return res.status(404).json({ erro: 'Etiqueta não encontrada.' });
+    const atualizado = { ...toISO(r.rows[0]), segundos_parado: parseInt(r.rows[0].segundos_parado || 0) };
+    broadcast('bipagem:reaberta', atualizado);
+    console.log(`REABERTA: ${r.rows[0].etiqueta} por ${req.usuario.nome}`);
+    res.json(atualizado);
+  } catch (e) {
+    console.error('PATCH reabrir:', e.message);
+    res.status(500).json({ erro: 'Erro ao reabrir etiqueta.' });
+  }
+});
+
 app.post('/api/coletas', autenticar, async (req, res) => {
   try {
     const etiqueta = (req.body.etiqueta || '').trim().toUpperCase();
@@ -835,10 +883,12 @@ app.post('/api/coletas', autenticar, async (req, res) => {
       });
     }
 
-    // 3) Marca como coletada
+    // 3) Marca como coletada (se estava marcada como cancelada, reabre e segue o fluxo normal)
+    const estavaCancelada = !!b.cancelada;
     const r = await pool.query(`
       UPDATE bipagens
-      SET coletada_em = NOW(), transportadora = $1, coletada_por = $2
+      SET coletada_em = NOW(), transportadora = $1, coletada_por = $2,
+          cancelada = FALSE, cancelada_em = NULL, cancelada_por = NULL, cancelamento_motivo = NULL
       WHERE id = $3
       RETURNING *,
         EXTRACT(EPOCH FROM (coletada_em - criado_em)) AS segundos_parado
@@ -847,7 +897,8 @@ app.post('/api/coletas', autenticar, async (req, res) => {
     const atualizado = {
       ...toISO(r.rows[0]),
       coletada_em: r.rows[0].coletada_em.toISOString(),
-      segundos_parado: parseInt(r.rows[0].segundos_parado || 0)
+      segundos_parado: parseInt(r.rows[0].segundos_parado || 0),
+      estava_cancelada: estavaCancelada
     };
     broadcast('coleta:add', atualizado);
     console.log(`POST coleta: ${etiqueta} → ${transportadora} (parado ${atualizado.segundos_parado}s)`);
@@ -922,7 +973,8 @@ app.post('/api/coletas/carregamento', autenticar, async (req, res) => {
     // 4) Grava a coleta (com carga_id se houver)
     const r = await pool.query(`
       UPDATE bipagens
-      SET coletada_em = NOW(), transportadora = $1, coletada_por = $2, carga_id = $3
+      SET coletada_em = NOW(), transportadora = $1, coletada_por = $2, carga_id = $3,
+          cancelada = FALSE, cancelada_em = NULL, cancelada_por = NULL, cancelamento_motivo = NULL
       WHERE id = $4
       RETURNING *,
         EXTRACT(EPOCH FROM (coletada_em - criado_em)) AS segundos_parado
@@ -1150,7 +1202,8 @@ app.post('/api/coletas/lote', autenticar, async (req, res) => {
         UPDATE bipagens
         SET coletada_em = COALESCE($1::timestamptz, NOW()),
             transportadora = $2,
-            coletada_por = $3
+            coletada_por = $3,
+            cancelada = FALSE, cancelada_em = NULL, cancelada_por = NULL, cancelamento_motivo = NULL
         WHERE id = $4
         RETURNING *,
           EXTRACT(EPOCH FROM (coletada_em - criado_em)) AS segundos_parado
