@@ -868,6 +868,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
             <button class="btn" id="col-tab-hist" onclick="trocarAbaColeta('coletado')" style="background:var(--surface2);">Histórico de coletas</button>
           </div>
           <div id="col-mkt-pills" style="display:flex;gap:6px;flex-wrap:wrap;margin-left:8px;"></div>
+          <div id="col-sit-pills" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
           <select id="col-filter-transp" onchange="renderColetas()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:var(--r);font-size:12px;display:none;">
             <option value="">Todas transportadoras</option>
           </select>
@@ -1307,6 +1308,7 @@ function executarRender(grupo){
     if (painelAtivo('coleta')) {
       renderMktPills();
       renderSeparadorFiltro();
+      renderSitPills();
       renderColetas();
     }
     atualizarStatColeta();
@@ -1381,6 +1383,14 @@ function handleWS(event, data) {
       TRANSPS = TRANSPS.filter(t => t.id !== data.id);
       populateTranspSelect(); renderTranspConfig();
       break;
+    case 'bipagem:cancelada':
+    case 'bipagem:reaberta': {
+      const i = COLETAS.findIndex(c => c.id === data.id);
+      if (i >= 0) COLETAS[i] = { ...COLETAS[i], ...data };
+      if (painelAtivo('coleta')) { renderSitPills(); renderColetas(); }
+      atualizarStatColeta();
+      break;
+    }
     case 'usuario:add': case 'usuario:del':
       if (document.getElementById('panel-usuarios').classList.contains('active')) carregarUsuarios(); break;
   }
@@ -1565,6 +1575,7 @@ let TRANSPS = [];
 let abaColetaAtiva = 'aguardando'; // 'aguardando' | 'coletado'
 let filtroMktAtivo = ''; // '' = todos · ou nome do marketplace
 let filtroSepAtivo = ''; // '' = todos · nome do separador · ou '__sem__'
+let filtroSitAtiva = 'aberto'; // 'todas' | 'aberto' | 'canceladas'
 
 // Limites de tempo (em segundos) — < 5h verde, 1d+ amarelo, 2d+ vermelho
 const TEMPO_VERDE_MAX = 5 * 3600;        // 18000s = 5h
@@ -1614,6 +1625,7 @@ function populateTranspSelect(){
 function populateColetaFilters(){
   renderMktPills();
   renderSeparadorFiltro();
+  renderSitPills();
 }
 
 function renderMktPills(){
@@ -1730,7 +1742,77 @@ function trocarAbaColeta(aba){
   }
   renderMktPills();
   renderSeparadorFiltro();
+  renderSitPills();
   renderColetas();
+}
+
+// ── SITUAÇÃO: em aberto / canceladas ──────────────────────
+function renderSitPills(){
+  const cont = document.getElementById('col-sit-pills');
+  if (!cont) return;
+  // só faz sentido na aba "aguardando"
+  if (abaColetaAtiva !== 'aguardando') { cont.innerHTML = ''; return; }
+
+  let total = 0, canceladas = 0;
+  COLETAS.forEach(c => {
+    if (c.coletada_em) return;
+    total++;
+    if (c.cancelada) canceladas++;
+  });
+  const abertas = total - canceladas;
+
+  const pills = [
+    { id: 'todas', label: 'Todas', count: total, cor: 'var(--text2)' },
+    { id: 'aberto', label: 'Em aberto', count: abertas, cor: 'var(--accent)' },
+    { id: 'canceladas', label: 'Canceladas', count: canceladas, cor: '#ffb547' },
+  ];
+  cont.innerHTML = pills.map(p => {
+    const ativo = p.id === filtroSitAtiva;
+    return `<span class="col-pill ${ativo?'active':''}"
+      onclick="filtrarPorSituacao('${p.id}')"
+      style="border-color:${ativo ? p.cor : 'var(--border)'};color:${p.cor};">
+      ${p.label} <span class="col-pill-count">${p.count.toLocaleString('pt-BR')}</span>
+    </span>`;
+  }).join('');
+}
+
+function filtrarPorSituacao(id){
+  filtroSitAtiva = id;
+  renderSitPills();
+  renderColetas();
+}
+
+// Marcar como cancelada (qualquer usuário). A etiqueta continua na lista,
+// só para de contar como atrasada. Sai daqui pelo fluxo normal (quando for bipada).
+async function cancelarEtiqueta(id, etiqueta){
+  const motivo = prompt(
+    `Marcar ${etiqueta} como CANCELADA?\n\n` +
+    `Ela continua na lista, marcada, e deixa de contar como atrasada.\n` +
+    `Quando você bipar essa etiqueta, ela volta ao fluxo normal e sai daqui.\n\n` +
+    `Motivo (opcional):`, ''
+  );
+  if (motivo === null) return; // cancelou o prompt
+  try {
+    const atualizado = await api('PATCH', `/api/bipagens/${id}/cancelar`, { motivo: motivo.trim() });
+    const i = COLETAS.findIndex(c => c.id === id);
+    if (i >= 0) COLETAS[i] = { ...COLETAS[i], ...atualizado };
+    toast('Etiqueta marcada como cancelada', 'ok');
+    renderSitPills(); renderColetas(); atualizarStatColeta();
+  } catch (e) {
+    toast('Erro: ' + (e.erro || e.message || 'falha ao cancelar'), 'err');
+  }
+}
+
+async function reabrirEtiqueta(id){
+  try {
+    const atualizado = await api('PATCH', `/api/bipagens/${id}/reabrir`);
+    const i = COLETAS.findIndex(c => c.id === id);
+    if (i >= 0) COLETAS[i] = { ...COLETAS[i], ...atualizado };
+    toast('Cancelamento desfeito', 'ok');
+    renderSitPills(); renderColetas(); atualizarStatColeta();
+  } catch (e) {
+    toast('Erro: ' + (e.erro || e.message || 'falha ao reabrir'), 'err');
+  }
 }
 
 function renderColetas(){
@@ -1749,6 +1831,10 @@ function renderColetas(){
       const sep = (c.colaborador_nome || '').trim();
       if (filtroSepAtivo === SEP_VAZIO) { if (sep) return false; }
       else if (sep !== filtroSepAtivo) return false;
+    }
+    if (abaColetaAtiva === 'aguardando' && filtroSitAtiva !== 'todas') {
+      if (filtroSitAtiva === 'aberto' && c.cancelada) return false;
+      if (filtroSitAtiva === 'canceladas' && !c.cancelada) return false;
     }
     return true;
   });
@@ -1786,12 +1872,25 @@ function renderColetas(){
     const cor = corDuracao(c.segundos_parado);
     const mktColor = (S.marketplaces.find(m=>m.nome===c.marketplace_nome)?.cor) || '#888';
     if (abaColetaAtiva === 'aguardando') {
+      if (c.cancelada) {
+        const quando = c.cancelada_em ? new Date(c.cancelada_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+        const tip = `Cancelada${quando ? ' em ' + quando : ''}${c.cancelada_por ? ' por ' + c.cancelada_por : ''}${c.cancelamento_motivo ? ' — ' + c.cancelamento_motivo : ''}`;
+        return `<tr style="background:rgba(255,181,71,.05);">
+          <td class="col-etiq" style="color:var(--text2);">${c.etiqueta}</td>
+          <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${c.marketplace_nome||'-'}</span></td>
+          <td style="color:var(--text2);">${c.colaborador_nome||'-'}</td>
+          <td class="col-tempo" style="color:var(--text3);">${fmtDuracao(c.segundos_parado)}</td>
+          <td><span title="${tip.replace(/"/g,'&quot;')}" style="font-size:9px;color:var(--warn);border:1px solid rgba(255,181,71,.45);background:rgba(255,181,71,.1);border-radius:3px;padding:2px 7px;font-weight:700;white-space:nowrap;">✕ CANCELADA</span></td>
+          <td style="text-align:center;"><button title="Desfazer cancelamento" onclick="reabrirEtiqueta('${c.id}')" style="background:transparent;border:1px solid rgba(255,181,71,.5);color:var(--warn);border-radius:5px;width:26px;height:26px;font-size:11px;cursor:pointer;padding:0;">↶</button></td>
+        </tr>`;
+      }
       return `<tr>
         <td class="col-etiq">${c.etiqueta}</td>
         <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${c.marketplace_nome||'-'}</span></td>
         <td>${c.colaborador_nome||'-'}</td>
         <td class="col-tempo ${cor}">${fmtDuracao(c.segundos_parado)}</td>
         <td><span class="col-status-pill ${cor}">${cor==='vermelho'?'atrasado':cor==='amarelo'?'atenção':'ok'}</span></td>
+        <td style="text-align:center;"><button title="Marcar como cancelada" onclick="cancelarEtiqueta('${c.id}','${(c.etiqueta||'').replace(/'/g,"\\'")}')" style="background:transparent;border:1px solid var(--border);color:var(--text3);border-radius:5px;width:26px;height:26px;font-size:11px;cursor:pointer;padding:0;">✕</button></td>
       </tr>`;
     } else {
       const dt = new Date(c.coletada_em);
@@ -1811,7 +1910,7 @@ function renderColetas(){
   if (abaColetaAtiva === 'aguardando') {
     cont.innerHTML = `<table class="col-table">
       <thead><tr>
-        <th>Etiqueta</th><th>Marketplace</th><th>Separador</th><th>Parado há</th><th>Status</th>
+        <th>Etiqueta</th><th>Marketplace</th><th>Separador</th><th>Parado há</th><th>Status</th><th style="width:44px;"></th>
       </tr></thead>
       <tbody>${linhas}</tbody>
     </table>`;
@@ -1829,6 +1928,7 @@ function atualizarStatColeta(){
   const aguard = COLETAS.filter(c=>!c.coletada_em);
   const now = Date.now();
   const atrasados = aguard.filter(c=>{
+    if (c.cancelada) return false; // canceladas não contam como atrasadas
     const segs = Math.floor((now - new Date(c.criado_em).getTime())/1000);
     return segs >= TEMPO_AMARELO_MAX;
   });
@@ -1858,7 +1958,10 @@ async function bipColeta(){
 
   try {
     const res = await api('POST','/api/coletas',{etiqueta, transportadora:transp});
-    fb.innerHTML = `<div class="col-feedback-ok">✓ ${etiqueta} → ${transp} · separada por ${res.colaborador_nome} (parou ${fmtDuracao(res.segundos_parado)})</div>`;
+    const notaCancel = res.estava_cancelada
+      ? ` <span style="color:var(--warn);">· estava marcada como cancelada, foi reaberta e coletada</span>`
+      : '';
+    fb.innerHTML = `<div class="col-feedback-ok">✓ ${etiqueta} → ${transp} · separada por ${res.colaborador_nome} (parou ${fmtDuracao(res.segundos_parado)})${notaCancel}</div>`;
     inp.value = ''; inp.focus();
   } catch(e) {
     if (e.erro === 'NÃO_SEPARADA') {
