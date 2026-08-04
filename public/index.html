@@ -4806,5 +4806,287 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
 })();
 </script>
 <script src="/chat-eea.js"></script>
+  <script>
+/* ══════════════════════════════════════════════════════════════
+   CHAT EEA · widget para o sistema de BIPAGEM
+   ──────────────────────────────────────────────────────────────
+   Este arquivo é autônomo. Ele não depende de nada do bipagem-server:
+   fala direto com o servidor da Produção, que é o dono das mensagens.
+
+   COMO USAR: coloque este arquivo em public/ e adicione UMA linha
+   antes de </body> no HTML da bipagem:
+
+       <script src="/chat-eea.js"></script>
+
+   Pronto. Aparece um botão de chat no canto inferior direito.
+   ══════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  // Endereço do sistema de Produção (o dono do chat).
+  // Se um dia o domínio mudar, é só trocar aqui.
+  var API = 'https://producao-server-production.up.railway.app';
+
+  if (window.__chatEEA) return;         // evita carregar duas vezes
+  window.__chatEEA = true;
+
+  var TOKEN = null, EU = null, CONTATOS = [], ATUAL = null, NAOLIDAS = 0, WS = null;
+
+  try { TOKEN = localStorage.getItem('chat_eea_token'); } catch (e) {}
+  try { EU = JSON.parse(localStorage.getItem('chat_eea_user') || 'null'); } catch (e) {}
+
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  var hora = function (iso) {
+    try { return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); }
+    catch (e) { return ''; }
+  };
+  var cor = function (id) {
+    return ['#4d9fff', '#ffb547', '#9b6cff', '#00b878', '#ff6b6b', '#00e5a0'][Number(id) % 6];
+  };
+  var inic = function (n) {
+    return String(n || '?').trim().split(/\s+/).slice(0, 2).map(function (p) { return p[0]; }).join('').toUpperCase();
+  };
+
+  // ── chamada à API da Produção ──────────────────────────────
+  function api(metodo, rota, corpo) {
+    var opts = { method: metodo, headers: { 'Content-Type': 'application/json' } };
+    if (TOKEN) opts.headers.Authorization = 'Bearer ' + TOKEN;   // cookie não atravessa domínio
+    if (corpo) opts.body = JSON.stringify(corpo);
+    return fetch(API + rota, opts).then(function (r) {
+      return r.text().then(function (t) {
+        var d; try { d = JSON.parse(t); } catch (e) { d = { erro: t }; }
+        if (!r.ok) { if (r.status === 401) sair(); throw d; }
+        return d;
+      });
+    });
+  }
+
+  // ── estilos (prefixados pra não colidir com o CSS da bipagem) ──
+  var css = document.createElement('style');
+  css.textContent = [
+    '#eeachat-btn{position:fixed;right:18px;bottom:18px;width:54px;height:54px;border-radius:50%;background:#00e5a0;',
+    'color:#000;border:none;font-size:23px;cursor:pointer;z-index:2147483000;box-shadow:0 4px 16px rgba(0,0,0,.45)}',
+    '#eeachat-badge{position:absolute;top:-3px;right:-3px;background:#ff4d4d;color:#fff;font:700 10px monospace;',
+    'border-radius:9px;padding:1px 6px;min-width:18px}',
+    '#eeachat-box{position:fixed;right:18px;bottom:82px;width:340px;height:min(520px,72vh);background:#141414;',
+    'border:1px solid #2e2e2e;border-radius:10px;z-index:2147483000;display:none;flex-direction:column;overflow:hidden;',
+    'font-family:system-ui,-apple-system,sans-serif;color:#f0f0f0;box-shadow:0 8px 30px rgba(0,0,0,.6)}',
+    '#eeachat-box.on{display:flex}',
+    '.eeachat-top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#1a1a1a;border-bottom:1px solid #2e2e2e;font-size:13px;font-weight:600}',
+    '.eeachat-top button{margin-left:auto;background:none;border:none;color:#aaa;cursor:pointer;font-size:15px}',
+    '.eeachat-body{flex:1;overflow-y:auto}',
+    '.eeachat-ct{display:flex;gap:8px;padding:9px 11px;cursor:pointer;align-items:center;border-bottom:1px solid #1f1f1f}',
+    '.eeachat-ct:hover{background:#1a1a1a}',
+    '.eeachat-av{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font:700 11px monospace;color:#000}',
+    '.eeachat-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:7px}',
+    '.eeachat-m{max-width:78%;padding:7px 10px;border-radius:10px;font-size:12.5px;line-height:1.45;word-wrap:break-word}',
+    '.eeachat-me{align-self:flex-end;background:#00e5a0;color:#04150e;border-bottom-right-radius:3px}',
+    '.eeachat-ot{align-self:flex-start;background:#1f1f1f;border:1px solid #2e2e2e;border-bottom-left-radius:3px}',
+    '.eeachat-h{font:8.5px monospace;opacity:.65;text-align:right;margin-top:3px}',
+    '.eeachat-cx{display:flex;gap:6px;padding:9px;border-top:1px solid #2e2e2e;background:#1a1a1a}',
+    '.eeachat-cx input{flex:1;background:#141414;border:1px solid #3a3a3a;border-radius:16px;padding:8px 12px;color:#f0f0f0;font-size:12.5px}',
+    '.eeachat-cx button{background:#00e5a0;color:#000;border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;flex:none}',
+    '.eeachat-login{padding:16px;display:flex;flex-direction:column;gap:9px}',
+    '.eeachat-login input{background:#1a1a1a;border:1px solid #2e2e2e;border-radius:6px;padding:9px 11px;color:#f0f0f0;font-size:12.5px}',
+    '.eeachat-login button{background:#00e5a0;color:#000;border:none;border-radius:6px;padding:9px;font-weight:600;cursor:pointer}',
+    '.eeachat-err{color:#ff6b6b;font-size:11.5px}',
+    '@media(max-width:480px){#eeachat-box{right:8px;left:8px;width:auto}}'
+  ].join('');
+  document.head.appendChild(css);
+
+  var btn = document.createElement('button');
+  btn.id = 'eeachat-btn';
+  btn.innerHTML = '💬<span id="eeachat-badge" style="display:none"></span>';
+  btn.onclick = function () {
+    var b = document.getElementById('eeachat-box');
+    b.classList.toggle('on');
+    if (b.classList.contains('on')) { TOKEN ? listar() : telaLogin(); }
+  };
+
+  var box = document.createElement('div');
+  box.id = 'eeachat-box';
+
+  document.addEventListener('DOMContentLoaded', montar);
+  if (document.readyState !== 'loading') montar();
+  function montar() {
+    if (!document.body || document.getElementById('eeachat-btn')) return;
+    document.body.appendChild(btn);
+    document.body.appendChild(box);
+    if (TOKEN) { ligarWS(); contarNaoLidas(); }
+  }
+
+  function topo(titulo, voltar) {
+    return '<div class="eeachat-top">' +
+      (voltar ? '<span style="cursor:pointer" onclick="window.__eeachatVoltar()">‹</span>' : '') +
+      esc(titulo) + '<button onclick="document.getElementById(\'eeachat-box\').classList.remove(\'on\')">✕</button></div>';
+  }
+
+  // ── login (uma vez só; fica salvo no navegador) ─────────────
+  function telaLogin(erro) {
+    box.innerHTML = topo('Entrar no chat da EEA') +
+      '<div class="eeachat-login">' +
+      (erro ? '<div class="eeachat-err">' + esc(erro) + '</div>' : '') +
+      '<div style="font-size:11.5px;color:#888;line-height:1.5">Use o mesmo e-mail e senha do sistema de Produção.</div>' +
+      '<input id="eeachat-em" type="email" placeholder="e-mail" autocomplete="username">' +
+      '<input id="eeachat-se" type="password" placeholder="senha" autocomplete="current-password">' +
+      '<button id="eeachat-go">Entrar</button></div>';
+    var go = function () {
+      var em = document.getElementById('eeachat-em').value.trim();
+      var se = document.getElementById('eeachat-se').value;
+      if (!em || !se) return;
+      fetch(API + '/api/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: em, senha: se })
+      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (x) {
+          if (!x.ok || !x.d.token) return telaLogin(x.d.erro || 'Não consegui entrar.');
+          TOKEN = x.d.token; EU = x.d;
+          try {
+            localStorage.setItem('chat_eea_token', TOKEN);
+            localStorage.setItem('chat_eea_user', JSON.stringify(EU));
+          } catch (e) {}
+          ligarWS(); listar(); contarNaoLidas();
+        })
+        .catch(function () { telaLogin('Servidor da Produção não respondeu.'); });
+    };
+    document.getElementById('eeachat-go').onclick = go;
+    document.getElementById('eeachat-se').onkeydown = function (e) { if (e.key === 'Enter') go(); };
+  }
+
+  function sair() {
+    TOKEN = null; EU = null; ATUAL = null;
+    try { localStorage.removeItem('chat_eea_token'); localStorage.removeItem('chat_eea_user'); } catch (e) {}
+    if (WS) { try { WS.close(); } catch (e) {} }
+    telaLogin('Sua sessão expirou. Entre de novo.');
+  }
+
+  // ── lista de contatos ───────────────────────────────────────
+  function listar() {
+    ATUAL = null;
+    box.innerHTML = topo('Mensagens') + '<div class="eeachat-body" id="eeachat-lista">' +
+      '<div style="padding:18px;text-align:center;color:#666;font-size:12px">Carregando…</div></div>' +
+      '<div style="padding:7px 11px;border-top:1px solid #2e2e2e;font-size:10.5px;color:#666">' +
+      esc(EU ? EU.nome : '') + ' · <span style="cursor:pointer;text-decoration:underline" onclick="window.__eeachatSair()">sair</span></div>';
+    api('GET', '/api/chat/contatos').then(function (cs) {
+      CONTATOS = cs;
+      var el = document.getElementById('eeachat-lista');
+      if (!el) return;
+      if (!cs.length) {
+        el.innerHTML = '<div style="padding:18px;text-align:center;color:#666;font-size:12px">Nenhum contato.</div>';
+        return;
+      }
+      el.innerHTML = cs.map(function (c) {
+        return '<div class="eeachat-ct" onclick="window.__eeachatAbrir(' + c.id + ')">' +
+          '<div class="eeachat-av" style="background:' + cor(c.id) + '">' + esc(inic(c.nome)) + '</div>' +
+          '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600">' + esc(c.nome) + '</div>' +
+          '<div style="font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+          (c.ultima_texto ? esc(c.ultima_texto) : '<i>sem mensagens</i>') + '</div></div>' +
+          (c.nao_lidas > 0 ? '<div style="background:#00e5a0;color:#000;font:700 10px monospace;border-radius:9px;padding:1px 6px">' + c.nao_lidas + '</div>' : '') +
+          '</div>';
+      }).join('');
+    }).catch(function (e) {
+      var el = document.getElementById('eeachat-lista');
+      if (el) el.innerHTML = '<div style="padding:16px;color:#ff6b6b;font-size:12px">' + esc(e.erro || 'Erro') + '</div>';
+    });
+  }
+
+  // ── conversa ────────────────────────────────────────────────
+  function abrir(id) {
+    ATUAL = Number(id);
+    var c = CONTATOS.filter(function (x) { return Number(x.id) === ATUAL; })[0] || { nome: '—' };
+    box.innerHTML = topo(c.nome, true) +
+      '<div class="eeachat-msgs" id="eeachat-msgs"><div style="margin:auto;color:#666;font-size:12px">Carregando…</div></div>' +
+      '<div class="eeachat-cx"><input id="eeachat-in" placeholder="Escreva uma mensagem…"><button id="eeachat-snd">➤</button></div>';
+    var env = function () {
+      var i = document.getElementById('eeachat-in');
+      var t = (i.value || '').trim();
+      if (!t) return;
+      i.value = '';
+      api('POST', '/api/chat/' + ATUAL + '/mensagens', { texto: t })
+        .catch(function (e) { i.value = t; alert('Não enviou: ' + (e.erro || 'erro')); });
+    };
+    document.getElementById('eeachat-snd').onclick = env;
+    document.getElementById('eeachat-in').onkeydown = function (e) { if (e.key === 'Enter') env(); };
+    api('GET', '/api/chat/' + ATUAL + '/mensagens').then(function (ms) {
+      var el = document.getElementById('eeachat-msgs');
+      if (!el) return;
+      el.innerHTML = ms.length ? ms.map(bolha).join('')
+        : '<div style="margin:auto;color:#666;font-size:12px;text-align:center">Nenhuma mensagem ainda.</div>';
+      el.scrollTop = el.scrollHeight;
+      var alvo = CONTATOS.filter(function (x) { return Number(x.id) === ATUAL; })[0];
+      if (alvo) { NAOLIDAS = Math.max(0, NAOLIDAS - (alvo.nao_lidas || 0)); alvo.nao_lidas = 0; badge(); }
+      document.getElementById('eeachat-in').focus();
+    }).catch(function (e) {
+      var el = document.getElementById('eeachat-msgs');
+      if (el) el.innerHTML = '<div style="margin:auto;color:#ff6b6b;font-size:12px">' + esc(e.erro || 'Erro') + '</div>';
+    });
+  }
+
+  function bolha(m) {
+    var meu = EU && Number(m.de_id) === Number(EU.id);
+    return '<div data-msg="' + m.id + '" data-meu="' + (meu ? 1 : 0) + '" class="eeachat-m ' + (meu ? 'eeachat-me' : 'eeachat-ot') + '">' +
+      esc(m.texto) + '<div class="eeachat-h">' + hora(m.criado_em) +
+      '<span class="eeachat-tick">' + (meu ? (m.lida_em ? ' ✓✓' : ' ✓') : '') + '</span></div></div>';
+  }
+
+  // ── tempo real ──────────────────────────────────────────────
+  function ligarWS() {
+    if (!TOKEN) return;
+    try {
+      var u = API.replace(/^http/, 'ws') + '/ws?token=' + encodeURIComponent(TOKEN);
+      WS = new WebSocket(u);
+      WS.onmessage = function (ev) {
+        var msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        if (msg.tipo === 'chat_msg') recebeu(msg);
+        else if (msg.tipo === 'chat_lido' && Number(ATUAL) === Number(msg.por_id)) {
+          var ts = box.querySelectorAll('[data-meu="1"] .eeachat-tick');
+          for (var i = 0; i < ts.length; i++) ts[i].textContent = ' ✓✓';
+        }
+      };
+      WS.onclose = function () { setTimeout(ligarWS, 4000); };
+    } catch (e) {}
+  }
+
+  function recebeu(msg) {
+    var m = msg.mensagem;
+    var souDest = EU && Number(m.para_id) === Number(EU.id);
+    var outro = souDest ? m.de_id : m.para_id;
+    if (Number(ATUAL) === Number(outro)) {
+      var el = document.getElementById('eeachat-msgs');
+      if (el) {
+        if (!el.querySelector('[data-msg]')) el.innerHTML = '';
+        el.insertAdjacentHTML('beforeend', bolha(m));
+        el.scrollTop = el.scrollHeight;
+      }
+      if (souDest) api('GET', '/api/chat/' + outro + '/mensagens').catch(function () {});
+    } else if (souDest) {
+      NAOLIDAS++; badge();
+      if (!box.classList.contains('on')) {
+        btn.animate && btn.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 380 });
+      }
+    }
+    var c = CONTATOS.filter(function (x) { return Number(x.id) === Number(outro); })[0];
+    if (c) { c.ultima_texto = m.texto; c.ultima_em = m.criado_em; }
+  }
+
+  function contarNaoLidas() {
+    api('GET', '/api/chat/nao-lidas').then(function (r) { NAOLIDAS = r.total || 0; badge(); }).catch(function () {});
+  }
+  function badge() {
+    var b = document.getElementById('eeachat-badge');
+    if (!b) return;
+    if (NAOLIDAS > 0) { b.style.display = 'inline-block'; b.textContent = NAOLIDAS; }
+    else b.style.display = 'none';
+  }
+
+  window.__eeachatAbrir = abrir;
+  window.__eeachatVoltar = listar;
+  window.__eeachatSair = sair;
+})();
+</script>
+
 </body>
 </html>
