@@ -4808,29 +4808,19 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
 <!-- CHAT EEA · conversa com o sistema de Produção -->
 <script>
 /* ══════════════════════════════════════════════════════════════
-   CHAT EEA · widget para o sistema de BIPAGEM
-   ──────────────────────────────────────────────────────────────
-   Este arquivo é autônomo. Ele não depende de nada do bipagem-server:
-   fala direto com o servidor da Produção, que é o dono das mensagens.
-
-   COMO USAR: coloque este arquivo em public/ e adicione UMA linha
-   antes de </body> no HTML da bipagem:
-
-       <script src="/chat-eea.js"><\/script>
-
-   Pronto. Aparece um botão de chat no canto inferior direito.
+   CHAT EEA · para o sistema de BIPAGEM
+   Mesma cara da tela "Mensagens" do sistema de Produção.
+   Autônomo: não depende de nada do bipagem-server.
    ══════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
-  // Endereço do sistema de Produção (o dono do chat).
-  // Se um dia o domínio mudar, é só trocar aqui.
   var API = 'https://producao-server-production.up.railway.app';
 
-  if (window.__chatEEA) return;         // evita carregar duas vezes
+  if (window.__chatEEA) return;
   window.__chatEEA = true;
 
-  var TOKEN = null, EU = null, CONTATOS = [], ATUAL = null, NAOLIDAS = 0, WS = null;
+  var TOKEN = null, EU = null, CONTATOS = [], ATUAL = null, NAOLIDAS = 0, WS = null, BUSCA = '';
 
   try { TOKEN = localStorage.getItem('chat_eea_token'); } catch (e) {}
   try { EU = JSON.parse(localStorage.getItem('chat_eea_user') || 'null'); } catch (e) {}
@@ -4843,6 +4833,15 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
     try { return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); }
     catch (e) { return ''; }
   };
+  var dia = function (iso) {
+    try {
+      var d = new Date(iso), h = new Date();
+      if (d.toDateString() === h.toDateString()) return 'HOJE';
+      var o = new Date(h); o.setDate(o.getDate() - 1);
+      if (d.toDateString() === o.toDateString()) return 'ONTEM';
+      return d.toLocaleDateString('pt-BR');
+    } catch (e) { return ''; }
+  };
   var cor = function (id) {
     return ['#4d9fff', '#ffb547', '#9b6cff', '#00b878', '#ff6b6b', '#00e5a0'][Number(id) % 6];
   };
@@ -4850,10 +4849,9 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
     return String(n || '?').trim().split(/\s+/).slice(0, 2).map(function (p) { return p[0]; }).join('').toUpperCase();
   };
 
-  // ── chamada à API da Produção ──────────────────────────────
   function api(metodo, rota, corpo) {
     var opts = { method: metodo, headers: { 'Content-Type': 'application/json' } };
-    if (TOKEN) opts.headers.Authorization = 'Bearer ' + TOKEN;   // cookie não atravessa domínio
+    if (TOKEN) opts.headers.Authorization = 'Bearer ' + TOKEN;
     if (corpo) opts.body = JSON.stringify(corpo);
     return fetch(API + rota, opts).then(function (r) {
       return r.text().then(function (t) {
@@ -4864,77 +4862,117 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
     });
   }
 
-  // ── estilos (prefixados pra não colidir com o CSS da bipagem) ──
+  // ── estilos (espelham o painel de Mensagens da Produção) ───
   var css = document.createElement('style');
   css.textContent = [
-    '#eeachat-btn{position:fixed;right:18px;bottom:18px;width:54px;height:54px;border-radius:50%;background:#00e5a0;',
-    'color:#000;border:none;font-size:23px;cursor:pointer;z-index:2147483000;box-shadow:0 4px 16px rgba(0,0,0,.45)}',
+    '#eeachat-btn{position:fixed;right:20px;bottom:20px;width:54px;height:54px;border-radius:50%;background:#00e5a0;',
+    'color:#000;border:none;font-size:23px;cursor:pointer;z-index:2147483000;box-shadow:0 4px 16px rgba(0,0,0,.5)}',
     '#eeachat-badge{position:absolute;top:-3px;right:-3px;background:#ff4d4d;color:#fff;font:700 10px monospace;',
     'border-radius:9px;padding:1px 6px;min-width:18px}',
-    '#eeachat-box{position:fixed;right:18px;bottom:82px;width:340px;height:min(520px,72vh);background:#141414;',
-    'border:1px solid #2e2e2e;border-radius:10px;z-index:2147483000;display:none;flex-direction:column;overflow:hidden;',
-    'font-family:system-ui,-apple-system,sans-serif;color:#f0f0f0;box-shadow:0 8px 30px rgba(0,0,0,.6)}',
-    '#eeachat-box.on{display:flex}',
-    '.eeachat-top{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#1a1a1a;border-bottom:1px solid #2e2e2e;font-size:13px;font-weight:600}',
-    '.eeachat-top button{margin-left:auto;background:none;border:none;color:#aaa;cursor:pointer;font-size:15px}',
-    '.eeachat-body{flex:1;overflow-y:auto}',
-    '.eeachat-ct{display:flex;gap:8px;padding:9px 11px;cursor:pointer;align-items:center;border-bottom:1px solid #1f1f1f}',
+    '#eeachat-fundo{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2147483001;display:none;',
+    'align-items:center;justify-content:center;padding:20px}',
+    '#eeachat-fundo.on{display:flex}',
+    '#eeachat-painel{width:min(1150px,96vw);height:min(720px,90vh);background:#141414;border:1px solid #2e2e2e;',
+    'border-radius:10px;display:flex;flex-direction:column;overflow:hidden;color:#f0f0f0;',
+    "font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif}",
+    '.eeachat-cab{display:flex;align-items:flex-start;justify-content:space-between;padding:16px 18px 13px;gap:10px}',
+    '.eeachat-tit{font-size:19px;font-weight:600}',
+    '.eeachat-sub{font-size:11.5px;color:#666;margin-top:2px}',
+    '.eeachat-x{background:none;border:none;color:#aaa;font-size:20px;cursor:pointer;line-height:1;padding:2px 6px}',
+    '.eeachat-grid{flex:1;display:grid;grid-template-columns:250px 1fr;margin:0 18px 18px;background:#141414;',
+    'border:1px solid #2e2e2e;border-radius:10px;overflow:hidden;min-height:0}',
+    '.eeachat-esq{border-right:1px solid #2e2e2e;display:flex;flex-direction:column;min-width:0}',
+    '.eeachat-busca{padding:10px;border-bottom:1px solid #2e2e2e}',
+    '.eeachat-busca input{width:100%;background:#1a1a1a;border:1px solid #2e2e2e;border-radius:6px;padding:7px 10px;',
+    "color:#f0f0f0;font-size:12px;font-family:inherit;box-sizing:border-box}",
+    '.eeachat-lista{flex:1;overflow-y:auto;min-height:0}',
+    '.eeachat-gr{font:8.5px monospace;letter-spacing:.13em;color:#666;padding:10px 12px 4px}',
+    '.eeachat-ct{display:flex;gap:9px;padding:9px 12px;cursor:pointer;align-items:flex-start;border-left:2px solid transparent}',
     '.eeachat-ct:hover{background:#1a1a1a}',
-    '.eeachat-av{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font:700 11px monospace;color:#000}',
-    '.eeachat-msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:7px}',
-    '.eeachat-m{max-width:78%;padding:7px 10px;border-radius:10px;font-size:12.5px;line-height:1.45;word-wrap:break-word}',
+    '.eeachat-ct.on{background:#1a1a1a;border-left-color:#00e5a0}',
+    '.eeachat-av{width:31px;height:31px;border-radius:50%;flex:none;display:flex;align-items:center;',
+    'justify-content:center;font:700 11px monospace;color:#000}',
+    '.eeachat-nome{font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:5px;flex-wrap:wrap}',
+    '.eeachat-prev{font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}',
+    '.eeachat-pill{font:700 8px monospace;padding:1px 5px;border-radius:7px}',
+    '.eeachat-eq{background:rgba(77,159,255,.15);color:#4d9fff}',
+    '.eeachat-fo{background:rgba(155,108,255,.16);color:#9b6cff}',
+    '.eeachat-hora{font:9px monospace;color:#666;text-align:right;flex:none}',
+    '.eeachat-un{background:#00e5a0;color:#000;font:700 9px monospace;border-radius:9px;padding:1px 6px;margin-top:3px;display:inline-block}',
+    '.eeachat-dir{display:flex;flex-direction:column;min-width:0}',
+    '.eeachat-topo{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid #2e2e2e;background:#1a1a1a}',
+    '.eeachat-msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px;min-height:0}',
+    '.eeachat-dia{align-self:center;font:9px monospace;color:#666;background:#1a1a1a;border:1px solid #2e2e2e;',
+    'border-radius:9px;padding:2px 10px;margin:3px 0}',
+    '.eeachat-m{max-width:70%;padding:8px 11px;border-radius:11px;font-size:12.5px;line-height:1.5;word-wrap:break-word}',
     '.eeachat-me{align-self:flex-end;background:#00e5a0;color:#04150e;border-bottom-right-radius:3px}',
-    '.eeachat-ot{align-self:flex-start;background:#1f1f1f;border:1px solid #2e2e2e;border-bottom-left-radius:3px}',
-    '.eeachat-h{font:8.5px monospace;opacity:.65;text-align:right;margin-top:3px}',
-    '.eeachat-cx{display:flex;gap:6px;padding:9px;border-top:1px solid #2e2e2e;background:#1a1a1a}',
-    '.eeachat-cx input{flex:1;background:#141414;border:1px solid #3a3a3a;border-radius:16px;padding:8px 12px;color:#f0f0f0;font-size:12.5px}',
-    '.eeachat-cx button{background:#00e5a0;color:#000;border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;flex:none}',
-    '.eeachat-login{padding:16px;display:flex;flex-direction:column;gap:9px}',
-    '.eeachat-login input{background:#1a1a1a;border:1px solid #2e2e2e;border-radius:6px;padding:9px 11px;color:#f0f0f0;font-size:12.5px}',
-    '.eeachat-login button{background:#00e5a0;color:#000;border:none;border-radius:6px;padding:9px;font-weight:600;cursor:pointer}',
-    '.eeachat-err{color:#ff6b6b;font-size:11.5px}',
-    '@media(max-width:480px){#eeachat-box{right:8px;left:8px;width:auto}}'
+    '.eeachat-ot{align-self:flex-start;background:#1a1a1a;border:1px solid #2e2e2e;border-bottom-left-radius:3px}',
+    '.eeachat-h{font:8.5px monospace;margin-top:4px;text-align:right;opacity:.65}',
+    '.eeachat-cx{display:flex;gap:8px;padding:11px 14px;border-top:1px solid #2e2e2e;background:#1a1a1a}',
+    '.eeachat-cx input{flex:1;background:#141414;border:1px solid #3a3a3a;border-radius:18px;padding:9px 14px;',
+    'color:#f0f0f0;font-size:12.5px;font-family:inherit}',
+    '.eeachat-snd{background:#00e5a0;color:#000;border:none;border-radius:50%;width:35px;height:35px;font-size:15px;cursor:pointer;flex:none}',
+    '.eeachat-vazio{margin:auto;color:#666;font-size:12.5px;text-align:center;padding:20px}',
+    '.eeachat-login{max-width:330px;margin:auto;display:flex;flex-direction:column;gap:10px;padding:20px}',
+    '.eeachat-login input{background:#1a1a1a;border:1px solid #2e2e2e;border-radius:6px;padding:10px 12px;',
+    'color:#f0f0f0;font-size:13px;font-family:inherit}',
+    '.eeachat-login button{background:#00e5a0;color:#000;border:none;border-radius:6px;padding:10px;font-weight:600;cursor:pointer;font-size:13px}',
+    '.eeachat-err{color:#ff6b6b;font-size:12px}',
+    '.eeachat-rod{padding:7px 18px 12px;font-size:10.5px;color:#666}',
+    '.eeachat-rod a{color:#4d9fff;cursor:pointer;text-decoration:underline}',
+    '@media(max-width:760px){.eeachat-grid{grid-template-columns:1fr}.eeachat-esq{display:none}',
+    '.eeachat-grid.mostrar-lista .eeachat-esq{display:flex}.eeachat-grid.mostrar-lista .eeachat-dir{display:none}}'
   ].join('');
   document.head.appendChild(css);
 
   var btn = document.createElement('button');
   btn.id = 'eeachat-btn';
   btn.innerHTML = '💬<span id="eeachat-badge" style="display:none"></span>';
-  btn.onclick = function () {
-    var b = document.getElementById('eeachat-box');
-    b.classList.toggle('on');
-    if (b.classList.contains('on')) { TOKEN ? listar() : telaLogin(); }
-  };
+  btn.onclick = abrirPainel;
 
-  var box = document.createElement('div');
-  box.id = 'eeachat-box';
+  var fundo = document.createElement('div');
+  fundo.id = 'eeachat-fundo';
+  fundo.innerHTML = '<div id="eeachat-painel"></div>';
+  fundo.addEventListener('click', function (e) { if (e.target === fundo) fecharPainel(); });
 
   document.addEventListener('DOMContentLoaded', montar);
   if (document.readyState !== 'loading') montar();
   function montar() {
     if (!document.body || document.getElementById('eeachat-btn')) return;
     document.body.appendChild(btn);
-    document.body.appendChild(box);
+    document.body.appendChild(fundo);
     if (TOKEN) { ligarWS(); contarNaoLidas(); }
   }
 
-  function topo(titulo, voltar) {
-    return '<div class="eeachat-top">' +
-      (voltar ? '<span style="cursor:pointer" onclick="window.__eeachatVoltar()">‹</span>' : '') +
-      esc(titulo) + '<button onclick="document.getElementById(\'eeachat-box\').classList.remove(\'on\')">✕</button></div>';
+  function abrirPainel() {
+    fundo.classList.add('on');
+    if (TOKEN) listar(); else telaLogin();
+  }
+  function fecharPainel() { fundo.classList.remove('on'); }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && fundo.classList.contains('on')) fecharPainel();
+  });
+
+  function painel() { return document.getElementById('eeachat-painel'); }
+
+  function cabecalho() {
+    return '<div class="eeachat-cab"><div>' +
+      '<div class="eeachat-tit">💬 Mensagens</div>' +
+      '<div class="eeachat-sub">Conversa direta com a equipe e os fabricantes.</div>' +
+      '</div><button class="eeachat-x" onclick="window.__eeachatFechar()">✕</button></div>';
   }
 
-  // ── login (uma vez só; fica salvo no navegador) ─────────────
+  // ── login ───────────────────────────────────────────────────
   function telaLogin(erro) {
-    box.innerHTML = topo('Entrar no chat da EEA') +
+    painel().innerHTML = cabecalho() +
       '<div class="eeachat-login">' +
       (erro ? '<div class="eeachat-err">' + esc(erro) + '</div>' : '') +
-      '<div style="font-size:11.5px;color:#888;line-height:1.5">Use o mesmo e-mail e senha do sistema de Produção.</div>' +
+      '<div style="font-size:12.5px;color:#aaa;line-height:1.5">Entre com o mesmo e-mail e senha do sistema de Produção.</div>' +
       '<input id="eeachat-em" type="email" placeholder="e-mail" autocomplete="username">' +
       '<input id="eeachat-se" type="password" placeholder="senha" autocomplete="current-password">' +
       '<button id="eeachat-go">Entrar</button></div>';
     var go = function () {
-      var em = document.getElementById('eeachat-em').value.trim();
+      var em = (document.getElementById('eeachat-em').value || '').trim();
       var se = document.getElementById('eeachat-se').value;
       if (!em || !se) return;
       fetch(API + '/api/login', {
@@ -4950,7 +4988,7 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
           } catch (e) {}
           ligarWS(); listar(); contarNaoLidas();
         })
-        .catch(function () { telaLogin('Servidor da Produção não respondeu.'); });
+        .catch(function () { telaLogin('O servidor da Produção não respondeu.'); });
     };
     document.getElementById('eeachat-go').onclick = go;
     document.getElementById('eeachat-se').onkeydown = function (e) { if (e.key === 'Enter') go(); };
@@ -4960,46 +4998,86 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
     TOKEN = null; EU = null; ATUAL = null;
     try { localStorage.removeItem('chat_eea_token'); localStorage.removeItem('chat_eea_user'); } catch (e) {}
     if (WS) { try { WS.close(); } catch (e) {} }
-    telaLogin('Sua sessão expirou. Entre de novo.');
+    if (fundo.classList.contains('on')) telaLogin('Sua sessão expirou. Entre de novo.');
   }
 
-  // ── lista de contatos ───────────────────────────────────────
+  // ── tela principal (duas colunas, igual à Produção) ─────────
   function listar() {
-    ATUAL = null;
-    box.innerHTML = topo('Mensagens') + '<div class="eeachat-body" id="eeachat-lista">' +
-      '<div style="padding:18px;text-align:center;color:#666;font-size:12px">Carregando…</div></div>' +
-      '<div style="padding:7px 11px;border-top:1px solid #2e2e2e;font-size:10.5px;color:#666">' +
-      esc(EU ? EU.nome : '') + ' · <span style="cursor:pointer;text-decoration:underline" onclick="window.__eeachatSair()">sair</span></div>';
+    painel().innerHTML = cabecalho() +
+      '<div class="eeachat-grid" id="eeachat-grid">' +
+        '<div class="eeachat-esq">' +
+          '<div class="eeachat-busca"><input id="eeachat-q" placeholder="Buscar pessoa…"></div>' +
+          '<div class="eeachat-lista" id="eeachat-lista"><div class="eeachat-vazio">Carregando…</div></div>' +
+        '</div>' +
+        '<div class="eeachat-dir" id="eeachat-dir">' +
+          '<div class="eeachat-vazio">Escolha alguém à esquerda pra começar a conversar.</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="eeachat-rod">' + esc(EU ? EU.nome : '') + ' · <a onclick="window.__eeachatSair()">sair</a></div>';
+    var q = document.getElementById('eeachat-q');
+    q.value = BUSCA;
+    q.oninput = function () { BUSCA = q.value; renderLista(); };
     api('GET', '/api/chat/contatos').then(function (cs) {
-      CONTATOS = cs;
-      var el = document.getElementById('eeachat-lista');
-      if (!el) return;
-      if (!cs.length) {
-        el.innerHTML = '<div style="padding:18px;text-align:center;color:#666;font-size:12px">Nenhum contato.</div>';
-        return;
-      }
-      el.innerHTML = cs.map(function (c) {
-        return '<div class="eeachat-ct" onclick="window.__eeachatAbrir(' + c.id + ')">' +
-          '<div class="eeachat-av" style="background:' + cor(c.id) + '">' + esc(inic(c.nome)) + '</div>' +
-          '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600">' + esc(c.nome) + '</div>' +
-          '<div style="font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
-          (c.ultima_texto ? esc(c.ultima_texto) : '<i>sem mensagens</i>') + '</div></div>' +
-          (c.nao_lidas > 0 ? '<div style="background:#00e5a0;color:#000;font:700 10px monospace;border-radius:9px;padding:1px 6px">' + c.nao_lidas + '</div>' : '') +
-          '</div>';
-      }).join('');
+      CONTATOS = cs; renderLista();
+      if (ATUAL) abrirConversa(ATUAL);
     }).catch(function (e) {
       var el = document.getElementById('eeachat-lista');
-      if (el) el.innerHTML = '<div style="padding:16px;color:#ff6b6b;font-size:12px">' + esc(e.erro || 'Erro') + '</div>';
+      if (el) el.innerHTML = '<div class="eeachat-vazio" style="color:#ff6b6b">' + esc(e.erro || 'Erro') + '</div>';
     });
   }
 
-  // ── conversa ────────────────────────────────────────────────
-  function abrir(id) {
+  function renderLista() {
+    var el = document.getElementById('eeachat-lista');
+    if (!el) return;
+    var b = (BUSCA || '').toLowerCase();
+    var lista = CONTATOS.filter(function (c) {
+      return !b || (c.nome || '').toLowerCase().indexOf(b) >= 0 ||
+             (c.fornecedor_nome || '').toLowerCase().indexOf(b) >= 0;
+    });
+    if (!lista.length) {
+      el.innerHTML = '<div class="eeachat-vazio">' + (b ? 'Ninguém com esse nome.' : 'Nenhum contato.') + '</div>';
+      return;
+    }
+    var equipe = lista.filter(function (c) { return c.papel !== 'fornecedor'; });
+    var forns  = lista.filter(function (c) { return c.papel === 'fornecedor'; });
+    var grupo = function (titulo, itens) {
+      if (!itens.length) return '';
+      return '<div class="eeachat-gr">' + titulo + '</div>' + itens.map(function (c) {
+        var sel = Number(ATUAL) === Number(c.id);
+        var pill = c.papel === 'fornecedor'
+          ? '<span class="eeachat-pill eeachat-fo">' + esc(String(c.fornecedor_nome || 'FORNEC').slice(0, 14)) + '</span>'
+          : '<span class="eeachat-pill eeachat-eq">EQUIPE</span>';
+        return '<div class="eeachat-ct' + (sel ? ' on' : '') + '" onclick="window.__eeachatAbrir(' + c.id + ')">' +
+          '<div class="eeachat-av" style="background:' + cor(c.id) + '">' + esc(inic(c.nome)) + '</div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div class="eeachat-nome">' + esc(c.nome) + ' ' + pill + '</div>' +
+            '<div class="eeachat-prev">' + (c.ultima_texto ? esc(c.ultima_texto) : '<i>sem mensagens</i>') + '</div>' +
+          '</div>' +
+          '<div class="eeachat-hora">' + (c.ultima_em ? hora(c.ultima_em) : '') +
+            (c.nao_lidas > 0 ? '<div class="eeachat-un">' + c.nao_lidas + '</div>' : '') + '</div>' +
+        '</div>';
+      }).join('');
+    };
+    var souForn = EU && EU.papel === 'fornecedor';
+    el.innerHTML = souForn ? grupo('EEA MÓVEIS', equipe)
+                           : grupo('EQUIPE', equipe) + grupo('FABRICANTES E FORNECEDORES', forns);
+  }
+
+  function abrirConversa(id) {
     ATUAL = Number(id);
     var c = CONTATOS.filter(function (x) { return Number(x.id) === ATUAL; })[0] || { nome: '—' };
-    box.innerHTML = topo(c.nome, true) +
-      '<div class="eeachat-msgs" id="eeachat-msgs"><div style="margin:auto;color:#666;font-size:12px">Carregando…</div></div>' +
-      '<div class="eeachat-cx"><input id="eeachat-in" placeholder="Escreva uma mensagem…"><button id="eeachat-snd">➤</button></div>';
+    var dir = document.getElementById('eeachat-dir');
+    if (!dir) return;
+    dir.innerHTML =
+      '<div class="eeachat-topo">' +
+        '<div class="eeachat-av" style="background:' + cor(c.id) + '">' + esc(inic(c.nome)) + '</div>' +
+        '<div><div style="font-size:13px;font-weight:600">' + esc(c.nome) + '</div>' +
+        '<div style="font:10.5px monospace;color:#666">' +
+        (c.papel === 'fornecedor' ? esc(c.fornecedor_nome || 'fornecedor') : 'equipe EEA') + '</div></div>' +
+      '</div>' +
+      '<div class="eeachat-msgs" id="eeachat-msgs"><div class="eeachat-vazio">Carregando…</div></div>' +
+      '<div class="eeachat-cx"><input id="eeachat-in" placeholder="Escreva uma mensagem…">' +
+      '<button class="eeachat-snd" id="eeachat-snd">➤</button></div>';
     var env = function () {
       var i = document.getElementById('eeachat-in');
       var t = (i.value || '').trim();
@@ -5010,19 +5088,32 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
     };
     document.getElementById('eeachat-snd').onclick = env;
     document.getElementById('eeachat-in').onkeydown = function (e) { if (e.key === 'Enter') env(); };
+    renderLista();
     api('GET', '/api/chat/' + ATUAL + '/mensagens').then(function (ms) {
-      var el = document.getElementById('eeachat-msgs');
-      if (!el) return;
-      el.innerHTML = ms.length ? ms.map(bolha).join('')
-        : '<div style="margin:auto;color:#666;font-size:12px;text-align:center">Nenhuma mensagem ainda.</div>';
-      el.scrollTop = el.scrollHeight;
+      pintarMensagens(ms);
       var alvo = CONTATOS.filter(function (x) { return Number(x.id) === ATUAL; })[0];
-      if (alvo) { NAOLIDAS = Math.max(0, NAOLIDAS - (alvo.nao_lidas || 0)); alvo.nao_lidas = 0; badge(); }
-      document.getElementById('eeachat-in').focus();
+      if (alvo) { NAOLIDAS = Math.max(0, NAOLIDAS - (alvo.nao_lidas || 0)); alvo.nao_lidas = 0; badge(); renderLista(); }
+      var i = document.getElementById('eeachat-in'); if (i) i.focus();
     }).catch(function (e) {
       var el = document.getElementById('eeachat-msgs');
-      if (el) el.innerHTML = '<div style="margin:auto;color:#ff6b6b;font-size:12px">' + esc(e.erro || 'Erro') + '</div>';
+      if (el) el.innerHTML = '<div class="eeachat-vazio" style="color:#ff6b6b">' + esc(e.erro || 'Erro') + '</div>';
     });
+  }
+
+  function pintarMensagens(ms) {
+    var el = document.getElementById('eeachat-msgs');
+    if (!el) return;
+    if (!ms.length) {
+      el.innerHTML = '<div class="eeachat-vazio">Nenhuma mensagem ainda.<br>Escreva a primeira aí embaixo.</div>';
+      return;
+    }
+    var d = '';
+    el.innerHTML = ms.map(function (m) {
+      var dd = dia(m.criado_em), sep = '';
+      if (dd !== d) { d = dd; sep = '<div class="eeachat-dia">' + dd + '</div>'; }
+      return sep + bolha(m);
+    }).join('');
+    el.scrollTop = el.scrollHeight;
   }
 
   function bolha(m) {
@@ -5036,13 +5127,12 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
   function ligarWS() {
     if (!TOKEN) return;
     try {
-      var u = API.replace(/^http/, 'ws') + '/ws?token=' + encodeURIComponent(TOKEN);
-      WS = new WebSocket(u);
+      WS = new WebSocket(API.replace(/^http/, 'ws') + '/ws?token=' + encodeURIComponent(TOKEN));
       WS.onmessage = function (ev) {
         var msg; try { msg = JSON.parse(ev.data); } catch (e) { return; }
         if (msg.tipo === 'chat_msg') recebeu(msg);
         else if (msg.tipo === 'chat_lido' && Number(ATUAL) === Number(msg.por_id)) {
-          var ts = box.querySelectorAll('[data-meu="1"] .eeachat-tick');
+          var ts = document.querySelectorAll('#eeachat-msgs [data-meu="1"] .eeachat-tick');
           for (var i = 0; i < ts.length; i++) ts[i].textContent = ' ✓✓';
         }
       };
@@ -5054,7 +5144,9 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
     var m = msg.mensagem;
     var souDest = EU && Number(m.para_id) === Number(EU.id);
     var outro = souDest ? m.de_id : m.para_id;
-    if (Number(ATUAL) === Number(outro)) {
+    var aberto = fundo.classList.contains('on') && Number(ATUAL) === Number(outro);
+
+    if (aberto) {
       var el = document.getElementById('eeachat-msgs');
       if (el) {
         if (!el.querySelector('[data-msg]')) el.innerHTML = '';
@@ -5064,12 +5156,28 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
       if (souDest) api('GET', '/api/chat/' + outro + '/mensagens').catch(function () {});
     } else if (souDest) {
       NAOLIDAS++; badge();
-      if (!box.classList.contains('on')) {
-        btn.animate && btn.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 380 });
-      }
+      notificarPC('💬 ' + (msg.de_nome || 'Nova mensagem'), m.texto, 'chat-' + outro, function () {
+        abrirPainel(); setTimeout(function () { abrirConversa(outro); }, 300);
+      });
     }
     var c = CONTATOS.filter(function (x) { return Number(x.id) === Number(outro); })[0];
-    if (c) { c.ultima_texto = m.texto; c.ultima_em = m.criado_em; }
+    if (c) {
+      c.ultima_texto = m.texto; c.ultima_em = m.criado_em;
+      if (souDest && !aberto) c.nao_lidas = (c.nao_lidas || 0) + 1;
+      if (fundo.classList.contains('on')) renderLista();
+    }
+  }
+
+  // Pop-up do sistema operacional
+  function notificarPC(titulo, corpo, tag, aoClicar) {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') { try { Notification.requestPermission(); } catch (e) {} return; }
+    if (Notification.permission !== 'granted') return;
+    try {
+      var n = new Notification(titulo, { body: corpo, tag: tag });
+      n.onclick = function () { window.focus(); if (aoClicar) { try { aoClicar(); } catch (e) {} } n.close(); };
+      setTimeout(function () { try { n.close(); } catch (e) {} }, 15000);
+    } catch (e) {}
   }
 
   function contarNaoLidas() {
@@ -5082,9 +5190,9 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
     else b.style.display = 'none';
   }
 
-  window.__eeachatAbrir = abrir;
-  window.__eeachatVoltar = listar;
+  window.__eeachatAbrir = abrirConversa;
   window.__eeachatSair = sair;
+  window.__eeachatFechar = fecharPainel;
 })();
 </script>
 
