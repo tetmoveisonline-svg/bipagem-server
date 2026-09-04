@@ -12,9 +12,11 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- Leitura do PDF de etiquetas: acontece AQUI no navegador, não no servidor.
-     O servidor aceita 2 MB por requisição e um PDF de etiquetas passa de 8 MB. -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+     O servidor aceita 2 MB por requisição e um PDF de etiquetas passa de 8 MB.
+     Servidas do próprio servidor, e não de CDN: se o CDN falhar ou for bloqueado,
+     a leitura devolvia "0 códigos" sem explicar o motivo. -->
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/jsQR.js"></script>
 <style>
 :root{
   --bg:#0f0f0f;--surface:#1a1a1a;--surface2:#222;--surface3:#2a2a2a;
@@ -2043,7 +2045,7 @@ let romaneioParsed = null; // { etiquetas: [{etiqueta, pickup_time}], total }
 let _LOTE = { modo: null, codigos: [], diag: null };
 // Sem apontar o worker, o pdf.js não processa o arquivo.
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  'vendor/pdf.worker.min.js';
 const _LOTE_RE = /^BR\d{10,13}[A-Z0-9]$/;
 
 function abrirLotePDF(modo) {
@@ -2087,16 +2089,46 @@ function _loteBotao(ativo, texto) {
   b.style.background = (_LOTE.modo === 'saida' && ativo) ? '#ffb547' : 'var(--accent)';
 }
 
-// Lê uma página e devolve o rastreio, ou null.
+// Canvas auxiliar para os recortes
+let _loteCv2 = null, _loteCtx2 = null;
+
+function _loteTentar(ctx, w, h) {
+  try {
+    const d = ctx.getImageData(0, 0, w, h);
+    const r = jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' });
+    return (r && _LOTE_RE.test(r.data)) ? r.data : null;
+  } catch (e) { return null; }
+}
+
+// Lê uma página inteira e, se não achar, tenta em pedaços.
+// Um QR sozinho num quadro menor é bem mais fácil de localizar do que
+// perdido numa etiqueta cheia de texto e outros códigos.
 async function _loteLerPagina(pdf, n, escala, cv, ctx) {
   const page = await pdf.getPage(n);
   const vp = page.getViewport({ scale: escala });
   cv.width = vp.width; cv.height = vp.height;
   await page.render({ canvasContext: ctx, viewport: vp }).promise;
-  const img = ctx.getImageData(0, 0, cv.width, cv.height);
-  let r = null;
-  try { r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' }); } catch (e) {}
-  return (r && _LOTE_RE.test(r.data)) ? r.data : null;
+
+  const inteira = _loteTentar(ctx, cv.width, cv.height);
+  if (inteira) return inteira;
+
+  if (!_loteCv2) {
+    _loteCv2 = document.createElement('canvas');
+    _loteCtx2 = _loteCv2.getContext('2d', { willReadFrequently: true });
+  }
+  const W = cv.width, H = cv.height;
+  const cw = Math.floor(W * 0.62), ch = Math.floor(H * 0.42);
+  for (let ry = 0; ry < 3; ry++) {
+    for (let rx = 0; rx < 2; rx++) {
+      const cx = Math.floor(rx * (W - cw));
+      const cy = Math.floor(ry * (H - ch) / 2);
+      _loteCv2.width = cw; _loteCv2.height = ch;
+      _loteCtx2.drawImage(cv, cx, cy, cw, ch, 0, 0, cw, ch);
+      const c = _loteTentar(_loteCtx2, cw, ch);
+      if (c) return c;
+    }
+  }
+  return null;
 }
 
 async function lerPDFLote() {
@@ -2107,6 +2139,19 @@ async function lerPDFLote() {
   const txt = document.getElementById('lote-progresso-txt');
   const diag = document.getElementById('lote-diagnostico');
   diag.innerHTML = '';
+
+  // Sem esta checagem, uma biblioteca que não carregou faz TODAS as páginas
+  // falharem e a tela diz apenas "0 códigos", sem dizer o porquê.
+  const faltando = [];
+  if (typeof pdfjsLib === 'undefined') faltando.push('leitor de PDF');
+  if (typeof jsQR === 'undefined') faltando.push('leitor de código de barras');
+  if (faltando.length) {
+    diag.innerHTML = `<div style="background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.35);border-radius:6px;padding:10px 12px;color:#ff8a8a;">
+      Não foi possível carregar o ${faltando.join(' nem o ')}. Recarregue a página (F5) e tente de novo.</div>`;
+    _loteBotao(false, 'Confirmar');
+    return;
+  }
+
   prog.style.display = '';
   _loteBotao(false, 'Lendo…');
 
@@ -2143,6 +2188,8 @@ async function lerPDFLote() {
     if (!codigos.length) {
       diag.innerHTML = `<div style="background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.35);border-radius:6px;padding:10px 12px;color:#ff8a8a;">
         Nenhum código de barras foi lido neste PDF (${pdf.numPages} páginas). Confira se é o arquivo de etiquetas certo.</div>`;
+      // Sem isto o botão fica preso em "Lendo…" e a tela parece travada.
+      _loteBotao(false, 'Confirmar');
       return;
     }
 
@@ -2155,6 +2202,7 @@ async function lerPDFLote() {
   } catch (e) {
     prog.style.display = 'none';
     diag.innerHTML = `<div style="color:#ff8a8a;">Erro ao ler o PDF: ${e.message}</div>`;
+    _loteBotao(false, 'Confirmar');
   }
 }
 
