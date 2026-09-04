@@ -177,6 +177,19 @@ async function initDB() {
       hora TEXT,
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
+
+    -- A tabela de retornos era usada pelo sistema mas nunca era criada aqui:
+    -- só existia porque alguém a criou na mão no banco. Num banco novo, a aba
+    -- Retorno quebraria. Com IF NOT EXISTS, o banco atual não é tocado.
+    CREATE TABLE IF NOT EXISTS retornos (
+      id TEXT PRIMARY KEY,
+      etiqueta TEXT NOT NULL,
+      motivo TEXT DEFAULT '',
+      data TEXT,
+      hora TEXT,
+      criado_em TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_retornos_etiqueta ON retornos(etiqueta);
   `);
 
   // Migração: adicionar coluna tema se ainda não existe (bancos pré-existentes)
@@ -712,6 +725,146 @@ app.post('/api/bipagens', autenticar, async (req, res) => {
     }
     console.error(e);
     res.status(500).json({ erro: 'Erro ao registrar bipagem.' });
+  }
+});
+
+// ═══════════════ LOTE POR PDF DE ETIQUETAS ═══════════════
+// O PDF é lido no navegador (igual ao Importar Romaneio). Aqui chega só a lista
+// de rastreios. Duas chamadas: sem 'confirmar' devolve o diagnóstico pra tela
+// mostrar, com 'confirmar' grava. Nada é gravado sem o usuário ver antes.
+
+function limparEtiquetas(lista) {
+  if (!Array.isArray(lista)) return [];
+  const vistas = new Set();
+  const saida = [];
+  for (const e of lista) {
+    const s = String(e || '').trim().toUpperCase();
+    if (s.length < 5) continue;
+    if (vistas.has(s)) continue;   // o mesmo PDF pode repetir a etiqueta
+    vistas.add(s);
+    saida.push(s);
+  }
+  return saida;
+}
+
+// POST /api/bipagens/lote — entrada em massa
+app.post('/api/bipagens/lote', autenticar, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { marketplace_id, colaborador_id, confirmar } = req.body || {};
+    const etiquetas = limparEtiquetas(req.body && req.body.etiquetas);
+    if (!etiquetas.length) { client.release(); return res.status(400).json({ erro: 'Nenhuma etiqueta válida no arquivo.' }); }
+    if (!marketplace_id || !colaborador_id) { client.release(); return res.status(400).json({ erro: 'Escolha o marketplace e o colaborador.' }); }
+
+    const [mktR, colabR] = await Promise.all([
+      client.query(`SELECT id, nome FROM marketplaces WHERE id = $1`, [toInt(marketplace_id)]),
+      client.query(`SELECT id, nome FROM colaboradores WHERE id = $1`, [toInt(colaborador_id)])
+    ]);
+    const mkt = mktR.rows[0], colab = colabR.rows[0];
+    if (!mkt || !colab) { client.release(); return res.status(400).json({ erro: 'Marketplace ou colaborador inválido.' }); }
+
+    const jaR = await client.query(
+      `SELECT etiqueta, colaborador_nome, data, hora FROM bipagens WHERE etiqueta = ANY($1::text[])`,
+      [etiquetas]
+    );
+    const jaMap = new Map(jaR.rows.map(r => [r.etiqueta, r]));
+    const novas = etiquetas.filter(e => !jaMap.has(e));
+    const duplicadas = jaR.rows.map(r => ({
+      etiqueta: r.etiqueta, colaborador_nome: r.colaborador_nome, data: r.data, hora: r.hora
+    }));
+
+    if (!confirmar) {
+      client.release();
+      return res.json({ total_lidas: etiquetas.length, novas, duplicadas, marketplace: mkt.nome, colaborador: colab.nome });
+    }
+
+    if (!novas.length) { client.release(); return res.json({ gravadas: 0, duplicadas }); }
+
+    const { data, hora } = nowBR();
+    await client.query('BEGIN');
+    const salvas = [];
+    for (const etiq of novas) {
+      const r = await client.query(`
+        INSERT INTO bipagens (id, etiqueta, marketplace_id, marketplace_nome,
+          colaborador_id, colaborador_nome, usuario_id, usuario_nome, data, hora)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        ON CONFLICT (etiqueta) DO NOTHING
+        RETURNING *
+      `, [uid(), etiq, mkt.id, mkt.nome, colab.id, colab.nome, req.usuario.id, req.usuario.nome, data, hora]);
+      if (r.rows[0]) salvas.push(toISO(r.rows[0]));
+    }
+    await client.query('COMMIT');
+    client.release();
+
+    // Um aviso por etiqueta deixaria as outras telas travadas com 150 mensagens.
+    salvas.forEach(s => broadcast('bipagem:add', s));
+    res.json({ gravadas: salvas.length, duplicadas });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    try { client.release(); } catch {}
+    console.error('bipagens/lote:', e);
+    res.status(500).json({ erro: 'Erro ao gravar o lote.' });
+  }
+});
+
+// POST /api/retornos/lote — saída em massa
+app.post('/api/retornos/lote', autenticar, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { motivo = '', confirmar } = req.body || {};
+    const etiquetas = limparEtiquetas(req.body && req.body.etiquetas);
+    if (!etiquetas.length) { client.release(); return res.status(400).json({ erro: 'Nenhuma etiqueta válida no arquivo.' }); }
+
+    const bipR = await client.query(
+      `SELECT etiqueta, colaborador_nome, marketplace_nome FROM bipagens WHERE etiqueta = ANY($1::text[])`,
+      [etiquetas]
+    );
+    const bipSet = new Set(bipR.rows.map(r => r.etiqueta));
+
+    const retR = await client.query(
+      `SELECT DISTINCT ON (etiqueta) etiqueta, data, hora FROM retornos
+       WHERE etiqueta = ANY($1::text[]) ORDER BY etiqueta, criado_em DESC`,
+      [etiquetas]
+    );
+    const retMap = new Map(retR.rows.map(r => [r.etiqueta, r]));
+
+    const vaoVoltar = etiquetas.filter(e => bipSet.has(e));
+    const naoBipadas = etiquetas.filter(e => !bipSet.has(e) && !retMap.has(e));
+    const jaRetornadas = etiquetas
+      .filter(e => !bipSet.has(e) && retMap.has(e))
+      .map(e => ({ etiqueta: e, data: retMap.get(e).data, hora: retMap.get(e).hora }));
+
+    if (!confirmar) {
+      client.release();
+      return res.json({ total_lidas: etiquetas.length, vao_voltar: vaoVoltar, nao_bipadas: naoBipadas, ja_retornadas: jaRetornadas });
+    }
+
+    if (!vaoVoltar.length) { client.release(); return res.json({ devolvidas: 0, nao_bipadas: naoBipadas, ja_retornadas: jaRetornadas }); }
+
+    const { data, hora } = nowBR();
+    await client.query('BEGIN');
+    const removidas = [];
+    const criados = [];
+    for (const etiq of vaoVoltar) {
+      const r = await client.query(
+        `INSERT INTO retornos (id, etiqueta, motivo, data, hora) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [uid(), etiq, motivo, data, hora]
+      );
+      criados.push(toISO(r.rows[0]));
+      const d = await client.query(`DELETE FROM bipagens WHERE etiqueta = $1 RETURNING id`, [etiq]);
+      if (d.rows[0]) removidas.push(d.rows[0].id);
+    }
+    await client.query('COMMIT');
+    client.release();
+
+    criados.forEach(c => broadcast('retorno:add', c));
+    removidas.forEach(id => broadcast('bipagem:del', { id }));
+    res.json({ devolvidas: criados.length, nao_bipadas: naoBipadas, ja_retornadas: jaRetornadas });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    try { client.release(); } catch {}
+    console.error('retornos/lote:', e);
+    res.status(500).json({ erro: 'Erro ao gravar o lote de retorno.' });
   }
 });
 
