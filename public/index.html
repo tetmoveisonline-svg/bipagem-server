@@ -2289,6 +2289,26 @@ async function lerRomaneio(){
   preview.innerHTML = `<div style="color:var(--text2);">⏳ Lendo arquivo...</div>`;
   try {
     const buf = await file.arrayBuffer();
+
+    // TRAVA: o seletor aceita "todos os arquivos", então dá pra escolher um PDF aqui
+    // sem querer. Sem esta checagem, o leitor de planilha interpreta o binário do PDF
+    // como se fossem linhas e inventa milhares de "etiquetas" ilegíveis.
+    const assinatura = new Uint8Array(buf.slice(0, 4));
+    const ehPDF = assinatura[0] === 0x25 && assinatura[1] === 0x50 && assinatura[2] === 0x44 && assinatura[3] === 0x46; // %PDF
+    const ehZIP = assinatura[0] === 0x50 && assinatura[1] === 0x4B; // PK — todo .xlsx é um zip
+    if (ehPDF) {
+      document.getElementById('imp-confirm-btn').disabled = true;
+      preview.innerHTML = `<div class="col-feedback-err">⚠ Este é um arquivo PDF, não uma planilha.<br>
+        Para dar baixa por PDF de etiquetas, use o botão <b>Importar PDF de Etiquetas</b> na aba Bipagem,
+        ou <b>Retorno em massa por PDF</b> na aba Retorno.</div>`;
+      return;
+    }
+    if (!ehZIP) {
+      document.getElementById('imp-confirm-btn').disabled = true;
+      preview.innerHTML = `<div class="col-feedback-err">⚠ Este arquivo não é uma planilha .xlsx válida.</div>`;
+      return;
+    }
+
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
@@ -2328,6 +2348,20 @@ async function lerRomaneio(){
     if (etiquetas.length === 0) {
       preview.innerHTML = `<div class="col-feedback-err">⚠ Nenhuma etiqueta encontrada no arquivo. Verifique se a coluna B contém os Tracking Numbers.</div>`;
       desabilitarConfirmImport();
+      return;
+    }
+
+    // Segunda trava: mesmo sendo um zip, o conteúdo pode não ser um romaneio.
+    // Etiqueta de verdade é curta e só tem letra/número. Se a maioria não parece
+    // etiqueta, é sinal de que o arquivo foi lido errado — melhor recusar do que
+    // dar baixa em milhares de linhas inventadas.
+    const pareceEtiqueta = e => /^[A-Z0-9][A-Z0-9._\-\/]{4,39}$/.test(e.etiqueta);
+    const validas = etiquetas.filter(pareceEtiqueta).length;
+    if (validas / etiquetas.length < 0.6) {
+      desabilitarConfirmImport();
+      preview.innerHTML = `<div class="col-feedback-err">⚠ O conteúdo não parece um romaneio.<br>
+        Das ${etiquetas.length.toLocaleString('pt-BR')} linhas lidas, só ${validas.toLocaleString('pt-BR')} parecem etiquetas.
+        Confira se é o arquivo certo antes de importar.</div>`;
       return;
     }
 
