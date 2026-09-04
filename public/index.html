@@ -11,6 +11,10 @@
 </script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Leitura do PDF de etiquetas: acontece AQUI no navegador, não no servidor.
+     O servidor aceita 2 MB por requisição e um PDF de etiquetas passa de 8 MB. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
 <style>
 :root{
   --bg:#0f0f0f;--surface:#1a1a1a;--surface2:#222;--surface3:#2a2a2a;
@@ -569,9 +573,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
             <div class="page-title">Estação de bipagem</div>
             <div style="font-size:22px;font-weight:600;letter-spacing:-.02em;" id="bip-colab-name">Selecione um colaborador</div>
           </div>
-          <div class="field" style="min-width:200px;">
-            <label>Colaborador</label>
-            <select id="sel-colab" onchange="selecionarColab()"><option value="">— selecionar —</option></select>
+          <div style="display:flex;gap:10px;align-items:flex-end;">
+            <button class="btn" onclick="abrirLotePDF('entrada')" style="background:var(--info);color:#fff;font-size:11px;padding:6px 12px;white-space:nowrap;">📥 Importar PDF de Etiquetas</button>
+            <div class="field" style="min-width:200px;">
+              <label>Colaborador</label>
+              <select id="sel-colab" onchange="selecionarColab()"><option value="">— selecionar —</option></select>
+            </div>
           </div>
         </div>
         <div class="stats-row" id="stats-row">
@@ -696,7 +703,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 
       <!-- RETORNO -->
       <div class="panel" id="panel-retorno">
-        <div class="page-title">Retorno de Etiqueta</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div class="page-title">Retorno de Etiqueta</div>
+          <button class="btn" onclick="abrirLotePDF('saida')" style="background:var(--info);color:#fff;font-size:11px;padding:6px 12px;">📤 Retorno em massa por PDF</button>
+        </div>
         <div class="add-form">
           <div class="add-form-title">Registrar devolução — remove automaticamente da bipagem</div>
           <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:flex-end;">
@@ -997,6 +1007,53 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
     </button>
   </div>
 </div>
+
+        <!-- Modal: Lote por PDF de etiquetas (serve Bipagem e Retorno) -->
+        <div id="modal-lote" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.5rem;width:640px;max-width:94vw;max-height:90vh;overflow:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+              <div style="font-size:16px;font-weight:600;" id="lote-titulo">Importar PDF de Etiquetas</div>
+              <button onclick="fecharLotePDF()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;">×</button>
+            </div>
+
+            <div style="font-size:12px;color:var(--text2);margin-bottom:1rem;line-height:1.55;" id="lote-explica"></div>
+
+            <div id="lote-step1">
+              <div id="lote-campos-entrada" style="display:none;">
+                <div class="field" style="margin-bottom:1rem;">
+                  <label>Marketplace *</label>
+                  <select id="lote-mkt"></select>
+                </div>
+                <div class="field" style="margin-bottom:1rem;">
+                  <label>Colaborador / separador *</label>
+                  <select id="lote-colab"></select>
+                </div>
+              </div>
+              <div id="lote-campos-saida" style="display:none;">
+                <div class="field" style="margin-bottom:1rem;">
+                  <label>Motivo (vale para todas do arquivo)</label>
+                  <input type="text" id="lote-motivo" placeholder="Ex.: sem produto em estoque"/>
+                </div>
+              </div>
+              <div class="field" style="margin-bottom:1rem;">
+                <label>Arquivo (.pdf)</label>
+                <input type="file" id="lote-file" accept=".pdf" onchange="lerPDFLote()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:var(--r);width:100%;box-sizing:border-box;"/>
+              </div>
+              <div id="lote-progresso" style="display:none;">
+                <div style="height:7px;background:var(--surface2);border-radius:4px;overflow:hidden;margin:9px 0 5px;">
+                  <div id="lote-barra" style="height:100%;background:var(--accent);width:0%;transition:width .2s;"></div>
+                </div>
+                <div id="lote-progresso-txt" style="font-size:11.5px;color:var(--text2);font-family:var(--mono,monospace);"></div>
+              </div>
+              <div id="lote-diagnostico" style="font-size:12px;"></div>
+            </div>
+
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem;">
+              <button class="btn" onclick="fecharLotePDF()" style="background:var(--surface2);">Cancelar</button>
+              <button class="btn btn-primary" id="lote-btn" onclick="confirmarLotePDF()" disabled style="background:var(--accent);color:#000;opacity:.5;cursor:not-allowed;">Confirmar</button>
+            </div>
+          </div>
+        </div>
 
 <div class="toast-area" id="toast-area"></div>
 
@@ -1980,6 +2037,210 @@ async function bipColeta(){
 
 // ── Importar romaneio (.xlsx) ─────────────────────────────────
 let romaneioParsed = null; // { etiquetas: [{etiqueta, pickup_time}], total }
+
+// ═══════════════ LOTE POR PDF DE ETIQUETAS ═══════════════
+// O PDF não sobe pro servidor: é lido aqui, e só a lista de rastreios é enviada.
+let _LOTE = { modo: null, codigos: [], diag: null };
+// Sem apontar o worker, o pdf.js não processa o arquivo.
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const _LOTE_RE = /^BR\d{10,13}[A-Z0-9]$/;
+
+function abrirLotePDF(modo) {
+  _LOTE = { modo, codigos: [], diag: null };
+  const entrada = modo === 'entrada';
+  document.getElementById('lote-titulo').textContent = entrada
+    ? '📥 Importar PDF de Etiquetas — bipar em massa'
+    : '📤 Retorno em massa por PDF';
+  document.getElementById('lote-explica').innerHTML = entrada
+    ? 'O arquivo é lido aqui no seu navegador, pelos códigos de barras das etiquetas. Nada é gravado antes de você conferir.'
+    : 'As etiquetas do arquivo serão devolvidas e <strong>saem da bipagem</strong>. Nada é gravado antes de você conferir.';
+  document.getElementById('lote-campos-entrada').style.display = entrada ? '' : 'none';
+  document.getElementById('lote-campos-saida').style.display = entrada ? 'none' : '';
+  document.getElementById('lote-file').value = '';
+  document.getElementById('lote-diagnostico').innerHTML = '';
+  document.getElementById('lote-progresso').style.display = 'none';
+  _loteBotao(false, 'Confirmar');
+
+  if (entrada) {
+    // Reaproveita as listas que a tela já carregou
+    const m = document.getElementById('lote-mkt');
+    const c = document.getElementById('lote-colab');
+    m.innerHTML = '<option value="">— selecionar —</option>' +
+      (S.marketplaces || []).map(x => `<option value="${x.id}">${x.nome}</option>`).join('');
+    c.innerHTML = '<option value="">— selecionar —</option>' +
+      (S.colaboradores || []).map(x => `<option value="${x.id}">${x.nome}</option>`).join('');
+  }
+  document.getElementById('modal-lote').style.display = 'flex';
+}
+
+function fecharLotePDF() {
+  document.getElementById('modal-lote').style.display = 'none';
+}
+
+function _loteBotao(ativo, texto) {
+  const b = document.getElementById('lote-btn');
+  b.disabled = !ativo;
+  b.textContent = texto;
+  b.style.opacity = ativo ? '1' : '.5';
+  b.style.cursor = ativo ? 'pointer' : 'not-allowed';
+  b.style.background = (_LOTE.modo === 'saida' && ativo) ? '#ffb547' : 'var(--accent)';
+}
+
+// Lê uma página e devolve o rastreio, ou null.
+async function _loteLerPagina(pdf, n, escala, cv, ctx) {
+  const page = await pdf.getPage(n);
+  const vp = page.getViewport({ scale: escala });
+  cv.width = vp.width; cv.height = vp.height;
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  const img = ctx.getImageData(0, 0, cv.width, cv.height);
+  let r = null;
+  try { r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' }); } catch (e) {}
+  return (r && _LOTE_RE.test(r.data)) ? r.data : null;
+}
+
+async function lerPDFLote() {
+  const f = document.getElementById('lote-file').files[0];
+  if (!f) return;
+  const prog = document.getElementById('lote-progresso');
+  const barra = document.getElementById('lote-barra');
+  const txt = document.getElementById('lote-progresso-txt');
+  const diag = document.getElementById('lote-diagnostico');
+  diag.innerHTML = '';
+  prog.style.display = '';
+  _loteBotao(false, 'Lendo…');
+
+  try {
+    const buf = await f.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const cv = document.createElement('canvas');
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    const achados = {};
+    const pendentes = [];
+
+    // 1ª passada
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const c = await _loteLerPagina(pdf, n, 5, cv, ctx);
+      if (c) achados[n] = c; else pendentes.push(n);
+      barra.style.width = Math.round((n / pdf.numPages) * 100) + '%';
+      txt.textContent = `página ${n} de ${pdf.numPages} · ${Object.keys(achados).length} rastreios`;
+      if (n % 5 === 0) await new Promise(r => setTimeout(r, 0)); // deixa a tela respirar
+    }
+    // 2ª passada só nas que falharam, com mais resolução.
+    // No teste isso levou 151 de 154 para 154 de 154.
+    const semLeitura = [];
+    for (const n of pendentes) {
+      txt.textContent = `relendo a página ${n} em alta resolução…`;
+      let c = await _loteLerPagina(pdf, n, 7, cv, ctx);
+      if (!c) c = await _loteLerPagina(pdf, n, 9, cv, ctx);
+      if (c) achados[n] = c; else semLeitura.push(n);
+    }
+
+    const codigos = Object.values(achados);
+    _LOTE.codigos = codigos;
+    prog.style.display = 'none';
+
+    if (!codigos.length) {
+      diag.innerHTML = `<div style="background:rgba(255,77,77,.08);border:1px solid rgba(255,77,77,.35);border-radius:6px;padding:10px 12px;color:#ff8a8a;">
+        Nenhum código de barras foi lido neste PDF (${pdf.numPages} páginas). Confira se é o arquivo de etiquetas certo.</div>`;
+      return;
+    }
+
+    const avisoFalhas = semLeitura.length
+      ? `<div style="background:rgba(255,181,71,.08);border:1px solid rgba(255,181,71,.35);border-radius:6px;padding:9px 11px;color:#ffb547;margin-bottom:9px;font-size:11.5px;">
+           ${semLeitura.length} página(s) não puderam ser lidas: ${semLeitura.join(', ')}. Essas você precisa fazer na mão.</div>`
+      : '';
+
+    await _loteDiagnosticar(avisoFalhas, pdf.numPages);
+  } catch (e) {
+    prog.style.display = 'none';
+    diag.innerHTML = `<div style="color:#ff8a8a;">Erro ao ler o PDF: ${e.message}</div>`;
+  }
+}
+
+// Pergunta ao servidor o que vai acontecer, sem gravar nada.
+async function _loteDiagnosticar(avisoFalhas, totalPaginas) {
+  const diag = document.getElementById('lote-diagnostico');
+  const entrada = _LOTE.modo === 'entrada';
+  const corpo = { etiquetas: _LOTE.codigos, confirmar: false };
+  if (entrada) {
+    corpo.marketplace_id = document.getElementById('lote-mkt').value;
+    corpo.colaborador_id = document.getElementById('lote-colab').value;
+    if (!corpo.marketplace_id || !corpo.colaborador_id) {
+      diag.innerHTML = avisoFalhas + `<div style="background:rgba(255,181,71,.08);border:1px solid rgba(255,181,71,.35);border-radius:6px;padding:10px 12px;color:#ffb547;">
+        Li <b>${_LOTE.codigos.length}</b> etiquetas. Escolha o marketplace e o colaborador acima para continuar.</div>`;
+      return;
+    }
+  } else {
+    corpo.motivo = document.getElementById('lote-motivo').value || '';
+  }
+
+  const url = entrada ? '/api/bipagens/lote' : '/api/retornos/lote';
+  const r = await api('POST', url, corpo);
+  _LOTE.diag = r;
+
+  const bloco = (cor, titulo, n, itens) => `
+    <div style="border:1px solid var(--border);border-radius:7px;margin-bottom:8px;overflow:hidden;">
+      <div style="display:flex;justify-content:space-between;padding:8px 11px;background:var(--surface2);font-size:12px;font-weight:600;color:${cor};">
+        <span>${titulo}</span><span style="font-family:var(--mono,monospace);">${n}</span>
+      </div>
+      ${n ? `<div style="padding:8px 11px;font-family:var(--mono,monospace);font-size:11px;color:var(--text2);line-height:1.8;max-height:88px;overflow:auto;">${itens}</div>` : ''}
+    </div>`;
+
+  if (entrada) {
+    const dup = (r.duplicadas || []).map(d => `${d.etiqueta}${d.colaborador_nome ? ' (' + d.colaborador_nome + ')' : ''}`).join(' · ');
+    diag.innerHTML = avisoFalhas
+      + `<div style="font-size:12px;color:var(--text2);margin-bottom:9px;">${totalPaginas} páginas · <b style="color:var(--text);">${r.total_lidas}</b> etiquetas lidas · ${r.marketplace} · ${r.colaborador}</div>`
+      + bloco('var(--accent)', 'Vão ser bipadas', (r.novas || []).length, (r.novas || []).join(' · '))
+      + bloco('#ffb547', 'Já estavam bipadas — serão puladas', (r.duplicadas || []).length, dup);
+    _loteBotao((r.novas || []).length > 0, `Bipar as ${(r.novas || []).length}`);
+  } else {
+    const jr = (r.ja_retornadas || []).map(x => `${x.etiqueta} (${x.data || ''} ${x.hora || ''})`).join(' · ');
+    diag.innerHTML = avisoFalhas
+      + `<div style="font-size:12px;color:var(--text2);margin-bottom:9px;">${totalPaginas} páginas · <b style="color:var(--text);">${r.total_lidas}</b> etiquetas lidas</div>`
+      + bloco('#ffb547', 'Vão voltar — saem da bipagem', (r.vao_voltar || []).length, (r.vao_voltar || []).join(' · '))
+      + bloco('var(--text3)', 'Não estão bipadas — nada a fazer', (r.nao_bipadas || []).length, (r.nao_bipadas || []).join(' · '))
+      + bloco('var(--text3)', 'Já tinham voltado antes', (r.ja_retornadas || []).length, jr);
+    _loteBotao((r.vao_voltar || []).length > 0, `Devolver as ${(r.vao_voltar || []).length}`);
+  }
+}
+
+// Se o usuário trocar marketplace/colaborador depois de ler o PDF, refaz o diagnóstico.
+document.addEventListener('change', (e) => {
+  if ((e.target.id === 'lote-mkt' || e.target.id === 'lote-colab') && _LOTE.codigos.length) {
+    _loteDiagnosticar('', '—');
+  }
+});
+
+async function confirmarLotePDF() {
+  const entrada = _LOTE.modo === 'entrada';
+  _loteBotao(false, 'Gravando…');
+  try {
+    const corpo = { etiquetas: _LOTE.codigos, confirmar: true };
+    if (entrada) {
+      corpo.marketplace_id = document.getElementById('lote-mkt').value;
+      corpo.colaborador_id = document.getElementById('lote-colab').value;
+    } else {
+      corpo.motivo = document.getElementById('lote-motivo').value || '';
+    }
+    const url = entrada ? '/api/bipagens/lote' : '/api/retornos/lote';
+    const r = await api('POST', url, corpo);
+    fecharLotePDF();
+    if (entrada) {
+      toast(`${r.gravadas} etiqueta(s) bipada(s)` + ((r.duplicadas || []).length ? ` · ${r.duplicadas.length} já existiam` : ''), 'ok');
+    } else {
+      toast(`${r.devolvidas} etiqueta(s) devolvida(s)`, 'ok');
+    }
+    // Recarrega o estado para as listas refletirem o lote na hora
+    const estado = await api('GET', '/api/estado');
+    S = estado;
+    populateSelects();
+    renderAll();
+  } catch (e) {
+    toast('Erro: ' + (e.erro || e.message), 'err');
+    _loteBotao(true, 'Tentar de novo');
+  }
+}
 
 function abrirImportRomaneio(){
   // Sincroniza o select de transportadora do modal com o do sistema
