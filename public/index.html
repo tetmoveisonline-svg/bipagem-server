@@ -827,7 +827,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div class="add-form" style="margin-bottom:1.25rem;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <div class="add-form-title" style="margin:0;">Registrar coleta da transportadora</div>
-            <button class="btn" onclick="abrirImportRomaneio()" style="background:var(--info);color:#fff;font-size:11px;padding:6px 12px;">📥 Importar Romaneio (.xlsx)</button>
+            <button class="btn" onclick="abrirImportRomaneio()" style="background:var(--info);color:#fff;font-size:11px;padding:6px 12px;">📥 Importar coleta em massa</button>
           </div>
           <div class="add-row" style="gap:10px;">
             <div class="field"><label>Transportadora</label><select id="col-transp-sel"></select></div>
@@ -841,23 +841,28 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div id="modal-import" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;">
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.5rem;width:560px;max-width:92vw;max-height:90vh;overflow:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-              <div style="font-size:16px;font-weight:600;">📥 Importar Romaneio de Coleta</div>
+              <div style="font-size:16px;font-weight:600;">📥 Importar coleta em massa</div>
               <button onclick="fecharImportRomaneio()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;">×</button>
-            </div>
-
-            <div style="font-size:12px;color:var(--text2);margin-bottom:1rem;line-height:1.5;">
-              Faça upload do arquivo <code style="background:var(--surface2);padding:2px 6px;border-radius:3px;">.xlsx</code> que a plataforma envia.
-              O sistema vai ler a coluna <strong>B (Tracking Number)</strong> e <strong>E (Pickup Time)</strong> e dar baixa nas etiquetas correspondentes.
             </div>
 
             <!-- Etapa 1: seleção -->
             <div id="imp-step1">
               <div class="field" style="margin-bottom:1rem;">
+                <label>Modelo do arquivo</label>
+                <select id="imp-modelo" onchange="trocarModeloImport()">
+                  <option value="xlsx">Romaneio da plataforma (.xlsx)</option>
+                  <option value="recibo">Recibo de Entrega / Drop off Receipt (.pdf)</option>
+                </select>
+              </div>
+
+              <div id="imp-ajuda" style="font-size:12px;color:var(--text2);margin-bottom:1rem;line-height:1.5;"></div>
+
+              <div class="field" style="margin-bottom:1rem;">
                 <label>Transportadora *</label>
                 <select id="imp-transp-sel"></select>
               </div>
               <div class="field" style="margin-bottom:1rem;">
-                <label>Arquivo (.xlsx)</label>
+                <label id="imp-file-label">Arquivo (.xlsx)</label>
                 <input type="file" id="imp-file" accept=".xlsx" onchange="lerRomaneio()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:var(--r);width:100%;box-sizing:border-box;"/>
               </div>
               <div id="imp-preview" style="font-size:12px;"></div>
@@ -2303,6 +2308,14 @@ function abrirImportRomaneio(){
   document.getElementById('imp-step2').style.display = 'none';
   document.getElementById('imp-preview').innerHTML = '';
   document.getElementById('imp-file').value = '';
+  // Volta sempre para o modelo do dia a dia (romaneio .xlsx).
+  document.getElementById('imp-modelo').value = 'xlsx';
+  _impAplicarModelo('xlsx');
+  // Depois de uma importação o botão vira "Fechar". Sem este reset, na segunda
+  // vez que o modal abre o botão continua "Fechar" e não importa nada.
+  const btn = document.getElementById('imp-confirm-btn');
+  btn.textContent = 'Confirmar importação';
+  btn.onclick = confirmarImportRomaneio;
   romaneioParsed = null;
   desabilitarConfirmImport();
   document.getElementById('modal-import').style.display = 'flex';
@@ -2326,37 +2339,98 @@ function habilitarConfirmImport(){
   btn.style.cursor = 'pointer';
 }
 
+// ── Modelos aceitos no importador de coleta ───────────────────
+// Dois formatos entram pela mesma porta e saem na mesma lista
+// [{etiqueta, pickup_time}], que vai pro mesmo /api/coletas/lote.
+const IMP_MODELOS = {
+  xlsx: {
+    rotulo: 'Arquivo (.xlsx)',
+    accept: '.xlsx',
+    ajuda: `Faça upload do arquivo <code style="background:var(--surface2);padding:2px 6px;border-radius:3px;">.xlsx</code> que a plataforma envia.
+      O sistema vai ler a coluna <strong>B (Tracking Number)</strong> e <strong>E (Pickup Time)</strong> e dar baixa nas etiquetas correspondentes.`
+  },
+  recibo: {
+    rotulo: 'Arquivo (.pdf)',
+    accept: '.pdf',
+    ajuda: `Faça upload do <strong>Recibo de Entrega</strong> (Drop off Receipt) em <code style="background:var(--surface2);padding:2px 6px;border-radius:3px;">.pdf</code> que a agência gera no drop-off.
+      O sistema vai ler as colunas <strong>Número</strong>, <strong>Data da Entrega</strong> e <strong>Hora da Entrega</strong>,
+      e dar baixa usando o horário que está no próprio recibo.`
+  }
+};
+
+// Só troca os textos da tela. Não mexe no arquivo já escolhido.
+function _impAplicarModelo(modelo){
+  const m = IMP_MODELOS[modelo] || IMP_MODELOS.xlsx;
+  document.getElementById('imp-ajuda').innerHTML = m.ajuda;
+  document.getElementById('imp-file-label').textContent = m.rotulo;
+  document.getElementById('imp-file').accept = m.accept;
+}
+
+// Trocar o modelo na mão invalida o que já tinha sido lido.
+function trocarModeloImport(){
+  const modelo = document.getElementById('imp-modelo').value;
+  _impAplicarModelo(modelo);
+  document.getElementById('imp-file').value = '';
+  document.getElementById('imp-preview').innerHTML = '';
+  document.getElementById('imp-confirm-btn').textContent = 'Confirmar importação';
+  romaneioParsed = null;
+  desabilitarConfirmImport();
+}
+
 async function lerRomaneio(){
   const file = document.getElementById('imp-file').files[0];
   const preview = document.getElementById('imp-preview');
   if (!file) return;
+
+  romaneioParsed = null;
+  desabilitarConfirmImport();
+  document.getElementById('imp-confirm-btn').textContent = 'Confirmar importação';
+  preview.innerHTML = `<div style="color:var(--text2);">⏳ Lendo arquivo...</div>`;
+
+  let buf;
+  try {
+    buf = await file.arrayBuffer();
+  } catch (e) {
+    preview.innerHTML = `<div class="col-feedback-err">⚠ Não foi possível abrir o arquivo: ${e.message}</div>`;
+    return;
+  }
+
+  // O tipo real vem da assinatura do arquivo, não da extensão nem do que está
+  // marcado no seletor. Sem isso, um PDF lido pelo leitor de planilha vira
+  // milhares de "etiquetas" inventadas a partir do binário.
+  const a = new Uint8Array(buf.slice(0, 4));
+  const ehPDF = a[0] === 0x25 && a[1] === 0x50 && a[2] === 0x44 && a[3] === 0x46; // %PDF
+  const ehZIP = a[0] === 0x50 && a[1] === 0x4B;                                   // PK — todo .xlsx é zip
+
+  if (!ehPDF && !ehZIP) {
+    preview.innerHTML = `<div class="col-feedback-err">⚠ Este arquivo não é uma planilha .xlsx nem um PDF.</div>`;
+    return;
+  }
+
+  // Se o arquivo não combina com o modelo marcado, troca sozinho e avisa.
+  const marcado = document.getElementById('imp-modelo').value;
+  const real = ehPDF ? 'recibo' : 'xlsx';
+  let aviso = '';
+  if (marcado !== real) {
+    document.getElementById('imp-modelo').value = real;
+    _impAplicarModelo(real);
+    aviso = real === 'recibo'
+      ? 'Você escolheu um PDF, então mudei o modelo para <b>Recibo de Entrega</b>.'
+      : 'Você escolheu uma planilha, então mudei o modelo para <b>Romaneio (.xlsx)</b>.';
+  }
+
+  if (real === 'recibo') return _lerReciboPDF(buf, aviso);
+  return _lerRomaneioXLSX(buf, aviso);
+}
+
+// ── Modelo 1: romaneio .xlsx (o de sempre) ────────────────────
+async function _lerRomaneioXLSX(buf, aviso){
+  const preview = document.getElementById('imp-preview');
   if (typeof XLSX === 'undefined') {
     preview.innerHTML = `<div class="col-feedback-err">⚠ Biblioteca XLSX não carregou. Recarregue a página (F5).</div>`;
     return;
   }
-  preview.innerHTML = `<div style="color:var(--text2);">⏳ Lendo arquivo...</div>`;
   try {
-    const buf = await file.arrayBuffer();
-
-    // TRAVA: o seletor aceita "todos os arquivos", então dá pra escolher um PDF aqui
-    // sem querer. Sem esta checagem, o leitor de planilha interpreta o binário do PDF
-    // como se fossem linhas e inventa milhares de "etiquetas" ilegíveis.
-    const assinatura = new Uint8Array(buf.slice(0, 4));
-    const ehPDF = assinatura[0] === 0x25 && assinatura[1] === 0x50 && assinatura[2] === 0x44 && assinatura[3] === 0x46; // %PDF
-    const ehZIP = assinatura[0] === 0x50 && assinatura[1] === 0x4B; // PK — todo .xlsx é um zip
-    if (ehPDF) {
-      document.getElementById('imp-confirm-btn').disabled = true;
-      preview.innerHTML = `<div class="col-feedback-err">⚠ Este é um arquivo PDF, não uma planilha.<br>
-        Para dar baixa por PDF de etiquetas, use o botão <b>Importar PDF de Etiquetas</b> na aba Bipagem,
-        ou <b>Retorno em massa por PDF</b> na aba Retorno.</div>`;
-      return;
-    }
-    if (!ehZIP) {
-      document.getElementById('imp-confirm-btn').disabled = true;
-      preview.innerHTML = `<div class="col-feedback-err">⚠ Este arquivo não é uma planilha .xlsx válida.</div>`;
-      return;
-    }
-
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
@@ -2416,6 +2490,7 @@ async function lerRomaneio(){
     romaneioParsed = { etiquetas, total: etiquetas.length };
     const semHora = etiquetas.filter(e => !e.pickup_time).length;
     preview.innerHTML = `
+      ${aviso ? `<div style="color:var(--info);margin-bottom:6px;">ℹ ${aviso}</div>` : ''}
       <div class="col-feedback-ok" style="margin-bottom:6px;">✓ ${etiquetas.length.toLocaleString('pt-BR')} etiquetas encontradas</div>
       <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">
         Primeira: ${etiquetas[0].etiqueta}<br>
@@ -2427,6 +2502,140 @@ async function lerRomaneio(){
   } catch (e) {
     console.error('Erro ao ler romaneio:', e);
     preview.innerHTML = `<div class="col-feedback-err">⚠ Erro ao ler arquivo: ${e.message}</div>`;
+    desabilitarConfirmImport();
+  }
+}
+
+// ── Modelo 2: Recibo de Entrega / Drop off Receipt (.pdf) ─────
+// O PDF não sobe pro servidor: é lido aqui e só a lista vai adiante.
+
+// Este PDF é gerado pelo navegador e grava o texto FORA da ordem visual
+// (o nome da agência e o total aparecem por último no arquivo). Por isso a
+// leitura é reconstruída pela posição de cada trecho na página, senão o
+// Número não casa com a Data e com a Hora da mesma linha.
+async function _reciboLinhas(pdf){
+  const linhas = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    const itens = tc.items
+      .map(it => ({ s: String(it.str || '').trim(), x: it.transform[4], y: it.transform[5] }))
+      .filter(o => o.s !== '');
+    itens.sort((a, b) => (Math.abs(a.y - b.y) > 3 ? b.y - a.y : a.x - b.x));
+    let atual = null;
+    itens.forEach(o => {
+      if (!atual || Math.abs(o.y - atual.y) > 3) { atual = { y: o.y, partes: [o.s] }; linhas.push(atual); }
+      else atual.partes.push(o.s);
+    });
+  }
+  // Cada linha vira uma lista de palavras. Dependendo de como o PDF foi gerado,
+  // "BR123 2026-09-04" pode vir grudado num pedaço só — separar aqui faz a
+  // leitura funcionar dos dois jeitos.
+  return linhas.map(l => l.partes.join(' ').split(/\s+/).filter(Boolean));
+}
+
+// Uma linha vale quando tem: código, depois data, depois hora.
+// Ancorar na data evita pegar texto solto do cabeçalho ou do rodapé.
+function _reciboExtrair(linhas){
+  const reCod  = /^[A-Z0-9][A-Z0-9._\-\/]{7,39}$/;
+  const reISO  = /^(\d{4})-(\d{2})-(\d{2})$/;
+  const reBR   = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+  const reHora = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
+  const out = [], vistos = new Set();
+  linhas.forEach(partes => {
+    for (let i = 0; i < partes.length; i++) {
+      let d = null, m = partes[i].match(reISO);
+      if (m) d = { y: m[1], mo: m[2], dd: m[3] };
+      else { m = partes[i].match(reBR); if (m) d = { y: m[3], mo: m[2], dd: m[1] }; }
+      if (!d) continue;
+      const cod = String(partes[i-1] || '').trim().toUpperCase();
+      if (!reCod.test(cod) || reISO.test(cod) || reBR.test(cod) || reHora.test(cod)) continue;
+      if (vistos.has(cod)) continue;
+      vistos.add(cod);
+      const mh = String(partes[i+1] || '').match(reHora);
+      const hh = mh ? mh[1].padStart(2, '0') : '00';
+      const mi = mh ? mh[2] : '00';
+      const ss = (mh && mh[3]) ? mh[3] : '00';
+      // Mesma conversão do romaneio .xlsx: monta no fuso do navegador e manda em ISO.
+      const dt = new Date(`${d.y}-${d.mo}-${d.dd}T${hh}:${mi}:${ss}`);
+      out.push({
+        etiqueta: cod,
+        pickup_time: isNaN(dt) ? null : dt.toISOString(),
+        _quando: `${d.dd}/${d.mo}/${d.y} às ${hh}:${mi}`,
+        _temHora: !!mh
+      });
+    }
+  });
+  return out;
+}
+
+async function _lerReciboPDF(buf, aviso){
+  const preview = document.getElementById('imp-preview');
+
+  // Sem esta checagem, a biblioteca que não carregou faz tudo falhar e a tela
+  // diz só "nenhuma etiqueta", sem explicar o motivo.
+  if (typeof pdfjsLib === 'undefined') {
+    preview.innerHTML = `<div class="col-feedback-err">⚠ O leitor de PDF não carregou. Recarregue a página (F5) e tente de novo.</div>`;
+    return;
+  }
+
+  preview.innerHTML = `<div style="color:var(--text2);">⏳ Lendo o recibo...</div>`;
+  try {
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const linhas = await _reciboLinhas(pdf);
+    const texto = linhas.map(p => p.join(' ')).join('\n');
+    const itens = _reciboExtrair(linhas);
+
+    if (itens.length === 0) {
+      // PDF de etiquetas é imagem pura: não tem texto pra ler.
+      const semTexto = texto.replace(/\s/g, '').length < 40;
+      preview.innerHTML = semTexto
+        ? `<div class="col-feedback-err">⚠ Este PDF não é um Recibo de Entrega — parece um <b>PDF de etiquetas</b>
+             (${pdf.numPages} ${pdf.numPages === 1 ? 'página' : 'páginas'}, sem texto legível).<br><br>
+             Para dar entrada por etiquetas use <b>Importar PDF de Etiquetas</b> na aba <b>Bipagem</b>.<br>
+             Para dar baixa da coleta, use aqui o <b>Recibo de Entrega</b> que a agência gera no drop-off.</div>`
+        : `<div class="col-feedback-err">⚠ Não encontrei nenhuma linha com Número + Data da Entrega + Hora da Entrega neste PDF.
+             Confira se é o Recibo de Entrega certo.</div>`;
+      return;
+    }
+
+    const mDecl = texto.match(/entregues com sucesso:?\s*([\d.]+)/i);
+    const declarado = mDecl ? parseInt(mDecl[1].replace(/\./g, ''), 10) : null;
+    const mAg = texto.match(/^Nome da\s+(?!Ag[êe]ncia)(.+)$/mi);
+    const agencia = mAg ? mAg[1].trim() : null;
+
+    romaneioParsed = { etiquetas: itens.map(i => ({ etiqueta: i.etiqueta, pickup_time: i.pickup_time })), total: itens.length };
+
+    const semHora = itens.filter(i => !i._temHora).length;
+    const bate = (declarado === null) || (declarado === itens.length);
+
+    // Confere contra o total que o próprio recibo declara. Avisa, mas não trava:
+    // quem decide se importa assim mesmo é você.
+    const topo = bate
+      ? `<div class="col-feedback-ok" style="margin-bottom:6px;">✓ ${itens.length.toLocaleString('pt-BR')} etiquetas lidas${declarado !== null ? ` · confere com as ${declarado.toLocaleString('pt-BR')} declaradas no recibo` : ''}</div>`
+      : `<div style="background:rgba(255,181,71,.08);border:1px solid rgba(255,181,71,.35);color:#ffd79a;border-radius:6px;padding:10px 12px;margin-bottom:6px;line-height:1.6;">
+           ⚠ O recibo declara <b>${declarado.toLocaleString('pt-BR')}</b> pedidos, mas só consegui ler <b>${itens.length.toLocaleString('pt-BR')}</b>.<br>
+           Confira o arquivo antes de confirmar. Se confirmar assim, entram só as ${itens.length.toLocaleString('pt-BR')} lidas.
+         </div>`;
+
+    preview.innerHTML = `
+      ${aviso ? `<div style="color:var(--info);margin-bottom:6px;">ℹ ${aviso}</div>` : ''}
+      ${topo}
+      <div style="font-size:11px;color:var(--text2);font-family:var(--mono);line-height:1.8;">
+        ${agencia ? `Agência: ${agencia}<br>` : ''}
+        Coleta: ${itens[0]._quando} (do próprio recibo)<br>
+        Primeira: ${itens[0].etiqueta}<br>
+        Última: ${itens[itens.length-1].etiqueta}<br>
+        ${semHora ? `<span style="color:var(--warn);">⚠ ${semHora} sem hora de coleta (vai usar agora)</span>` : '✓ Todas com data e hora de coleta'}
+      </div>
+    `;
+
+    const btn = document.getElementById('imp-confirm-btn');
+    btn.textContent = bate ? 'Confirmar importação' : `Confirmar mesmo assim (${itens.length.toLocaleString('pt-BR')})`;
+    habilitarConfirmImport();
+  } catch (e) {
+    console.error('Erro ao ler recibo PDF:', e);
+    preview.innerHTML = `<div class="col-feedback-err">⚠ Erro ao ler o PDF: ${e.message}</div>`;
     desabilitarConfirmImport();
   }
 }
