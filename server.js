@@ -747,6 +747,82 @@ function limparEtiquetas(lista) {
   return saida;
 }
 
+// POST /api/conferencia — diz em que situação está cada etiqueta do arquivo.
+// É SÓ LEITURA: nada é bipado, coletado ou cancelado por causa disso, então
+// dá pra subir o mesmo PDF quantas vezes quiser.
+app.post('/api/conferencia', autenticar, async (req, res) => {
+  try {
+    const etiquetas = limparEtiquetas(req.body && req.body.etiquetas);
+    if (!etiquetas.length) return res.status(400).json({ erro: 'Nenhuma etiqueta válida no arquivo.' });
+
+    const bipR = await pool.query(`
+      SELECT etiqueta, marketplace_nome, colaborador_nome, criado_em,
+             coletada_em, transportadora, coletada_por,
+             COALESCE(cancelada, FALSE) AS cancelada, cancelamento_motivo
+      FROM bipagens WHERE etiqueta = ANY($1::text[])
+    `, [etiquetas]);
+    // Da mesma etiqueta pode haver mais de um retorno ao longo do tempo;
+    // o que interessa é o último.
+    const retR = await pool.query(`
+      SELECT DISTINCT ON (etiqueta) etiqueta, motivo, criado_em
+      FROM retornos WHERE etiqueta = ANY($1::text[])
+      ORDER BY etiqueta, criado_em DESC
+    `, [etiquetas]);
+
+    const bip = new Map(bipR.rows.map(r => [r.etiqueta, r]));
+    const ret = new Map(retR.rows.map(r => [r.etiqueta, r]));
+
+    const itens = etiquetas.map(et => {
+      const b = bip.get(et);
+      const r = ret.get(et);
+      if (b && b.coletada_em) {
+        return {
+          etiqueta: et, situacao: 'despachada',
+          // Esta data vem do arquivo da Shopee (Pickup Time / Hora da Entrega),
+          // não da hora em que a planilha foi importada.
+          coletada_em: b.coletada_em.toISOString(),
+          transportadora: b.transportadora || '',
+          marketplace: b.marketplace_nome || '', separador: b.colaborador_nome || ''
+        };
+      }
+      // Sem bipagem e com retorno: saiu da bipagem por devolução.
+      if (!b && r) {
+        return {
+          etiqueta: et, situacao: 'retorno',
+          retorno_em: r.criado_em ? r.criado_em.toISOString() : null,
+          motivo: r.motivo || ''
+        };
+      }
+      if (b) {
+        return {
+          etiqueta: et,
+          situacao: b.cancelada ? 'cancelada' : 'aguardando',
+          bipada_em: b.criado_em ? b.criado_em.toISOString() : null,
+          marketplace: b.marketplace_nome || '', separador: b.colaborador_nome || '',
+          motivo: b.cancelamento_motivo || ''
+        };
+      }
+      return { etiqueta: et, situacao: 'fora' };
+    });
+
+    const conta = s => itens.filter(i => i.situacao === s).length;
+    res.json({
+      total: itens.length,
+      resumo: {
+        despachada: conta('despachada'),
+        aguardando: conta('aguardando'),
+        retorno: conta('retorno'),
+        cancelada: conta('cancelada'),
+        fora: conta('fora')
+      },
+      itens
+    });
+  } catch (e) {
+    console.error('POST /api/conferencia:', e.message);
+    res.status(500).json({ erro: 'Erro ao conferir: ' + e.message });
+  }
+});
+
 // POST /api/bipagens/lote — entrada em massa
 app.post('/api/bipagens/lote', autenticar, async (req, res) => {
   const client = await pool.connect();
