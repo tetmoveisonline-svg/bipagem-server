@@ -551,6 +551,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Histórico</div>
       <div class="nav-item" onclick="switchPanel('historico',this)">&#9776; Histórico</div>
+      <div class="nav-item" onclick="switchPanel('conferencia',this)">📋 Conferência</div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Módulos</div>
       <div class="nav-item" onclick="window.location.href='/estoque.html'">&#128230; Estoque</div>
@@ -754,6 +755,32 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
           <div id="hist-pag-controles" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"></div>
         </div>
       </div>
+
+      <!-- CONFERÊNCIA DE ETIQUETAS -->
+      <div class="panel" id="panel-conferencia">
+        <div class="page-title">📋 Conferência de etiquetas</div>
+        <div style="color:var(--text2);font-size:12.5px;margin:-6px 0 16px;">
+          Suba o PDF de etiquetas e veja o que já foi despachado e o que ficou para trás.
+          É só leitura — nada é bipado, coletado ou cancelado.
+        </div>
+
+        <div id="conf-drop" onclick="document.getElementById('conf-file').click()"
+             style="border:2px dashed var(--border);border-radius:9px;padding:26px;text-align:center;color:var(--text3);background:var(--surface);margin-bottom:16px;cursor:pointer;">
+          📄 <b style="color:var(--text2);">Clique para escolher os PDFs de etiquetas</b><br>
+          <span style="font-size:11.5px;">O nome do arquivo vira o nome do produto no relatório · pode escolher mais de um</span>
+        </div>
+        <input type="file" id="conf-file" accept=".pdf" multiple onchange="lerConferencia()" style="display:none;"/>
+
+        <div id="conf-progresso" style="display:none;margin-bottom:14px;">
+          <div style="font-size:11px;color:var(--text2);font-family:var(--mono);margin-bottom:5px;" id="conf-prog-txt">lendo…</div>
+          <div style="height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;">
+            <div id="conf-prog-barra" style="height:100%;width:0;background:var(--accent);transition:width .15s;"></div>
+          </div>
+        </div>
+
+        <div id="conf-resultado"></div>
+      </div>
+
       <!-- USUÁRIOS -->
       <div class="panel" id="panel-usuarios">
         <div class="page-title">Gerenciar Usuários</div>
@@ -896,7 +923,24 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
         <div id="col-sep-ativo" style="display:none;align-items:center;gap:9px;background:rgba(0,229,160,.06);border:1px solid rgba(0,229,160,.35);border-radius:var(--r);padding:8px 12px;margin-bottom:1rem;"></div>
 
         <!-- Tabela -->
+        <!-- Busca e paginação do histórico de coletas -->
+        <div id="col-hist-ferramentas" style="display:none;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+          <input type="text" id="col-busca" placeholder="🔍 Buscar etiqueta ou parte dela..." oninput="colBuscaDigitou()"
+                 style="flex:1;min-width:230px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 11px;border-radius:var(--r);font-size:12.5px;"/>
+          <select id="col-por-pagina" onchange="colTrocarPorPagina()"
+                  style="background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:var(--r);font-size:12.5px;">
+            <option value="50">50 por página</option>
+            <option value="100" selected>100 por página</option>
+            <option value="200">200 por página</option>
+          </select>
+        </div>
+        <div id="col-faixa-busca" style="display:none;margin-bottom:12px;"></div>
+
         <div id="col-tabela"></div>
+        <div id="col-paginacao" style="display:none;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;font-size:12px;color:var(--text2);">
+          <div id="col-pag-info">—</div>
+          <div id="col-pag-btns" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;"></div>
+        </div>
       </div>
 
       <!-- HISTÓRICO DE CARGAS -->
@@ -1499,6 +1543,7 @@ function switchPanel(name, el) {
   if (el) el.classList.add('active');
   if (name==='bipagem') renderBipagem();
   if (name==='historico') renderHistorico();
+  if (name==='conferencia') renderConferencia();
   if (name==='produtividade') renderProdutividade();
   if (name==='pendencias') renderPendencias();
   if (name==='retorno') renderRetornos();
@@ -1879,6 +1924,40 @@ async function reabrirEtiqueta(id){
   }
 }
 
+// Paginação e busca do Histórico de coletas. São quase 3.000 linhas hoje —
+// desenhar tudo de uma vez trava a tela e ninguém acha nada.
+let colPagina = 1, colPorPagina = 100, colBusca = '', _colBuscaTimer = null;
+
+function colBuscaDigitou(){
+  clearTimeout(_colBuscaTimer);
+  _colBuscaTimer = setTimeout(() => {
+    colBusca = (document.getElementById('col-busca')?.value || '').trim();
+    colPagina = 1;              // busca nova sempre começa da primeira página
+    renderColetas();
+  }, 250);
+}
+function colTrocarPorPagina(){
+  colPorPagina = parseInt(document.getElementById('col-por-pagina')?.value) || 100;
+  colPagina = 1;
+  renderColetas();
+}
+function colIrPara(p){ colPagina = p; renderColetas(); window.scrollTo({top:0,behavior:'smooth'}); }
+function colLimparBusca(){
+  const el = document.getElementById('col-busca');
+  if (el) el.value = '';
+  colBusca = ''; colPagina = 1; renderColetas();
+}
+// Destaca o trecho procurado sem deixar o que veio do banco virar HTML.
+function _colRealce(texto, termo){
+  const t = String(texto == null ? '' : texto);
+  const esc = t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  if (!termo) return esc;
+  const alvo = termo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!alvo) return esc;
+  return esc.replace(new RegExp(alvo, 'gi'),
+    m => `<mark style="background:rgba(255,181,71,.3);color:#ffd489;border-radius:2px;padding:0 1px;">${m}</mark>`);
+}
+
 function renderColetas(){
   const cont = document.getElementById('col-tabela');
   if (!cont) return;
@@ -1895,6 +1974,11 @@ function renderColetas(){
       const sep = (c.colaborador_nome || '').trim();
       if (filtroSepAtivo === SEP_VAZIO) { if (sep) return false; }
       else if (sep !== filtroSepAtivo) return false;
+    }
+    // A busca varre o histórico inteiro, não só a página aberta: procurar uma
+    // etiqueta que existe e a tela dizer que não existe seria uma armadilha.
+    if (colBusca && abaColetaAtiva === 'coletado') {
+      if (!String(c.etiqueta || '').toUpperCase().includes(colBusca.toUpperCase())) return false;
     }
     if (abaColetaAtiva === 'aguardando' && filtroSitAtiva !== 'todas') {
       if (filtroSitAtiva === 'aberto' && c.cancelada) return false;
@@ -1927,12 +2011,38 @@ function renderColetas(){
     lista.sort((a,b)=>new Date(b.coletada_em||0) - new Date(a.coletada_em||0));
   }
 
+  // Ferramentas de busca/paginação só existem no histórico.
+  const ehHist = abaColetaAtiva === 'coletado';
+  const fer = document.getElementById('col-hist-ferramentas');
+  const faixaBusca = document.getElementById('col-faixa-busca');
+  const rodape = document.getElementById('col-paginacao');
+  if (fer) fer.style.display = ehHist ? 'flex' : 'none';
+  if (faixaBusca) {
+    if (ehHist && colBusca) {
+      faixaBusca.style.display = '';
+      faixaBusca.innerHTML = `<div style="background:rgba(0,229,160,.06);border:1px solid rgba(0,229,160,.3);border-radius:var(--r);padding:9px 12px;font-size:12.5px;color:var(--text2);">
+        <b style="color:var(--text);">${lista.length.toLocaleString('pt-BR')} coleta${lista.length===1?'':'s'}</b> com "${String(colBusca).replace(/</g,'&lt;')}" · procurando em <b style="color:var(--text);">todo o histórico</b>
+        <span onclick="colLimparBusca()" style="color:var(--accent);cursor:pointer;border-bottom:1px dotted var(--accent);margin-left:8px;">× limpar busca</span>
+      </div>`;
+    } else { faixaBusca.style.display = 'none'; faixaBusca.innerHTML = ''; }
+  }
+
   if (lista.length === 0) {
-    cont.innerHTML = `<div class="col-empty">${abaColetaAtiva==='aguardando' ? '🎉 Nenhum pedido aguardando coleta!' : 'Nenhuma coleta no histórico ainda.'}</div>`;
+    if (rodape) rodape.style.display = 'none';
+    cont.innerHTML = `<div class="col-empty">${abaColetaAtiva==='aguardando' ? '🎉 Nenhum pedido aguardando coleta!'
+      : (colBusca ? `Nenhuma coleta com "${String(colBusca).replace(/</g,'&lt;')}" em todo o histórico.` : 'Nenhuma coleta no histórico ainda.')}</div>`;
     return;
   }
 
-  const linhas = lista.map(c => {
+  // Recorta só a página atual. O total continua sendo o da lista inteira.
+  const totalItens = lista.length;
+  const totalPaginas = ehHist ? Math.max(1, Math.ceil(totalItens / colPorPagina)) : 1;
+  if (colPagina > totalPaginas) colPagina = totalPaginas;
+  const ini = ehHist ? (colPagina - 1) * colPorPagina : 0;
+  const pagina = ehHist ? lista.slice(ini, ini + colPorPagina) : lista;
+  _colRenderPaginacao(totalItens, totalPaginas, ini, pagina.length, ehHist);
+
+  const linhas = pagina.map(c => {
     const cor = corDuracao(c.segundos_parado);
     const mktColor = (S.marketplaces.find(m=>m.nome===c.marketplace_nome)?.cor) || '#888';
     if (abaColetaAtiva === 'aguardando') {
@@ -1960,7 +2070,7 @@ function renderColetas(){
       const dt = new Date(c.coletada_em);
       const quando = dt.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
       return `<tr>
-        <td class="col-etiq">${c.etiqueta}</td>
+        <td class="col-etiq">${_colRealce(c.etiqueta, colBusca)}</td>
         <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${c.marketplace_nome||'-'}</span></td>
         <td>${c.colaborador_nome||'-'}</td>
         <td>${c.transportadora||'-'}</td>
@@ -1986,6 +2096,43 @@ function renderColetas(){
       <tbody>${linhas}</tbody>
     </table>`;
   }
+}
+
+// Rodapé de paginação. Fica logo abaixo da tabela pra você não precisar
+// rolar duas mil linhas só pra virar a página.
+function _colRenderPaginacao(total, totalPaginas, ini, naPagina, ehHist){
+  const box = document.getElementById('col-paginacao');
+  if (!box) return;
+  if (!ehHist || totalPaginas <= 1) {
+    box.style.display = ehHist ? 'flex' : 'none';
+    if (ehHist) {
+      document.getElementById('col-pag-info').innerHTML =
+        `Mostrando <b style="color:var(--text);">${total.toLocaleString('pt-BR')}</b> coleta${total===1?'':'s'}`;
+      document.getElementById('col-pag-btns').innerHTML = '';
+    }
+    return;
+  }
+  box.style.display = 'flex';
+  document.getElementById('col-pag-info').innerHTML =
+    `Mostrando <b style="color:var(--text);">${(ini+1).toLocaleString('pt-BR')}–${(ini+naPagina).toLocaleString('pt-BR')}</b> de <b style="color:var(--text);">${total.toLocaleString('pt-BR')}</b> coletas`;
+
+  const bt = (txt, p, estado) => {
+    const on = estado === 'on', off = estado === 'off';
+    return `<button ${off ? '' : `onclick="colIrPara(${p})"`}
+      style="background:${on?'var(--accent)':'var(--surface2)'};border:1px solid ${on?'var(--accent)':'var(--border)'};color:${on?'#000':'var(--text2)'};min-width:30px;height:30px;padding:0 7px;border-radius:5px;font-size:12px;font-family:var(--mono);cursor:${off?'not-allowed':'pointer'};opacity:${off?'.4':'1'};font-weight:${on?'700':'400'};">${txt}</button>`;
+  };
+  // Janela em volta da página atual, com as pontas sempre visíveis.
+  const p = colPagina, N = totalPaginas, nums = new Set([1, N, p, p-1, p+1, p-2, p+2]);
+  const lista = [...nums].filter(n => n >= 1 && n <= N).sort((a,b)=>a-b);
+  let html = bt('‹', p-1, p === 1 ? 'off' : '');
+  let ant = 0;
+  lista.forEach(n => {
+    if (ant && n - ant > 1) html += `<span style="color:var(--text3);padding:0 3px;">…</span>`;
+    html += bt(n, n, n === p ? 'on' : '');
+    ant = n;
+  });
+  html += bt('›', p+1, p === N ? 'off' : '');
+  document.getElementById('col-pag-btns').innerHTML = html;
 }
 
 function atualizarStatColeta(){
@@ -2134,6 +2281,250 @@ async function _loteLerPagina(pdf, n, escala, cv, ctx) {
     }
   }
   return null;
+}
+
+// ══════════════ CONFERÊNCIA DE ETIQUETAS ══════════════
+// Lê o mesmo PDF da importação em massa e só pergunta ao servidor em que
+// situação cada etiqueta está. Não grava nada.
+let _CONF = [];   // [{ produto, arquivo, total, paginasSemLeitura, resumo, itens, filtro }]
+
+function renderConferencia() {
+  const box = document.getElementById('conf-resultado');
+  if (!box) return;
+  if (!_CONF.length) { box.innerHTML = ''; return; }
+
+  const PILL = {
+    despachada: ['✓ DESPACHADA', '#00e5a0'],
+    aguardando: ['⏳ AGUARDANDO', '#ffb547'],
+    retorno:    ['↩ EM RETORNO', '#b98cff'],
+    cancelada:  ['✕ CANCELADA',  '#ff4d4d'],
+    fora:       ['✖ FORA DO SISTEMA', '#ff4d4d']
+  };
+  const pill = sit => {
+    const [txt, cor] = PILL[sit] || [sit, '#888'];
+    return `<span style="font-size:9.5px;font-family:var(--mono);font-weight:700;letter-spacing:.4px;padding:3px 9px;border-radius:10px;white-space:nowrap;color:${cor};border:1px solid ${cor}55;background:${cor}14;">${txt}</span>`;
+  };
+  const detalhe = it => {
+    if (it.situacao === 'despachada')
+      return `coletada ${fmtDataHoraCurta(it.coletada_em)}${it.transportadora ? ' · ' + it.transportadora : ''}`;
+    if (it.situacao === 'retorno')
+      return `retirada ${fmtDataHoraCurta(it.retorno_em)}${it.motivo ? ' · motivo: ' + it.motivo : ''}`;
+    if (it.situacao === 'cancelada')
+      return `bipada ${fmtDataHoraCurta(it.bipada_em)}${it.motivo ? ' · ' + it.motivo : ''}`;
+    if (it.situacao === 'aguardando')
+      return `bipada ${fmtDataHoraCurta(it.bipada_em)}${it.separador ? ' · separador ' + it.separador : ''} · parada há ${_confParado(it.bipada_em)}`;
+    return 'nunca foi bipada';
+  };
+
+  box.innerHTML = _CONF.map((c, idx) => {
+    const r = c.resumo;
+    const naoSairam = r.aguardando + r.retorno + r.cancelada + r.fora;
+    const filtro = c.filtro || 'todas';
+    const itens = c.itens.filter(it =>
+      filtro === 'todas' ? true :
+      filtro === 'nao' ? it.situacao !== 'despachada' :
+      it.situacao === filtro);
+    const larg = n => c.total ? (n / c.total * 100) : 0;
+    const chip = (id, txt, n) => n === 0 && id !== 'todas' ? '' :
+      `<span onclick="confFiltrar(${idx},'${id}')" style="cursor:pointer;padding:5px 11px;border-radius:14px;font-size:11.5px;border:1px solid ${filtro===id?'var(--accent)':'var(--border)'};background:${filtro===id?'var(--accent)':'var(--surface2)'};color:${filtro===id?'#000':'var(--text2)'};font-weight:${filtro===id?'600':'400'};">${txt} ${n}</span>`;
+    const kpi = (id, rot, n, cor) =>
+      `<div onclick="confFiltrar(${idx},'${id}')" style="cursor:pointer;background:var(--surface);border:1px solid ${filtro===id?'var(--accent)':'var(--border)'};border-radius:8px;padding:12px 14px;">
+         <div style="font-size:9.5px;font-family:var(--mono);color:var(--text3);text-transform:uppercase;letter-spacing:.8px;">${rot}</div>
+         <div style="font-size:26px;font-weight:700;font-family:var(--mono);margin-top:3px;color:${cor};">${n}</div>
+       </div>`;
+
+    return `
+      <div style="margin-bottom:22px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:14px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:16px;font-weight:600;">📦 ${c.produto}</div>
+            <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:4px;">
+              ${c.arquivo} · ${c.paginas} páginas · ${c.total} etiqueta${c.total===1?'':'s'} lida${c.total===1?'':'s'}
+              ${c.paginasSemLeitura ? ` · <span style="color:var(--warn);">${c.paginasSemLeitura} página(s) sem leitura</span>` : ''}
+            </div>
+          </div>
+          <div style="display:flex;gap:7px;flex-wrap:wrap;">
+            <button class="btn" onclick="confCopiar(${idx})">📋 Copiar ${filtro==='todas'?'tudo':'os '+itens.length}</button>
+            <button class="btn" onclick="confCSV(${idx})">⬇ Baixar CSV</button>
+            <button class="btn" onclick="confFechar(${idx})">✕ Fechar</button>
+          </div>
+        </div>
+
+        <div style="display:flex;height:9px;border-radius:5px;overflow:hidden;margin-bottom:14px;border:1px solid var(--border);">
+          <i style="display:block;width:${larg(r.despachada)}%;background:#00e5a0;"></i>
+          <i style="display:block;width:${larg(r.aguardando)}%;background:#ffb547;"></i>
+          <i style="display:block;width:${larg(r.retorno)}%;background:#b98cff;"></i>
+          <i style="display:block;width:${larg(r.cancelada + r.fora)}%;background:#ff4d4d;"></i>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+          ${kpi('despachada','Já despachadas',r.despachada,'#00e5a0')}
+          ${kpi('aguardando','Aguardando coleta',r.aguardando,'#ffb547')}
+          ${kpi('retorno','Em retorno',r.retorno,'#b98cff')}
+          ${kpi('fora','Fora do sistema',r.fora,'#ff4d4d')}
+        </div>
+
+        ${naoSairam > 0 ? `
+          <div style="background:rgba(255,181,71,.08);border:1px solid rgba(255,181,71,.35);color:#ffd79a;border-radius:6px;padding:11px 13px;font-size:12.5px;line-height:1.6;margin-bottom:14px;">
+            ⚠ <b>${naoSairam} de ${c.total} etiquetas deste produto ainda não saíram.</b>
+            ${[r.aguardando ? `${r.aguardando} aguardando coleta` : '',
+               r.retorno ? `${r.retorno} em retorno` : '',
+               r.cancelada ? `${r.cancelada} cancelada(s)` : '',
+               r.fora ? `${r.fora} nunca foi bipada` : ''].filter(Boolean).join(', ')}.
+          </div>`
+          : `<div style="background:rgba(0,229,160,.07);border:1px solid rgba(0,229,160,.3);color:#7fe9c6;border-radius:6px;padding:11px 13px;font-size:12.5px;margin-bottom:14px;">
+               ✓ Todas as ${c.total} etiquetas deste produto já foram despachadas.
+             </div>`}
+
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+          ${chip('todas','Todas',c.total)}
+          ${chip('nao','Não despachadas',naoSairam)}
+          ${chip('despachada','Já despachadas',r.despachada)}
+          ${chip('aguardando','Aguardando',r.aguardando)}
+          ${chip('retorno','Em retorno',r.retorno)}
+          ${chip('cancelada','Canceladas',r.cancelada)}
+          ${chip('fora','Fora do sistema',r.fora)}
+        </div>
+
+        <table class="col-table">
+          <thead><tr><th style="width:46px;">Pág</th><th>Etiqueta</th><th style="width:150px;">Situação</th><th>Detalhe</th></tr></thead>
+          <tbody>
+            ${itens.map(it => `
+              <tr${it.situacao !== 'despachada' ? ' style="background:rgba(255,181,71,.04);"' : ''}>
+                <td style="color:var(--text3);font-family:var(--mono);">${it.pagina || '-'}</td>
+                <td class="col-etiq">${it.etiqueta}</td>
+                <td>${pill(it.situacao)}</td>
+                <td style="color:var(--text3);">${detalhe(it)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }).join('');
+}
+
+function fmtDataHoraCurta(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+
+function _confParado(iso) {
+  if (!iso) return '—';
+  return fmtDuracao(Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+}
+
+function confFiltrar(idx, filtro) {
+  if (!_CONF[idx]) return;
+  _CONF[idx].filtro = (_CONF[idx].filtro === filtro && filtro !== 'todas') ? 'todas' : filtro;
+  renderConferencia();
+}
+
+function confFechar(idx) { _CONF.splice(idx, 1); renderConferencia(); }
+
+function _confVisiveis(idx) {
+  const c = _CONF[idx]; if (!c) return [];
+  const f = c.filtro || 'todas';
+  return c.itens.filter(it => f === 'todas' ? true : f === 'nao' ? it.situacao !== 'despachada' : it.situacao === f);
+}
+
+function confCopiar(idx) {
+  const txt = _confVisiveis(idx).map(i => i.etiqueta).join('\n');
+  if (!txt) return toast('Nada para copiar', 'warn');
+  navigator.clipboard.writeText(txt)
+    .then(() => toast(`${_confVisiveis(idx).length} etiqueta(s) copiada(s)`))
+    .catch(() => toast('Não consegui copiar', 'err'));
+}
+
+function confCSV(idx) {
+  const c = _CONF[idx]; if (!c) return;
+  const rot = { despachada:'Despachada', aguardando:'Aguardando coleta', retorno:'Em retorno', cancelada:'Cancelada', fora:'Fora do sistema' };
+  const linhas = [['Produto','Pagina','Etiqueta','Situacao','Data','Transportadora','Separador','Motivo']];
+  _confVisiveis(idx).forEach(i => linhas.push([
+    c.produto, i.pagina || '', i.etiqueta, rot[i.situacao] || i.situacao,
+    fmtDataHoraCurta(i.coletada_em || i.retorno_em || i.bipada_em),
+    i.transportadora || '', i.separador || '', i.motivo || ''
+  ]));
+  const csv = linhas.map(l => l.map(v => `"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type:'text/csv;charset=utf-8' }));
+  a.download = `conferencia ${c.produto}.csv`;
+  a.click();
+}
+
+async function lerConferencia() {
+  const inp = document.getElementById('conf-file');
+  const arquivos = Array.from(inp.files || []);
+  if (!arquivos.length) return;
+
+  // Sem a biblioteca, todas as páginas falhariam e a tela diria só "0 etiquetas".
+  if (typeof pdfjsLib === 'undefined' || typeof jsQR === 'undefined') {
+    toast('O leitor de PDF não carregou. Recarregue a página (F5).', 'err');
+    inp.value = ''; return;
+  }
+
+  const prog = document.getElementById('conf-progresso');
+  const barra = document.getElementById('conf-prog-barra');
+  const txt = document.getElementById('conf-prog-txt');
+  prog.style.display = '';
+
+  const cv = document.createElement('canvas');
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+
+  try {
+    for (const f of arquivos) {
+      const produto = f.name.replace(/\.pdf$/i, '').trim();
+      const buf = await f.arrayBuffer();
+      const a = new Uint8Array(buf.slice(0, 4));
+      if (!(a[0] === 0x25 && a[1] === 0x50 && a[2] === 0x44 && a[3] === 0x46)) {
+        toast(`"${f.name}" não é um PDF.`, 'err');
+        continue;
+      }
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const achados = {}; const pendentes = [];
+      for (let n = 1; n <= pdf.numPages; n++) {
+        const c = await _loteLerPagina(pdf, n, 5, cv, ctx);
+        if (c) achados[n] = c; else pendentes.push(n);
+        barra.style.width = Math.round((n / pdf.numPages) * 100) + '%';
+        txt.textContent = `${produto} · página ${n} de ${pdf.numPages} · ${Object.keys(achados).length} etiquetas`;
+        if (n % 5 === 0) await new Promise(r => setTimeout(r, 0));
+      }
+      // Segunda passada só nas que falharam, com mais resolução.
+      for (const n of pendentes.slice()) {
+        for (const escala of [7, 9]) {
+          const c = await _loteLerPagina(pdf, n, escala, cv, ctx);
+          if (c) { achados[n] = c; pendentes.splice(pendentes.indexOf(n), 1); break; }
+        }
+      }
+
+      // Guarda a página de cada código: achou uma parada, você sabe em que
+      // folha ela está pra buscar o volume na prateleira.
+      const paginaDe = {}; const codigos = [];
+      Object.keys(achados).sort((x,y) => x - y).forEach(n => {
+        const cod = achados[n];
+        if (paginaDe[cod] == null) { paginaDe[cod] = Number(n); codigos.push(cod); }
+      });
+
+      if (!codigos.length) {
+        toast(`Nenhum código lido em "${f.name}".`, 'err');
+        continue;
+      }
+      const r = await api('POST', '/api/conferencia', { etiquetas: codigos });
+      r.itens.forEach(it => { it.pagina = paginaDe[it.etiqueta] || null; });
+      r.itens.sort((x,y) => (x.pagina || 0) - (y.pagina || 0));
+      _CONF.unshift({
+        produto, arquivo: f.name, paginas: pdf.numPages,
+        total: r.total, paginasSemLeitura: pendentes.length,
+        resumo: r.resumo, itens: r.itens, filtro: 'todas'
+      });
+      renderConferencia();
+    }
+  } catch (e) {
+    toast('Erro na conferência: ' + (e.erro || e.message), 'err');
+  } finally {
+    prog.style.display = 'none';
+    barra.style.width = '0';
+    inp.value = '';
+  }
 }
 
 async function lerPDFLote() {
