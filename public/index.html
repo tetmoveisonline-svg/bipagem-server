@@ -2930,7 +2930,7 @@ async function _reciboLinhas(pdf){
 function _reciboExtrair(linhas){
   const reCod  = /^[A-Z0-9][A-Z0-9._\-\/]{7,39}$/;
   const reISO  = /^(\d{4})-(\d{2})-(\d{2})$/;
-  const reBR   = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+  const reBR   = /^(\d{2})[\/-](\d{2})[\/-](\d{4})$/;
   const reHora = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
   const out = [], vistos = new Set();
   linhas.forEach(partes => {
