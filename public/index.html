@@ -554,6 +554,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
       <div class="nav-item" onclick="switchPanel('conferencia',this)">📋 Conferência</div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Módulos</div>
+      <div class="nav-item" onclick="window.location.href='/gerador.html'">&#9635; Gerador de Etiqueta</div>
       <div class="nav-item" onclick="window.location.href='/estoque.html'">&#128230; Estoque</div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Config</div>
@@ -6139,5 +6140,37 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
 })();
 </script>
 
+<!-- Estoque: aviso de reserva para quem bipou. Bloco independente, não interfere na bipagem. -->
+<div id="etq-aviso" role="status" style="position:fixed;left:16px;bottom:16px;z-index:9998;display:none;max-width:440px;padding:12px 16px;border-radius:8px;font-size:14px;font-weight:600;line-height:1.4;box-shadow:0 8px 30px rgba(0,0,0,.5);"></div>
+<script>
+(function () {
+  var caixa = document.getElementById('etq-aviso'), timer = null;
+  function mostrar(texto, ruim) {
+    caixa.textContent = texto;
+    caixa.style.background = ruim ? '#2a0a0a' : '#052e1e';
+    caixa.style.border = '1px solid ' + (ruim ? '#ff4d4d' : '#00e5a0');
+    caixa.style.color = ruim ? '#ffb3b3' : '#00e5a0';
+    caixa.style.display = 'block';
+    clearTimeout(timer); timer = setTimeout(function () { caixa.style.display = 'none'; }, ruim ? 12000 : 4000);
+  }
+  function conectar() {
+    try {
+      var ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host);
+      ws.onmessage = function (ev) {
+        var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (!m || m.event !== 'etq:reserva' || !m.data) return;
+        var d = m.data, eu = '';
+        try { eu = (typeof usuarioLogado !== 'undefined' && usuarioLogado && usuarioLogado.nome) || ''; } catch (e) {}
+        if (d.usuario && eu && d.usuario !== eu) return;      // aviso só para quem bipou
+        var itens = (d.itens || []).map(function (i) { return i.qtd + ' un de ' + i.sku + (i.variacao ? ' ' + i.variacao : ''); }).join(', ');
+        if (d.sem_estoque) mostrar('Sem estoque disponível para a etiqueta ' + d.etiqueta + ': ' + itens + '. A reserva foi lançada e o saldo ficou negativo. Avise o responsável.', true);
+        else mostrar('Reserva lançada: ' + itens + '.', false);
+      };
+      ws.onclose = function () { setTimeout(conectar, 5000); };
+    } catch (e) {}
+  }
+  conectar();
+})();
+</script>
 </body>
 </html>

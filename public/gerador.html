@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Gerador de Etiqueta</title>
+<script>
+// Anti-flash: aplica o tema do localStorage antes da página renderizar
+(function(){try{var t=localStorage.getItem('bip_tema');if(t&&t!=='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#0f0f0f;--surface:#1a1a1a;--surface2:#222;--surface3:#2a2a2a;
+  --border:#2e2e2e;--border2:#3a3a3a;--text:#f0f0f0;--text2:#888;--text3:#555;
+  --accent:#00e5a0;--accent2:#00b87a;--danger:#ff4d4d;--warn:#ffb547;--info:#4d9fff;
+  --purple:#a78bfa;--purple-bg:rgba(167,139,250,.1);
+  --font:'IBM Plex Sans',sans-serif;--mono:'IBM Plex Mono',monospace;--r:6px;
+}
+
+/* TEMA · Grafite Quente (marrom · âmbar) */
+html[data-theme="grafite"]{
+  --bg:#1c1917;--surface:#27221e;--surface2:#322b25;--surface3:#3a322c;
+  --border:#3a322c;--border2:#4a3f37;--text:#f5f5f4;--text2:#a8a29e;--text3:#78716c;
+  --accent:#fbbf24;--accent2:#d97706;--danger:#ef4444;--warn:#fbbf24;--info:#60a5fa;
+  --purple:#c084fc;--purple-bg:rgba(192,132,252,.1);
+}
+/* TEMA · Midnight Corporativo (azul profundo · ciano) */
+html[data-theme="midnight"]{
+  --bg:#0b1220;--surface:#111a2e;--surface2:#172238;--surface3:#1e293b;
+  --border:#1e293b;--border2:#334155;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
+  --accent:#22d3ee;--accent2:#0891b2;--danger:#f43f5e;--warn:#f59e0b;--info:#60a5fa;
+  --purple:#a78bfa;--purple-bg:rgba(167,139,250,.1);
+}
+/* TEMA · Claro Corporativo (branco · verde-petróleo) */
+html[data-theme="claro"]{
+  --bg:#f8fafc;--surface:#ffffff;--surface2:#f1f5f9;--surface3:#e2e8f0;
+  --border:#e2e8f0;--border2:#cbd5e1;--text:#0f172a;--text2:#475569;--text3:#94a3b8;
+  --accent:#0d9488;--accent2:#0f766e;--danger:#dc2626;--warn:#b45309;--info:#1d4ed8;
+  --purple:#7c3aed;--purple-bg:rgba(124,58,237,.08);
+}
+/* TEMA · Indústria/Terminal (verde militar · amarelo) */
+html[data-theme="industria"]{
+  --bg:#0a0e0a;--surface:#0f1410;--surface2:#161c16;--surface3:#1f2a1f;
+  --border:#1f2a1f;--border2:#374151;--text:#d1d5db;--text2:#9ca3af;--text3:#6b7280;
+  --accent:#a3e635;--accent2:#65a30d;--danger:#ef4444;--warn:#fde047;--info:#60a5fa;
+  --purple:#c084fc;--purple-bg:rgba(192,132,252,.1);
+}
+
+/* SELETOR DE TEMA */
+.tema-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}
+.tema-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0;cursor:pointer;overflow:hidden;transition:transform .15s,border-color .15s;}
+.tema-card:hover{transform:translateY(-2px);border-color:var(--border2);}
+.tema-card.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent) inset;}
+.tema-preview{height:88px;display:grid;grid-template-columns:60px 1fr;border-bottom:1px solid;}
+.tema-preview-side{display:flex;flex-direction:column;justify-content:flex-start;padding:8px 6px;gap:5px;}
+.tema-preview-bar{height:5px;border-radius:3px;}
+.tema-preview-main{padding:8px 10px;}
+.tema-preview-card{border-radius:4px;padding:6px 8px;border:1px solid;font-size:9px;}
+.tema-preview-pill{display:inline-block;font-size:8px;padding:1px 6px;border-radius:8px;font-weight:600;margin-top:3px;}
+.tema-info{padding:10px 12px;}
+.tema-name{font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;}
+.tema-desc{font-size:11px;color:var(--text2);font-family:var(--mono);}
+.tema-card.selected .tema-info{background:rgba(0,229,160,.04);}
+.tema-check{float:right;font-size:14px;color:var(--accent);}
+
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+.header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 1.5rem;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:200;}
+.brand{display:flex;align-items:center;gap:10px;}
+.brand-text{font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;}
+.brand-sub{font-size:10px;color:var(--text3);font-family:var(--mono);}
+.header-right{display:flex;align-items:center;gap:10px;}
+.clock{font-family:var(--mono);font-size:12px;color:var(--text2);}
+.ws-dot{width:8px;height:8px;border-radius:50%;background:var(--danger);}
+.ws-dot.on{background:var(--accent);animation:blink 2s infinite;}
+.nav-back{font-size:12px;color:var(--text2);text-decoration:none;border:1px solid var(--border2);padding:5px 12px;border-radius:var(--r);}
+.nav-back:hover{color:var(--text);background:var(--surface2);}
+.user-chip{font-size:12px;color:var(--text2);background:var(--surface2);border:1px solid var(--border);padding:4px 10px;border-radius:20px;cursor:pointer;}
+.user-chip:hover{color:var(--danger);border-color:var(--danger);}
+
+.layout{display:grid;grid-template-columns:210px 1fr;min-height:calc(100vh - 52px);}
+.sidebar{background:var(--surface);border-right:1px solid var(--border);padding:1rem 0;}
+.nav-sec{padding:.5rem 1rem .25rem;font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);}
+.nav-item{display:flex;align-items:center;gap:8px;padding:.6rem 1rem;cursor:pointer;font-size:13px;color:var(--text2);border-left:2px solid transparent;transition:all .15s;}
+.nav-item:hover{background:var(--surface2);color:var(--text);}
+.nav-item.active{color:var(--accent);border-left-color:var(--accent);background:rgba(0,229,160,.06);}
+.nav-item .count{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--surface3);padding:1px 6px;border-radius:20px;}
+.nav-item.active .count{background:rgba(0,229,160,.15);color:var(--accent);}
+.sidebar-divider{border:none;border-top:0.5px solid var(--border);margin:.5rem 0;}
+
+.main{padding:1.5rem;overflow:auto;}
+.panel{display:none;animation:fadeIn .2s ease;}
+.panel.active{display:block;}
+.page-title{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:1.25rem;}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:1.25rem;}
+.stat{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);padding:.75rem 1rem;}
+.stat-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);margin-bottom:4px;}
+.stat-value{font-size:22px;font-weight:600;font-family:var(--mono);}
+
+.legenda{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:1rem;padding:.75rem 1rem;background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);}
+.leg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);}
+.leg-dot{width:10px;height:10px;border-radius:50%;}
+
+.produtos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
+.prod-card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.prod-card.cor-verde{border-color:#065f46;}
+.prod-card.cor-amber{border-color:#78350f;}
+.prod-card.cor-red{border-color:#7f1d1d;}
+.prod-card.cor-purple{border-color:#4c1d95;}
+.prod-card-head{padding:8px 10px;border-bottom:0.5px solid var(--border);}
+.prod-card-cat{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;}
+.prod-card-nome{font-size:12px;font-weight:600;}
+.prod-card-saldo{font-size:26px;font-weight:600;padding:8px 10px 2px;font-family:var(--mono);letter-spacing:-.02em;}
+.prod-card-diff{font-size:10px;padding:0 10px 8px;font-family:var(--mono);min-height:18px;}
+.prod-card-actions{display:grid;grid-template-columns:1fr 1fr;border-top:0.5px solid var(--border);}
+.btn-ent{padding:6px;font-size:11px;font-weight:500;background:rgba(0,229,160,.08);color:var(--accent);border:none;border-right:0.5px solid var(--border);cursor:pointer;}
+.btn-ent:hover{background:rgba(0,229,160,.15);}
+.btn-sai{padding:6px;font-size:11px;font-weight:500;background:rgba(255,77,77,.08);color:var(--danger);border:none;cursor:pointer;}
+.btn-sai:hover{background:rgba(255,77,77,.15);}
+
+/* NOVO CADASTRO DE LOTE */
+.lote-form-card{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);padding:1.25rem;margin-bottom:1.25rem;}
+.lote-form-title{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:1rem;}
+.lote-form-top{display:flex;gap:10px;margin-bottom:1rem;align-items:flex-end;}
+.form-field{display:flex;flex-direction:column;gap:4px;}
+.form-field label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);}
+.form-field input,.form-field select{padding:8px 10px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:13px;}
+.form-field input:focus,.form-field select:focus{outline:none;border-color:var(--accent);}
+.form-field select option{background:var(--surface2);}
+.divider{border:none;border-top:0.5px solid var(--border);margin:1rem 0;}
+.itens-label{font-size:11px;color:var(--text2);font-weight:500;margin-bottom:.75rem;}
+.item-row{display:grid;grid-template-columns:1fr 100px auto;gap:8px;align-items:flex-end;margin-bottom:8px;}
+.item-row .form-field:first-child{min-width:0;}
+.item-row .form-field select{width:100%;}
+.btn-remove-item{padding:8px 10px;background:rgba(255,77,77,.08);color:var(--danger);border:0.5px solid rgba(255,77,77,.3);border-radius:var(--r);cursor:pointer;font-size:13px;white-space:nowrap;}
+.btn-remove-item:hover{background:rgba(255,77,77,.15);}
+.btn-add-item{width:100%;padding:8px;background:transparent;border:0.5px dashed var(--border2);border-radius:var(--r);color:var(--text3);font-size:12px;cursor:pointer;text-align:center;margin-bottom:1rem;}
+.btn-add-item:hover{border-color:var(--accent);color:var(--accent);}
+.lote-summary{background:#111;border-radius:var(--r);padding:10px 12px;margin-bottom:1rem;}
+.lote-summary-title{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);margin-bottom:8px;}
+.summary-item{display:flex;align-items:center;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:0.5px solid var(--border);}
+.summary-item:last-of-type{border-bottom:none;}
+.summary-nome{color:var(--text);}
+.summary-qtd{color:var(--accent);font-family:var(--mono);font-weight:600;}
+.summary-total{display:flex;justify-content:space-between;padding-top:8px;margin-top:4px;border-top:0.5px solid var(--border2);font-size:12px;color:var(--text2);}
+.summary-total strong{color:var(--accent);font-family:var(--mono);}
+.btn-cadastrar-lote{width:100%;padding:11px;background:var(--accent);color:#000;border:none;border-radius:var(--r);font-size:14px;font-weight:600;cursor:pointer;}
+.btn-cadastrar-lote:hover{background:var(--accent2);}
+
+/* CARDS DE LOTE */
+.lotes-list{display:flex;flex-direction:column;gap:10px;}
+.lote-card{background:var(--surface);border-radius:var(--r);overflow:hidden;}
+.lote-card.aberto{border:1px solid var(--info);}
+.lote-card.parcial{border:1px solid var(--warn);}
+.lote-card.completo{border:1px solid var(--accent);}
+.lote-card.excedente{border:1px solid var(--purple);}
+.lote-card-head{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1rem;border-bottom:0.5px solid var(--border);}
+.lote-numero{font-family:var(--mono);font-size:16px;font-weight:600;}
+.lote-numero.aberto{color:var(--info);}
+.lote-numero.parcial{color:var(--warn);}
+.lote-numero.completo{color:var(--accent);}
+.lote-numero.excedente{color:var(--purple);}
+.lote-meta{font-size:11px;color:var(--text2);margin-top:2px;}
+.lote-body{padding:.75rem 1rem;}
+
+/* TABELA DE ITENS DO LOTE */
+.itens-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:.5rem;}
+.itens-table th{text-align:left;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:0.5px solid var(--border);font-family:var(--mono);}
+.itens-table td{padding:7px 8px;border-bottom:0.5px solid var(--border);vertical-align:middle;}
+.itens-table tr:last-child td{border-bottom:none;}
+.itens-table td.nome{color:var(--text);font-weight:500;}
+.itens-table td.mono{font-family:var(--mono);font-size:11px;}
+.prog-mini{height:4px;background:var(--surface2);border-radius:2px;width:60px;display:inline-block;vertical-align:middle;margin-left:6px;overflow:hidden;}
+.prog-mini-fill{height:100%;border-radius:2px;}
+.badge-status{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:600;font-family:var(--mono);}
+.badge-aberto{background:rgba(77,159,255,.12);color:var(--info);}
+.badge-parcial{background:rgba(255,181,71,.12);color:var(--warn);}
+.badge-completo{background:rgba(0,229,160,.12);color:var(--accent);}
+.badge-excedente{background:var(--purple-bg);color:var(--purple);}
+
+.lote-obs-txt{font-size:11px;color:var(--text3);margin-top:4px;font-style:italic;}
+.lote-actions{display:flex;justify-content:flex-end;padding:.5rem .75rem;border-top:0.5px solid var(--border);gap:6px;}
+
+.toggle-btn{width:100%;padding:6px 12px;background:var(--surface2);border:none;border-top:0.5px solid var(--border);color:var(--text3);font-size:10px;text-align:left;cursor:pointer;font-family:var(--mono);display:flex;align-items:center;gap:5px;}
+.toggle-btn:hover{color:var(--text);}
+.toggle-btn.green{color:var(--accent);}
+
+.lote-hist{display:none;background:#111;border-top:0.5px solid var(--border);padding:8px 14px;}
+.lote-hist.open{display:block;}
+.hist-row{display:grid;grid-template-columns:90px 70px 60px 80px 1fr;gap:8px;padding:4px 0;font-size:11px;font-family:var(--mono);border-bottom:0.5px solid var(--border);color:var(--text2);}
+.hist-row:last-child{border-bottom:none;}
+.hist-row.hdr{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;}
+
+.lote-insumos{display:none;background:#0d0d0d;border-top:0.5px solid var(--border);padding:10px 14px;}
+.lote-insumos.open{display:block;}
+.ins-add-title{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);margin-bottom:8px;}
+.ins-add-row{display:grid;grid-template-columns:2fr 60px 90px 110px 1fr auto;gap:6px;align-items:flex-end;margin-bottom:10px;}
+.ins-field{display:flex;flex-direction:column;gap:3px;}
+.ins-field label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);}
+.ins-field input{padding:6px 8px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-size:12px;}
+.ins-field input:focus{outline:none;border-color:var(--accent);}
+.autocomplete-wrap{position:relative;}
+.suggestions-box{position:absolute;top:100%;left:0;right:0;background:var(--surface);border:0.5px solid var(--border2);border-radius:var(--r);z-index:100;max-height:160px;overflow-y:auto;display:none;}
+.suggestions-box.open{display:block;}
+.sug-item{padding:6px 10px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border);}
+.sug-item:last-child{border-bottom:none;}
+.sug-item:hover{background:var(--surface2);}
+.sug-nome em{color:var(--accent);font-style:normal;}
+.sug-meta{display:flex;gap:8px;font-size:10px;font-family:var(--mono);}
+.sug-val{color:var(--accent);}
+.sug-forn{color:var(--info);}
+.ins-table{width:100%;border-collapse:collapse;font-size:12px;}
+.ins-table th{padding:6px 8px;text-align:left;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:0.5px solid var(--border);font-family:var(--mono);}
+.ins-table td{padding:7px 8px;border-bottom:0.5px solid var(--border);vertical-align:middle;color:var(--text2);}
+.ins-table tr:last-child td{border-bottom:none;}
+.ins-table tr:hover td{background:var(--surface2);}
+.ins-table td.nome{color:var(--text);}
+.ins-table td.val{color:var(--accent);font-family:var(--mono);}
+.ins-table td.forn{color:var(--info);font-size:11px;}
+.date-badge{background:rgba(77,159,255,.12);color:var(--info);padding:2px 6px;border-radius:3px;font-size:10px;font-family:var(--mono);}
+.ins-total{display:flex;justify-content:flex-end;margin-top:8px;padding-top:8px;border-top:0.5px solid var(--border);font-size:12px;color:var(--text2);gap:6px;}
+.ins-total-val{color:var(--accent);font-family:var(--mono);font-weight:600;}
+.empty-ins{text-align:center;padding:1.5rem;color:var(--text3);font-size:11px;font-family:var(--mono);}
+
+.pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:600;font-family:var(--mono);}
+.pill-aberto{background:rgba(77,159,255,.12);color:var(--info);}
+.pill-parcial{background:rgba(255,181,71,.12);color:var(--warn);}
+.pill-completo{background:rgba(0,229,160,.12);color:var(--accent);}
+.pill-excedente{background:var(--purple-bg);color:var(--purple);}
+
+.add-form{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);padding:1rem;margin-bottom:1rem;}
+.add-form-title{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-family:var(--mono);margin-bottom:.75rem;}
+.add-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}
+.add-row .field{flex:1;min-width:110px;}
+.field label{display:block;font-size:10px;color:var(--text3);margin-bottom:5px;text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);}
+.field input,.field select{width:100%;padding:8px 10px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:13px;}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent);}
+.field select option{background:var(--surface2);}
+
+.filters-row{display:flex;gap:8px;margin-bottom:1rem;flex-wrap:wrap;align-items:flex-end;}
+.filters-row .field{min-width:130px;}
+.export-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;}
+.export-label{font-size:11px;color:var(--text3);font-family:var(--mono);}
+
+.table-wrap{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.tbl-scroll{max-height:500px;overflow-y:auto;}
+.data-table{width:100%;border-collapse:collapse;font-size:12px;}
+.data-table th{padding:8px 12px;text-align:left;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:0.5px solid var(--border);font-family:var(--mono);white-space:nowrap;}
+.data-table td{padding:9px 12px;border-bottom:0.5px solid var(--border);vertical-align:middle;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tr:hover td{background:var(--surface2);}
+.data-table td.mono{font-family:var(--mono);font-size:11px;color:var(--text2);}
+.empty-state{text-align:center;padding:2.5rem;color:var(--text3);font-size:12px;font-family:var(--mono);}
+
+.insumos-config-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;margin-top:.75rem;}
+.insumo-chip{background:var(--surface2);border:0.5px solid var(--border);border-radius:var(--r);padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.insumo-chip-info{display:flex;flex-direction:column;gap:3px;}
+.insumo-chip-nome{font-size:13px;font-weight:500;}
+.insumo-chip-meta{display:flex;gap:10px;font-size:11px;font-family:var(--mono);}
+.insumo-chip-val{color:var(--accent);}
+.insumo-chip-forn{color:var(--info);}
+
+.btn{padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;font-family:var(--font);border-radius:var(--r);transition:all .15s;}
+.btn-primary{background:var(--accent);color:#000;border:none;}
+.btn-primary:hover{background:var(--accent2);}
+.btn-ghost{background:transparent;color:var(--text2);border:0.5px solid var(--border2);}
+.btn-ghost:hover{background:var(--surface2);color:var(--text);}
+.btn-danger-outline{background:transparent;color:var(--danger);border:0.5px solid #3a1414;}
+.btn-danger-outline:hover{background:#2a0a0a;}
+.btn-sm{padding:5px 10px;font-size:12px;}
+.btn-export{background:transparent;color:var(--info);border:0.5px solid rgba(77,159,255,.3);font-size:12px;padding:5px 12px;border-radius:var(--r);cursor:pointer;font-family:var(--font);font-weight:500;}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:500;display:flex;align-items:center;justify-content:center;}
+.modal{background:var(--surface);border:1px solid var(--border2);border-radius:12px;padding:1.5rem;width:100%;max-width:420px;animation:fadeIn .2s ease;}
+.modal-title{font-size:15px;font-weight:600;margin-bottom:1rem;}
+.modal-info{background:var(--surface2);border-radius:var(--r);padding:.75rem 1rem;margin-bottom:1rem;font-size:12px;color:var(--text2);}
+.modal-info strong{color:var(--text);font-size:13px;}
+.modal-field{margin-bottom:.9rem;position:relative;}
+.modal-field label{display:block;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;font-family:var(--mono);margin-bottom:5px;}
+.modal-field input,.modal-field select{width:100%;padding:9px 12px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:14px;}
+.modal-field input:focus,.modal-field select:focus{outline:none;border-color:var(--accent);}
+.modal-field select option{background:var(--surface2);}
+.modal-lote-info{background:var(--surface3);border-radius:var(--r);padding:6px 10px;margin-top:4px;font-size:11px;font-family:var(--mono);color:var(--text2);display:none;}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;}
+
+.toast-area{position:fixed;top:64px;right:1rem;display:flex;flex-direction:column;gap:6px;z-index:9999;}
+.toast{padding:10px 14px;border-radius:var(--r);font-size:13px;font-weight:500;animation:fadeIn .2s ease;display:flex;align-items:flex-start;gap:8px;min-width:240px;}
+.toast.ok{background:#052e1e;border:1px solid var(--accent);color:var(--accent);}
+.toast.err{background:#2a0a0a;border:1px solid var(--danger);color:var(--danger);}
+.toast.warn{background:#2a1a00;border:1px solid var(--warn);color:var(--warn);}
+
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2.5rem;width:100%;max-width:360px;}
+.login-logo{font-size:28px;margin-bottom:4px;}
+.login-title{font-size:18px;font-weight:600;margin-bottom:.25rem;}
+.login-sub{font-size:12px;color:var(--text3);margin-bottom:1.75rem;font-family:var(--mono);}
+.login-field{margin-bottom:1rem;}
+.login-field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
+.login-field input{width:100%;padding:10px 12px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-size:14px;}
+.login-field input:focus{outline:none;border-color:var(--accent);}
+.login-btn{width:100%;padding:11px;background:var(--accent);color:#000;border:none;border-radius:var(--r);font-size:14px;font-weight:600;cursor:pointer;margin-top:.5rem;}
+.login-err{color:var(--danger);font-size:12px;margin-top:.75rem;text-align:center;}
+
+/* ── Estoque novo ── */
+:root,html[data-theme]{--mono:'IBM Plex Sans',sans-serif;}
+button.nav-item,a.nav-item{width:100%;background:none;border:none;border-left:2px solid transparent;text-align:left;font-family:inherit;text-decoration:none;min-height:40px;}
+button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--accent);}
+.aviso{border-radius:var(--r);padding:10px 14px;font-size:13px;margin-bottom:12px;line-height:1.45;}
+.aviso.ok{background:rgba(0,229,160,.06);border:1px solid rgba(0,229,160,.35);color:var(--text2);}
+.aviso.warn{background:#2a1a00;border:1px solid var(--warn);color:var(--warn);}
+.aviso.info{background:var(--surface);border:1px solid var(--border);color:var(--text2);}
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;white-space:nowrap;}
+.tag.ent{background:rgba(0,229,160,.14);color:var(--accent);}
+.tag.sai{background:rgba(255,77,77,.14);color:#ff8a8a;}
+.tag.warn{background:rgba(255,181,71,.14);color:var(--warn);}
+.tag.neu{background:var(--surface3);color:var(--text2);}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.data-table th.num{text-align:right;}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid rgba(255,255,255,.25);margin-right:6px;vertical-align:middle;}
+.barra{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;}
+.barra .field{min-width:150px;}
+.tbl-x{overflow-x:auto;}
+.pag{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--text2);}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.sub{font-size:13px;color:var(--text2);margin:-.6rem 0 1.1rem;line-height:1.45;}
+.inp{padding:7px 9px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:13px;width:100%;}
+.inp:focus{outline:none;border-color:var(--accent);}
+.inp.curto{width:110px;text-align:right;}
+.modal textarea{width:100%;padding:9px 12px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:14px;}
+.modal-erro{color:#ff8a8a;font-size:12px;min-height:16px;margin-bottom:8px;}
+.rodape{background:var(--surface);border:0.5px solid var(--border);border-radius:var(--r);padding:1rem;margin-top:12px;}
+@media(max-width:820px){
+  .layout{grid-template-columns:1fr;}
+  .sidebar{display:flex;flex-wrap:wrap;padding:.4rem;border-right:none;border-bottom:1px solid var(--border);}
+  .sidebar .nav-sec,.sidebar .sidebar-divider{display:none;}
+  button.nav-item,a.nav-item{width:auto;border-left:none;border-radius:var(--r);}
+  .main{padding:1rem .8rem;}
+  .header{padding:0 .8rem;}
+  .clock{display:none;}
+}
+
+/* ── Gerador de Etiqueta ── */
+.solta{border:1.5px dashed var(--border2);border-radius:10px;padding:26px 18px;text-align:center;background:var(--surface);cursor:pointer;transition:border-color .15s,background .15s;}
+.solta:hover,.solta.sobre{border-color:var(--accent);background:rgba(0,229,160,.05);}
+.solta strong{display:block;font-size:15px;margin-bottom:4px;}
+.solta span{font-size:13px;color:var(--text2);}
+.prog{height:8px;background:var(--surface3);border-radius:4px;overflow:hidden;margin-top:10px;}
+.prog div{height:100%;background:var(--accent);width:0;transition:width .2s;}
+.linha-clic{cursor:pointer;}
+.pv{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;}
+.pv canvas{width:300px;max-width:42vw;height:auto;background:#fff;display:block;}
+.modal.larga{max-width:720px;max-height:92vh;overflow:auto;}
+.mini{font-size:11px;color:var(--warn);margin-top:4px;}
+.sel-ped{padding:5px 8px;background:var(--surface2);border:0.5px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:var(--font);font-size:12px;max-width:190px;}
+</style>
+</head>
+<body>
+
+<div class="login-wrap" id="login-wrap" style="display:none;">
+  <div class="login-box">
+    <div class="login-title">Gerador de Etiqueta</div>
+    <div class="login-sub">Faça login para continuar</div>
+    <div class="login-field"><label for="login-user">Usuário</label><input type="text" id="login-user" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('login-pass').focus()"/></div>
+    <div class="login-field"><label for="login-pass">Senha</label><input type="password" id="login-pass" autocomplete="current-password" onkeydown="if(event.key==='Enter')fazerLogin()"/></div>
+    <button class="login-btn" type="button" onclick="fazerLogin()">Entrar</button>
+    <div class="login-err" id="login-err"></div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+  <div class="header">
+    <div class="brand">
+      <img src="/logo.png.jpeg" alt="EEA Móveis" style="height:42px;width:auto;object-fit:contain;"/>
+      <div class="brand-text">Gerador de Etiqueta</div>
+    </div>
+    <div class="header-right">
+      <a href="/" class="nav-back">Voltar para a Bipagem</a>
+      <div class="clock" id="data-full"></div>
+      <button type="button" class="user-chip" onclick="fazerLogout()" style="font-family:inherit;"><span id="user-display"></span> · Sair</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="sidebar" aria-label="Menu do gerador">
+      <div class="nav-sec">Etiquetas</div>
+      <button type="button" class="nav-item active" id="nav-gerar" onclick="abrir('gerar')">Gerar etiquetas</button>
+      <button type="button" class="nav-item" id="nav-hist" onclick="abrir('hist')">Histórico de envios</button>
+      <div class="sidebar-divider"></div>
+      <a class="nav-item" href="/estoque.html">Estoque</a>
+    </nav>
+
+    <main class="main">
+      <section class="panel active" id="panel-gerar">
+        <div class="page-title">Gerar etiquetas com SKU</div>
+        <div class="sub">Envie o arquivo ZIP baixado da Shopee, com as etiquetas e o romaneio. O sistema cruza cada etiqueta com o romaneio pelo número do pedido e devolve o arquivo com o SKU no rodapé. O arquivo é lido neste computador e não fica guardado.</div>
+
+        <div id="area-envio">
+          <label class="solta" id="solta" for="arq">
+            <strong>Clique para escolher o arquivo da Shopee, ou arraste para cá</strong>
+            <span>Aceita o ZIP, ou o arquivo de etiquetas (.txt) junto com o romaneio (.pdf)</span>
+          </label>
+          <input type="file" id="arq" accept=".zip,.txt,.zpl,.pdf" multiple style="position:absolute;left:-9999px;" onchange="escolheu(this.files)"/>
+        </div>
+
+        <div id="area-leitura" style="display:none;" class="rodape" role="status" aria-live="polite">
+          <div id="leitura-txt" style="font-size:14px;">Lendo o arquivo</div>
+          <div class="prog"><div id="leitura-barra"></div></div>
+          <div style="font-size:12px;color:var(--text2);margin-top:8px;">A leitura acontece neste computador e leva cerca de um segundo por etiqueta. Não feche esta página.</div>
+        </div>
+
+        <div id="area-resultado" style="display:none;">
+          <div class="page-title" id="res-titulo" style="margin-top:.4rem;"></div>
+          <div class="stats" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+            <div class="stat"><div class="stat-label">Etiquetas lidas</div><div class="stat-value" id="n-lidas">0</div></div>
+            <div class="stat"><div class="stat-label">Prontas com SKU</div><div class="stat-value" id="n-prontas" style="color:var(--accent);">0</div></div>
+            <div class="stat"><div class="stat-label">Já impressas</div><div class="stat-value" id="n-impressas">0</div></div>
+            <div class="stat"><div class="stat-label">Precisam de atenção</div><div class="stat-value" id="n-atencao">0</div></div>
+          </div>
+          <div id="res-avisos"></div>
+          <div style="font-size:12px;color:var(--text2);margin:10px 0;">Clique numa linha para ver a etiqueta antes e depois.</div>
+          <div class="table-wrap tbl-x"><table class="data-table">
+            <thead><tr><th>Pedido</th><th>Rastreio</th><th>SKU</th><th>Variação</th><th class="num">Qtd</th><th>Situação</th></tr></thead>
+            <tbody id="tb-res"></tbody>
+          </table></div>
+          <div class="barra" style="margin-top:14px;">
+            <button type="button" class="btn btn-primary" id="btn-baixar" onclick="baixar()">Baixar etiquetas com SKU</button>
+            <button type="button" class="btn btn-ghost" onclick="novoEnvio()">Enviar outro arquivo</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-hist">
+        <div class="page-title">Histórico de arquivos enviados</div>
+        <div class="table-wrap tbl-x"><table class="data-table">
+          <thead><tr><th>Data e hora</th><th>Usuário</th><th>Arquivo</th><th class="num">Etiquetas</th><th class="num">Novas</th><th class="num">Já impressas</th><th>Baixado</th></tr></thead>
+          <tbody id="tb-hist"></tbody>
+        </table></div>
+        <div class="pag">
+          <span id="hist-info"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="hist-ant" onclick="carregarHist(hist.pagina-1)">Anterior</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="hist-prox" onclick="carregarHist(hist.pagina+1)">Próxima</button>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- PRÉVIA -->
+<div class="modal-overlay" id="modal-pv" style="display:none;" onclick="if(event.target===this)fecharModais()">
+  <div class="modal larga" role="dialog" aria-modal="true" aria-labelledby="pv-titulo">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;">
+      <div class="modal-title" id="pv-titulo" style="margin:0;"></div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="fecharModais()">Fechar</button>
+    </div>
+    <div class="pv" id="pv-corpo"></div>
+  </div>
+</div>
+
+<!-- REIMPRESSÃO -->
+<div class="modal-overlay" id="modal-rp" style="display:none;" onclick="if(event.target===this)fecharModais()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rp-titulo">
+    <div class="modal-title" id="rp-titulo">Reimprimir etiqueta</div>
+    <div class="modal-info" id="rp-info"></div>
+    <div class="modal-field"><label for="rp-motivo">Motivo da reimpressão</label><select id="rp-motivo"></select></div>
+    <div class="modal-field"><label for="rp-senha">Sua senha</label><input type="password" id="rp-senha" autocomplete="off" onkeydown="if(event.key==='Enter')confirmarReimp()"/></div>
+    <div class="modal-erro" id="rp-erro"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="fecharModais()">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="rp-ok" onclick="confirmarReimp()">Confirmar reimpressão</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-area" id="toast-area" role="status"></div>
+
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="vendor/tess/tesseract.min.js"></script>
+<script src="gerador-leitor.js"></script>
+<script>
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+var token = null; try { token = localStorage.getItem('bip_token') || null; } catch (e) {}
+var usuario = null, R = null, arquivoId = null, enviadoEm = null, nomeArquivo = '', baixou = false, motivos = [], skusVinc = {}, rpEt = null;
+var hist = { pagina: 1, paginas: 1 };
+function $(id) { return document.getElementById(id); }
+function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function dataHora(iso) { if (!iso) return ''; return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+function toast(msg, tipo, dur) { var el = document.createElement('div'); el.className = 'toast ' + (tipo || 'ok'); el.textContent = msg; $('toast-area').appendChild(el); setTimeout(function () { el.remove(); }, dur || 4000); }
+async function api(metodo, caminho, corpo) {
+  var o = { method: metodo, headers: { 'Content-Type': 'application/json', 'Authorization': token || '' } };
+  if (corpo) o.body = JSON.stringify(corpo);
+  var r = await fetch(caminho, o), j = null;
+  try { j = await r.json(); } catch (e) { j = {}; }
+  if (r.status === 401 && j && (j.erro === 'Sessão inválida.' || j.erro === 'Não autenticado.')) { sair(); throw j; }
+  if (!r.ok) throw (j && j.erro ? j : { erro: 'Erro de comunicação com o servidor.' });
+  return j;
+}
+function msgErro(e) { return (e && (e.erro || e.message)) || 'Erro de comunicação com o servidor.'; }
+
+/* ── login ── */
+async function fazerLogin() {
+  var u = $('login-user').value.trim(), s = $('login-pass').value, err = $('login-err');
+  err.textContent = '';
+  if (!u || !s) { err.textContent = 'Preencha usuário e senha.'; return; }
+  try {
+    var r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, senha: s }) });
+    var d = await r.json();
+    if (!r.ok) { err.textContent = d.erro || 'Erro ao entrar.'; return; }
+    token = d.token; usuario = d.usuario;
+    try { localStorage.setItem('bip_token', token); } catch (e) {}
+    iniciar();
+  } catch (e) { err.textContent = 'Erro de conexão.'; }
+}
+function sair() { try { localStorage.removeItem('bip_token'); } catch (e) {} token = null; $('app').style.display = 'none'; $('login-wrap').style.display = 'flex'; }
+async function fazerLogout() { try { await api('POST', '/api/logout'); } catch (e) {} sair(); }
+function iniciar() {
+  $('login-wrap').style.display = 'none'; $('app').style.display = 'block';
+  $('user-display').textContent = usuario.nome || usuario.username || '';
+}
+function abrir(p) {
+  ['gerar', 'hist'].forEach(function (x) { $('panel-' + x).classList.toggle('active', x === p); $('nav-' + x).classList.toggle('active', x === p); });
+  if (p === 'hist') carregarHist(1);
+}
+
+/* ── envio e leitura ── */
+(function () {
+  var s = $('solta');
+  ['dragenter', 'dragover'].forEach(function (ev) { s.addEventListener(ev, function (e) { e.preventDefault(); s.classList.add('sobre'); }); });
+  ['dragleave', 'drop'].forEach(function (ev) { s.addEventListener(ev, function (e) { e.preventDefault(); s.classList.remove('sobre'); }); });
+  s.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files.length) escolheu(e.dataTransfer.files); });
+})();
+function mostrar(qual) { ['envio', 'leitura', 'resultado'].forEach(function (x) { $('area-' + x).style.display = x === qual ? '' : 'none'; }); }
+function novoEnvio() { R = null; arquivoId = null; baixou = false; $('arq').value = ''; mostrar('envio'); }
+async function escolheu(files) {
+  var lista = Array.prototype.slice.call(files || []);
+  if (!lista.length) return;
+  nomeArquivo = lista.map(function (f) { return f.name; }).join(' + ');
+  mostrar('leitura'); $('leitura-barra').style.width = '0';
+  try {
+    R = await EtqLeitor.lerArquivos(lista, function (p) {
+      $('leitura-txt').textContent = p.texto;
+      $('leitura-barra').style.width = (p.total ? Math.round(100 * p.feito / p.total) : 0) + '%';
+    });
+    $('leitura-txt').textContent = 'Conferindo com o sistema'; $('leitura-barra').style.width = '100%';
+    await registrar();
+    baixou = false; render(); mostrar('resultado');
+  } catch (e) {
+    mostrar('envio'); $('arq').value = '';
+    toast(msgErro(e), 'err', 8000);
+  }
+}
+function comRastreio() { return R.etiquetas.filter(function (e) { return e.rastreio; }); }
+async function registrar() {
+  var envio = comRastreio().map(function (e) { return { rastreio: e.rastreio, pedido: e.pedido, pacote: e.pacote, itens: e.itens.map(function (i) { return { sku: i.sku, variacao: i.variacao, produto: i.produto, qtd: i.qtd }; }) }; });
+  if (!envio.length) throw { erro: 'Nenhuma etiqueta teve o rastreio lido. Envie este arquivo para análise.' };
+  var r = await api('POST', '/api/etq/arquivos', { nome: nomeArquivo, etiquetas: envio });
+  arquivoId = r.arquivo_id; enviadoEm = r.enviado_em; motivos = r.motivos_reimpressao || []; skusVinc = r.skus_vinculados || {};
+  var mapa = {}; r.etiquetas.forEach(function (s) { mapa[s.rastreio] = s; });
+  R.etiquetas.forEach(function (e) { e.sit = mapa[e.rastreio] || null; });
+}
+
+/* ── situação de cada etiqueta ── */
+function problema(e) {            // impede de entrar no arquivo
+  if (!e.rastreio) return 'Rastreio não lido';
+  if (!e.pedido) return 'Pedido não identificado';
+  if (!e.itens.length) return 'Romaneio sem itens';
+  if (e.avisos.indexOf('Sem área livre no rodapé') >= 0) return 'Sem área livre no rodapé';
+  return '';
+}
+function jaImpressa(e) { return e.sit && e.sit.situacao === 'impressa'; }
+function entra(e) { return !problema(e) && !jaImpressa(e) && !e.baixada; }
+function semVinculo(e) { return e.itens.some(function (i) { return i.sku && !skusVinc[i.sku.toLowerCase()]; }); }
+function render() {
+  var ets = R.etiquetas, prontas = ets.filter(entra).length, imp = ets.filter(jaImpressa).length, at = ets.filter(function (e) { return problema(e); }).length;
+  $('res-titulo').textContent = 'Arquivo enviado por ' + (usuario.nome || '') + ' em ' + dataHora(enviadoEm);
+  $('n-lidas').textContent = ets.length; $('n-prontas').textContent = prontas;
+  $('n-impressas').textContent = imp; $('n-impressas').style.color = imp ? '#ff8a8a' : '';
+  $('n-atencao').textContent = at; $('n-atencao').style.color = at ? 'var(--warn)' : '';
+  var av = '';
+  if (imp) av += '<div class="aviso" style="background:#2a0a0a;border:1px solid #ff8a8a;color:#ffc9c9;"><strong>Atenção:</strong> ' + imp + ' etiqueta(s) deste arquivo já foram impressas. Elas ficam fora do arquivo final para não haver duplicidade.</div>';
+  var env = ets.filter(function (e) { return e.sit && e.sit.situacao === 'enviada' && !e.baixada; }).length;
+  if (env) av += '<div class="aviso warn">' + env + ' etiqueta(s) já foram enviadas por outra pessoa e ainda não baixadas. Combine com ela antes de imprimir, para não sair em dobro.</div>';
+  if (at) av += '<div class="aviso warn">' + at + ' etiqueta(s) precisam de atenção e ficam fora do arquivo final até serem resolvidas.</div>';
+  var sv = ets.filter(function (e) { return !problema(e) && semVinculo(e); }).length;
+  if (sv) av += '<div class="aviso warn">' + sv + ' etiqueta(s) têm SKU ainda sem vínculo no estoque. A etiqueta sai normalmente, mas o estoque só é movimentado depois que o SKU for preenchido em Estoque, SKU por cor.</div>';
+  if (R.pedidosSemEtiqueta.length && !ets.some(function (e) { return !e.pedido; })) av += '<div class="aviso info">O romaneio tem ' + R.pedidosSemEtiqueta.length + ' pedido(s) sem etiqueta neste arquivo: ' + esc(R.pedidosSemEtiqueta.join(', ')) + '.</div>';
+  $('res-avisos').innerHTML = av;
+  $('tb-res').innerHTML = ets.map(function (e, n) {
+    var p = problema(e), skus = e.itens.map(function (i) { return i.sku ? '<strong style="color:var(--accent);">' + esc(i.sku) + '</strong>' : '<span class="tag warn">Sem SKU</span>'; }).join('<br>');
+    var sit, extra = '';
+    if (e.baixada) sit = '<span class="tag ent">Impressa agora por você</span>';
+    else if (jaImpressa(e)) sit = '<span class="tag sai">Já impressa em ' + dataHora(e.sit.em) + ' por ' + esc(e.sit.por) + '</span> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();abrirReimp(' + n + ')">Reimprimir</button>';
+    else if (p === 'Pedido não identificado') sit = '<span class="tag warn">Pedido não identificado</span> ' + seletorPedido(n);
+    else if (p) sit = '<span class="tag warn">' + p + '</span>';
+    else if (e.sit && e.sit.situacao === 'enviada') sit = '<span class="tag warn">Enviada por ' + esc(e.sit.por) + ' em ' + dataHora(e.sit.em) + ', ainda não baixada</span>';
+    else sit = '<span class="tag ent">Pronta</span>';
+    if (e.baixada) sit += ' <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();abrirReimp(' + n + ')">Reimprimir</button>';
+    if (e.sit && e.sit.reimpressoes) extra += '<div class="mini">Reimpressa ' + e.sit.reimpressoes + ' vez(es)' + (e.sit.ultimaReimp ? '. Última em ' + dataHora(e.sit.ultimaReimp.em) + ' por ' + esc(e.sit.ultimaReimp.por) : '') + '</div>';
+    if (!p && semVinculo(e)) extra += '<div class="mini">SKU sem vínculo no estoque</div>';
+    if (e.manual) extra += '<div class="mini">Pedido escolhido à mão</div>';
+    e.avisos.filter(function (a) { return /confira/.test(a); }).forEach(function (a) { extra += '<div class="mini">' + esc(a) + '</div>'; });
+    return '<tr class="linha-clic" tabindex="0" onclick="verPrevia(' + n + ')" onkeydown="if(event.key===\'Enter\'&&event.target===this)verPrevia(' + n + ')"><td>' + (e.pedido ? esc(e.pedido) : '') + '</td><td>' + (e.rastreio ? esc(e.rastreio) : '') + '</td><td>' + skus + '</td>' +
+      '<td>' + e.itens.map(function (i) { return esc(i.variacao); }).join('<br>') + '</td><td class="num">' + e.itens.map(function (i) { return i.qtd; }).join('<br>') + '</td><td>' + sit + extra + '</td></tr>';
+  }).join('');
+  var b = $('btn-baixar'); b.disabled = !prontas; b.textContent = prontas ? 'Baixar ' + prontas + ' etiqueta(s) com SKU' : (baixou ? 'Arquivo já baixado' : 'Nenhuma etiqueta para baixar');
+}
+function seletorPedido(n) {
+  var usados = {}; R.etiquetas.forEach(function (e) { if (e.pedido) usados[e.pedido] = (usados[e.pedido] || 0) + 1; });
+  var livres = R.pedidos.filter(function (b) { return !usados[b.pedido]; });
+  if (!R.etiquetas[n].rastreio || !livres.length) return '';
+  return '<select class="sel-ped" aria-label="Escolher o pedido desta etiqueta" onclick="event.stopPropagation()" onchange="escolherPedido(' + n + ',this.value)"><option value="">Escolher o pedido</option>' +
+    livres.map(function (b) { return '<option value="' + esc(b.pedido) + '">' + esc(b.pedido) + '</option>'; }).join('') + '</select>';
+}
+async function escolherPedido(n, pedido) {
+  if (!pedido) return;
+  var e = R.etiquetas[n];
+  EtqLeitor.definirPedido(R, e, pedido);
+  try {
+    await api('PUT', '/api/etq/etiquetas/' + encodeURIComponent(e.rastreio) + '/itens', { pedido: e.pedido, pacote: e.pacote, itens: e.itens });
+    R.pedidosSemEtiqueta = R.pedidosSemEtiqueta.filter(function (p) { return p !== pedido; });
+    toast('Pedido definido. Confira a prévia antes de baixar.', 'warn');
+  } catch (err) { EtqLeitor.definirPedido(R, e, ''); e.manual = false; e.avisos.push('Pedido não identificado'); toast(msgErro(err), 'err', 6000); }
+  render();
+}
+
+/* ── prévia ── */
+function verPrevia(n) {
+  var e = R.etiquetas[n];
+  $('pv-titulo').textContent = e.pedido ? 'Pedido ' + e.pedido : 'Etiqueta sem pedido identificado';
+  var corpo = $('pv-corpo'); corpo.innerHTML = '';
+  [['Original da Shopee', false, 'var(--text2)'], ['Gerada com SKU', true, 'var(--accent)']].forEach(function (c) {
+    if (c[1] && !e.itens.length) return;
+    var d = document.createElement('div'), t = document.createElement('div');
+    t.textContent = c[0]; t.style.cssText = 'font-size:11px;text-transform:uppercase;margin-bottom:6px;color:' + c[2];
+    var cv = EtqLeitor.previa(e, c[1]); if (c[1]) cv.style.outline = '2px solid var(--accent)';
+    cv.setAttribute('role', 'img'); cv.setAttribute('aria-label', c[1] ? 'Etiqueta com o SKU no rodapé' : 'Etiqueta original');
+    d.appendChild(t); d.appendChild(cv); corpo.appendChild(d);
+  });
+  $('modal-pv').style.display = 'flex';
+}
+function fecharModais() { $('modal-pv').style.display = 'none'; $('modal-rp').style.display = 'none'; rpEt = null; }
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') fecharModais(); });
+
+/* ── baixar ── */
+function salvarArquivo(texto, nome) {
+  var a = document.createElement('a'), url = URL.createObjectURL(new Blob([texto], { type: 'text/plain' }));
+  a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+}
+function carimbo() { var d = new Date(), z = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()) + '-' + z(d.getHours()) + z(d.getMinutes()); }
+async function baixar() {
+  var lista = R.etiquetas.filter(entra);
+  if (!lista.length) return;
+  var b = $('btn-baixar'); b.disabled = true;
+  try {
+    var r = await api('POST', '/api/etq/arquivos/' + arquivoId + '/baixar', { rastreios: lista.map(function (e) { return e.rastreio; }) });
+    var mapa = {}; r.etiquetas.forEach(function (x) { mapa[x.rastreio] = x; });
+    var minhas = [], perdidas = 0;
+    lista.forEach(function (e) {
+      var x = mapa[e.rastreio];
+      if (x && x.marcada) { e.baixada = true; minhas.push(e); }
+      else if (x && x.em) { e.sit = { situacao: 'impressa', por: x.por, em: x.em, reimpressoes: 0 }; perdidas++; }
+    });
+    if (minhas.length) salvarArquivo(minhas.map(function (e) { return EtqLeitor.zplComSku(e); }).join(''), 'etiquetas-com-sku-' + carimbo() + '.txt');
+    baixou = true; render();
+    if (perdidas) toast(perdidas + ' etiqueta(s) foram impressas por outra pessoa enquanto você conferia e ficaram fora do arquivo.', 'warn', 8000);
+    if (minhas.length) toast(minhas.length + ' etiqueta(s) baixadas e marcadas como impressas por você.', 'ok', 5000);
+  } catch (e) { toast(msgErro(e), 'err', 6000); b.disabled = false; }
+}
+
+/* ── reimpressão ── */
+function abrirReimp(n) {
+  rpEt = R.etiquetas[n];
+  var quem = rpEt.baixada ? 'por você, agora há pouco' : 'em ' + dataHora(rpEt.sit.em) + ' por ' + rpEt.sit.por;
+  $('rp-info').innerHTML = '<strong>Pedido ' + esc(rpEt.pedido) + '</strong><br>Rastreio ' + esc(rpEt.rastreio) + '<br>Já impressa ' + esc(quem) + '.';
+  $('rp-motivo').innerHTML = '<option value="">Selecione o motivo</option>' + motivos.map(function (m) { return '<option>' + esc(m) + '</option>'; }).join('');
+  $('rp-senha').value = ''; $('rp-erro').textContent = '';
+  $('modal-rp').style.display = 'flex'; $('rp-motivo').focus();
+}
+async function confirmarReimp() {
+  var err = $('rp-erro'), e = rpEt; err.textContent = '';
+  if (!e) return;
+  if (!$('rp-motivo').value) { err.textContent = 'Selecione o motivo.'; return; }
+  if (!$('rp-senha').value) { err.textContent = 'Digite sua senha para confirmar.'; return; }
+  if (problema(e)) { err.textContent = 'Esta etiqueta não pode ser gerada: ' + problema(e) + '.'; return; }
+  var b = $('rp-ok'); b.disabled = true;
+  try {
+    var r = await api('POST', '/api/etq/reimprimir', { rastreio: e.rastreio, motivo: $('rp-motivo').value, senha: $('rp-senha').value });
+    e.sit = e.sit || { situacao: 'impressa' }; e.sit.reimpressoes = r.reimpressoes; e.sit.ultimaReimp = { por: r.por, em: r.em };
+    salvarArquivo(EtqLeitor.zplComSku(e), 'reimpressao-' + e.rastreio + '.txt');
+    fecharModais(); render();
+    toast('Reimpressão registrada e etiqueta baixada.', 'ok', 5000);
+  } catch (x) { err.textContent = msgErro(x); }
+  b.disabled = false;
+}
+
+/* ── histórico (50 por página, vindo do servidor) ── */
+async function carregarHist(pagina) {
+  try {
+    var r = await api('GET', '/api/etq/historico?pagina=' + (pagina || 1));
+    hist.pagina = r.pagina; hist.paginas = r.paginas;
+    $('tb-hist').innerHTML = r.linhas.length ? r.linhas.map(function (h) {
+      var desc = h.tipo === 'reimpressao'
+        ? '<span class="tag warn">Reimpressão</span> Etiqueta ' + esc(h.rastreio) + '<div style="font-size:11px;color:var(--text2);margin-top:4px;">Motivo: ' + esc(h.motivo) + (h.primeira_em ? '. Primeira impressão em ' + dataHora(h.primeira_em) + ' por ' + esc(h.primeira_por) : '') + '</div>'
+        : esc(h.nome || 'Arquivo sem nome');
+      return '<tr><td style="white-space:nowrap;">' + dataHora(h.em) + '</td><td><strong>' + esc(h.usuario) + '</strong></td><td>' + desc + '</td><td class="num">' + h.total + '</td><td class="num">' + h.novas + '</td>' +
+        '<td class="num"' + (h.repetidas ? ' style="color:#ff8a8a;font-weight:600;"' : '') + '>' + h.repetidas + '</td><td>' + (h.baixado_em ? 'Sim, em ' + dataHora(h.baixado_em) : 'Não') + '</td></tr>';
+    }).join('') : '<tr><td colspan="7"><div class="empty-state">Nenhum arquivo enviado ainda.</div></td></tr>';
+    $('hist-info').textContent = 'Página ' + r.pagina + ' de ' + r.paginas + ' (' + r.total + ' registro' + (r.total === 1 ? '' : 's') + ')';
+    $('hist-ant').disabled = r.pagina <= 1; $('hist-prox').disabled = r.pagina >= r.paginas;
+  } catch (e) { toast(msgErro(e), 'err'); }
+}
+
+function relogio() { $('data-full').textContent = new Date().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' }); }
+relogio(); setInterval(relogio, 60000);
+window.addEventListener('beforeunload', function (e) { if (R && !baixou && R.etiquetas.some(entra)) { e.preventDefault(); e.returnValue = ''; } });
+(async function () {
+  if (token) { try { usuario = await api('GET', '/api/me'); return iniciar(); } catch (e) {} }
+  sair();
+})();
+</script>
+</body>
+</html>

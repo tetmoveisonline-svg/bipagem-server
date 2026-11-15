@@ -289,6 +289,24 @@ wss.on('connection', ws => ws.on('error', console.error));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Estoque: depois de qualquer bipagem, coleta, carga ou cancelamento, confere se a
+// situação das etiquetas mudou e lança reserva ou saída. Roda depois da resposta,
+// então não atrasa a bipagem. Detalhes no bloco do Gerador de Etiqueta, no fim do arquivo.
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && /^\/api\/(bipagens|coletas|cargas|conferencia|retornos|estq\/itens)/.test(req.path)) {
+    res.on('finish', () => {
+      try {
+        if (res.statusCode >= 400) return;
+        const b = req.body || {};
+        const lista = [].concat(b.etiqueta || [], Array.isArray(b.etiquetas) ? b.etiquetas : [])
+          .map(x => String((x && x.etiqueta) || x || '').trim().toUpperCase()).filter(x => x.length >= 5 && x.length <= 40);
+        etqAgendar(lista.length && !/estq\/itens/.test(req.path) ? lista : null);
+      } catch (e) {}
+    });
+  }
+  next();
+});
+
 // ── Auth middleware ──────────────────────────────────────────
 async function autenticar(req, res, next) {
   try {
@@ -2812,7 +2830,7 @@ app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res
 const ESTQ_PRODUCAO_URL = (process.env.PRODUCAO_URL || 'https://producao-server-production.up.railway.app').replace(/\/+$/, '');
 const ESTQ_TOKEN = process.env.INTEGRACAO_TOKEN || '';
 const ESTQ_POR_PAGINA = 50;
-const ESTQ_MOTIVOS_AJUSTE = ['Avaria', 'Perda', 'Troca', 'Acerto de contagem', 'Outro'];
+const ESTQ_MOTIVOS_AJUSTE = ['Avaria', 'Perda', 'Troca', 'Retorno de cliente', 'Acerto de contagem', 'Outro'];
 let _estqPronto = false;
 let _estqSincronizando = false;
 let _estqFila = { pendentes: null, ultimo_erro: '' };   // fila de avisos na Produção (última leitura)
@@ -3080,11 +3098,13 @@ app.get('/api/estq/resumo', autenticar, estqDisponivel, async (req, res) => {
     const ult = await pool.query('SELECT MAX(atualizado_em) AS em FROM estq_coletas');
     // Lista velha (mais de 10 min): atualiza em segundo plano, sem segurar a tela.
     if (ESTQ_TOKEN && (!conf.sync_em || Date.now() - new Date(conf.sync_em).getTime() > 10 * 60 * 1000)) estqSincronizarProdutos();
+    const sh = await pool.query(`SELECT COALESCE(-SUM(quantidade), 0)::INTEGER AS n FROM estq_movimentos
+      WHERE tipo IN ('saida_bipagem', 'saida_desfeita') AND criado_em >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date::timestamp AT TIME ZONE 'America/Sao_Paulo'`);
     let fisico = 0, reservado = 0, semSku = 0;
     itens.rows.forEach(i => { fisico += i.fisico; reservado += i.reservado; if (i.ativo && !i.sku_shopee) semSku++; });
     res.json({
       itens: itens.rows,
-      totais: { fisico, reservado, disponivel: fisico - reservado, sem_sku: semSku },
+      totais: { fisico, reservado, disponivel: fisico - reservado, sem_sku: semSku, saidas_hoje: sh.rows[0].n },
       motivos_ajuste: ESTQ_MOTIVOS_AJUSTE,
       ligacao: {
         token_configurado: !!ESTQ_TOKEN,
@@ -3117,7 +3137,7 @@ app.get('/api/estq/movimentos', autenticar, estqDisponivel, async (req, res) => 
     const paginas = Math.max(1, Math.ceil(total / ESTQ_POR_PAGINA));
     const pagina = Math.min(Math.max(1, estqInt(req.query.pagina) || 1), paginas);
     const r = await pool.query(`
-      SELECT m.id, m.item_id, m.tipo, m.quantidade, m.saldo_antes, m.saldo_depois, m.motivo, m.obs, m.origem,
+      SELECT m.id, m.item_id, m.tipo, m.quantidade, to_jsonb(m)->>'reserva' AS reserva, m.saldo_antes, m.saldo_depois, m.motivo, m.obs, m.origem,
              m.usuario_nome, m.criado_em, i.produto_nome, i.cor, i.sku_shopee
       FROM estq_movimentos m JOIN estq_itens i ON i.id = m.item_id
       ${w}
@@ -3226,6 +3246,399 @@ app.post('/api/estq/contagem', autenticar, apenasAdmin, estqDisponivel, async (r
 });
 
 
+// ═══════════════════════════════════════════════════════════════════════
+// GERADOR DE ETIQUETA + RESERVA E SAÍDA PELA BIPAGEM
+// O arquivo da Shopee é lido no navegador de quem enviou. Aqui chega só o
+// resultado: rastreio, pedido e itens (SKU, variação, quantidade). O arquivo
+// em si não é guardado.
+// Estoque: etiqueta bipada na separação reserva; etiqueta coletada dá saída.
+// Em vez de mexer em cada rota de bipagem e coleta, um conferidor compara a
+// situação de cada etiqueta na tabela bipagens com o que já foi lançado no
+// estoque e aplica só a diferença. Assim cancelar, reabrir, desfazer coleta
+// ou excluir bipagem também corrigem o estoque, sem risco de lançar em dobro.
+// Só cria tabelas novas (etq_*) e uma coluna na estq_movimentos, que é deste módulo.
+// ═══════════════════════════════════════════════════════════════════════
+const ETQ_MOTIVOS_REIMPRESSAO = ['Etiqueta perdida', 'Etiqueta rasgada ou ilegível', 'Falha na impressora'];
+const ETQ_MAX_POR_ARQUIVO = 2000;
+let _etqPronto = false, _etqRodando = false, _etqPendente = null;   // _etqPendente: null = nada, [] = tudo, [..] = só essas
+
+async function initEtq() {
+  try {
+    if (!_estqPronto) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS etq_arquivos (
+        id SERIAL PRIMARY KEY,
+        nome TEXT DEFAULT '',
+        usuario_id INTEGER,
+        usuario_nome TEXT DEFAULT '',
+        enviado_em TIMESTAMPTZ DEFAULT NOW(),
+        total INTEGER NOT NULL DEFAULT 0,
+        novas INTEGER NOT NULL DEFAULT 0,
+        repetidas INTEGER NOT NULL DEFAULT 0,
+        baixado_em TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_etq_arquivos_em ON etq_arquivos (enviado_em DESC);
+
+      CREATE TABLE IF NOT EXISTS etq_etiquetas (
+        rastreio TEXT PRIMARY KEY,
+        pedido TEXT DEFAULT '',
+        pacote INTEGER NOT NULL DEFAULT 1,
+        arquivo_id INTEGER,
+        enviado_por TEXT DEFAULT '',
+        enviado_por_id INTEGER,
+        enviado_em TIMESTAMPTZ DEFAULT NOW(),
+        impressa_em TIMESTAMPTZ,
+        impressa_por TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_etq_etiquetas_em ON etq_etiquetas (enviado_em);
+
+      CREATE TABLE IF NOT EXISTS etq_itens (
+        id BIGSERIAL PRIMARY KEY,
+        rastreio TEXT NOT NULL REFERENCES etq_etiquetas(rastreio) ON DELETE CASCADE,
+        sku TEXT NOT NULL DEFAULT '',
+        variacao TEXT DEFAULT '',
+        produto TEXT DEFAULT '',
+        qtd INTEGER NOT NULL DEFAULT 1,
+        estado TEXT NOT NULL DEFAULT '',
+        item_id INTEGER,
+        atualizado_em TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_etq_itens_rastreio ON etq_itens (rastreio);
+      CREATE INDEX IF NOT EXISTS idx_etq_itens_sku ON etq_itens (LOWER(sku));
+
+      CREATE TABLE IF NOT EXISTS etq_reimpressoes (
+        id SERIAL PRIMARY KEY,
+        rastreio TEXT NOT NULL,
+        usuario_nome TEXT DEFAULT '',
+        motivo TEXT DEFAULT '',
+        criado_em TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_etq_reimp_em ON etq_reimpressoes (criado_em DESC);
+      CREATE INDEX IF NOT EXISTS idx_etq_reimp_rastreio ON etq_reimpressoes (rastreio);
+
+      ALTER TABLE estq_movimentos ADD COLUMN IF NOT EXISTS reserva INTEGER NOT NULL DEFAULT 0;
+    `);
+    _etqPronto = true;
+    console.log('[etiquetas] gerador de etiqueta e reserva prontos');
+    const t = setInterval(() => { etqAgendar(null); }, 60 * 1000);
+    if (t.unref) t.unref();
+    setTimeout(() => { etqAgendar(null); }, 8000);
+  } catch (e) {
+    console.error('[etiquetas] gerador indisponível, erro ao preparar:', e.message);
+  }
+}
+
+function etqDisponivel(req, res, next) {
+  if (!_etqPronto) return res.status(503).json({ erro: 'Gerador de etiqueta indisponível. Verifique o log do servidor.' });
+  next();
+}
+function etqRastreio(v) {
+  const s = String(v || '').trim().toUpperCase();
+  return /^[A-Z0-9-]{6,40}$/.test(s) ? s : null;
+}
+function etqTexto(v, max) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max); }
+
+// ── Estoque: aplica reserva e saída conforme a situação da etiqueta ───
+async function etqLancar(cli, itemId, dFis, dRes, tipo, info) {
+  const r = await cli.query('SELECT fisico, reservado FROM estq_itens WHERE id = $1 FOR UPDATE', [itemId]);
+  if (!r.rows.length) return null;
+  const antes = r.rows[0].fisico, depois = antes + dFis, reservado = r.rows[0].reservado + dRes;
+  await cli.query('UPDATE estq_itens SET fisico = $1, reservado = $2, atualizado_em = NOW() WHERE id = $3', [depois, reservado, itemId]);
+  await cli.query(`
+    INSERT INTO estq_movimentos (item_id, tipo, quantidade, saldo_antes, saldo_depois, motivo, obs, origem, usuario_nome, reserva)
+    VALUES ($1,$2,$3,$4,$5,$6,'',$7,$8,$9)
+  `, [itemId, tipo, dFis, antes, depois, info.motivo || '', info.origem || '', info.usuario || '', dRes]);
+  return { fisico: depois, reservado };
+}
+const ETQ_TRANSICOES = {
+  '>reservado':         { f: 0,  r: 1,  tipo: 'reserva' },
+  '>saiu':              { f: -1, r: 0,  tipo: 'saida_bipagem' },
+  'reservado>saiu':     { f: -1, r: -1, tipo: 'saida_bipagem' },
+  'reservado>':         { f: 0,  r: -1, tipo: 'reserva_liberada' },
+  'saiu>reservado':     { f: 1,  r: 1,  tipo: 'saida_desfeita' },
+  'saiu>':              { f: 1,  r: 0,  tipo: 'saida_desfeita' }
+};
+const ETQ_SQL_DESEJADO = `CASE WHEN b.etiqueta IS NULL THEN ''
+  WHEN b.coletada_em IS NOT NULL THEN 'saiu'
+  WHEN COALESCE(b.cancelada, FALSE) THEN ''
+  ELSE 'reservado' END`;
+
+// Pede uma conferência. lista = rastreios afetados, ou null para conferir tudo que é recente.
+function etqAgendar(lista) {
+  if (!_etqPronto) return;
+  if (!lista || !lista.length) _etqPendente = [];                            // conferir tudo
+  else if (_etqPendente === null) _etqPendente = lista.slice();              // só estas
+  else if (_etqPendente.length) _etqPendente = _etqPendente.concat(lista);   // junta com as que já esperavam
+  // (se já estava marcado "conferir tudo", continua assim)
+  setImmediate(etqConferir);
+}
+async function etqConferir() {
+  if (_etqRodando || _etqPendente === null) return;
+  _etqRodando = true;
+  try {
+    while (_etqPendente !== null) {
+      const alvo = _etqPendente; _etqPendente = null;
+      const params = [];
+      let filtro = `e.enviado_em > NOW() - INTERVAL '120 days'`;
+      if (alvo.length) { params.push(Array.from(new Set(alvo)).slice(0, 5000)); filtro = `i.rastreio = ANY($1::text[])`; }
+      const r = await pool.query(`
+        SELECT i.id, i.rastreio, i.sku, i.variacao, i.qtd, i.estado, i.item_id, ${ETQ_SQL_DESEJADO} AS desejado,
+               s.id AS item_sku, b.usuario_nome AS bipado_por, b.coletada_por
+        FROM etq_itens i
+        JOIN etq_etiquetas e ON e.rastreio = i.rastreio
+        LEFT JOIN bipagens b ON b.etiqueta = i.rastreio
+        LEFT JOIN estq_itens s ON i.sku <> '' AND LOWER(s.sku_shopee) = LOWER(i.sku)
+        WHERE ${filtro}
+          AND i.estado <> (${ETQ_SQL_DESEJADO})
+          AND (i.estado <> '' OR s.id IS NOT NULL)
+        ORDER BY i.id
+        LIMIT 1000
+      `, params);
+      let mudou = false;
+      const reservas = {};
+      for (const row of r.rows) {
+        const t = ETQ_TRANSICOES[row.estado + '>' + row.desejado];
+        if (!t) continue;
+        try {
+          const feito = await estqTx(async cli => {
+            const atual = await cli.query('SELECT estado, item_id, qtd FROM etq_itens WHERE id = $1 FOR UPDATE', [row.id]);
+            if (!atual.rows.length || atual.rows[0].estado !== row.estado) return null;   // outro processo já tratou
+            const itemId = row.estado ? atual.rows[0].item_id : row.item_sku;
+            if (!itemId) return null;
+            const q = atual.rows[0].qtd;
+            const saldo = await etqLancar(cli, itemId, t.f * q, t.r * q, t.tipo, {
+              origem: 'Etiqueta ' + row.rastreio,
+              usuario: (row.desejado === 'saiu' ? row.coletada_por : row.bipado_por) || '',
+              motivo: t.tipo === 'reserva_liberada' ? 'Bipagem cancelada ou excluída' : (t.tipo === 'saida_desfeita' ? 'Coleta desfeita' : '')
+            });
+            if (!saldo) return null;
+            await cli.query('UPDATE etq_itens SET estado = $1, item_id = $2, atualizado_em = NOW() WHERE id = $3',
+              [row.desejado, row.desejado ? itemId : null, row.id]);
+            return saldo;
+          });
+          if (!feito) continue;
+          mudou = true;
+          if (t.tipo === 'reserva') {
+            (reservas[row.rastreio] = reservas[row.rastreio] || { etiqueta: row.rastreio, usuario: row.bipado_por || '', itens: [], sem_estoque: false })
+              .itens.push({ sku: row.sku, variacao: row.variacao, qtd: row.qtd, disponivel: feito.fisico - feito.reservado });
+            if (feito.fisico - feito.reservado < 0) reservas[row.rastreio].sem_estoque = true;
+          }
+        } catch (e) {
+          console.error('[etiquetas] erro ao lançar estoque da etiqueta', row.rastreio, e.message);
+        }
+      }
+      if (mudou) broadcast('estq:atualizado', {});
+      Object.keys(reservas).forEach(k => broadcast('etq:reserva', reservas[k]));
+      if (r.rows.length === 1000 && mudou) _etqPendente = _etqPendente || [];   // ainda há mais: roda de novo
+    }
+  } catch (e) {
+    console.error('[etiquetas] erro na conferência de estoque:', e.message);
+  } finally {
+    _etqRodando = false;
+  }
+}
+
+// ── Enviar o resultado da leitura de um arquivo ───────────────────────
+// Registra quem enviou e devolve a situação de cada etiqueta: nova, já impressa
+// (por quem e quando) ou enviada por outra pessoa e ainda não baixada.
+app.post('/api/etq/arquivos', autenticar, estqDisponivel, etqDisponivel, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const lista = Array.isArray(b.etiquetas) ? b.etiquetas : [];
+    if (!lista.length) return res.status(400).json({ erro: 'Nenhuma etiqueta no envio.' });
+    if (lista.length > ETQ_MAX_POR_ARQUIVO) return res.status(400).json({ erro: 'Etiquetas demais em um único arquivo.' });
+    const limpas = [], vistos = new Set();
+    for (const x of lista) {
+      const rastreio = etqRastreio(x && x.rastreio);
+      if (!rastreio) return res.status(400).json({ erro: 'Há etiqueta com rastreio inválido.' });
+      if (vistos.has(rastreio)) continue;
+      vistos.add(rastreio);
+      const itens = [];
+      for (const it of (Array.isArray(x.itens) ? x.itens : []).slice(0, 50)) {
+        const qtd = estqInt(it && it.qtd);
+        if (!qtd || qtd < 1 || qtd > 9999) return res.status(400).json({ erro: 'Há item com quantidade inválida.' });
+        itens.push({ sku: etqTexto(it.sku, 80), variacao: etqTexto(it.variacao, 120), produto: etqTexto(it.produto, 200), qtd });
+      }
+      limpas.push({ rastreio, pedido: etqTexto(x.pedido, 40).toUpperCase(), pacote: estqInt(x.pacote) || 1, itens });
+    }
+    const nomeArq = etqTexto(b.nome, 200), eu = req.usuario;
+    const out = await estqTx(async cli => {
+      const arq = await cli.query(`INSERT INTO etq_arquivos (nome, usuario_id, usuario_nome, total) VALUES ($1,$2,$3,$4) RETURNING id, enviado_em`,
+        [nomeArq, eu.id, eu.nome, limpas.length]);
+      const arquivoId = arq.rows[0].id;
+      const situacoes = [];
+      let repetidas = 0;
+      for (const e of limpas) {
+        const a = await cli.query('SELECT * FROM etq_etiquetas WHERE rastreio = $1 FOR UPDATE', [e.rastreio]);
+        if (!a.rows.length) {
+          await cli.query(`INSERT INTO etq_etiquetas (rastreio, pedido, pacote, arquivo_id, enviado_por, enviado_por_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+            [e.rastreio, e.pedido, e.pacote, arquivoId, eu.nome, eu.id]);
+          for (const it of e.itens) await cli.query(`INSERT INTO etq_itens (rastreio, sku, variacao, produto, qtd) VALUES ($1,$2,$3,$4,$5)`,
+            [e.rastreio, it.sku, it.variacao, it.produto, it.qtd]);
+          situacoes.push({ rastreio: e.rastreio, situacao: 'nova' });
+          continue;
+        }
+        const ant = a.rows[0];
+        if (ant.impressa_em) {
+          repetidas++;
+          situacoes.push({ rastreio: e.rastreio, situacao: 'impressa', por: ant.impressa_por, em: ant.impressa_em.toISOString() });
+          continue;
+        }
+        // Ainda não impressa: atualiza os itens com a leitura mais recente, desde que nada tenha sido lançado no estoque.
+        const lanc = await cli.query(`SELECT 1 FROM etq_itens WHERE rastreio = $1 AND estado <> '' LIMIT 1`, [e.rastreio]);
+        if (!lanc.rows.length) {
+          await cli.query('DELETE FROM etq_itens WHERE rastreio = $1', [e.rastreio]);
+          for (const it of e.itens) await cli.query(`INSERT INTO etq_itens (rastreio, sku, variacao, produto, qtd) VALUES ($1,$2,$3,$4,$5)`,
+            [e.rastreio, it.sku, it.variacao, it.produto, it.qtd]);
+          await cli.query('UPDATE etq_etiquetas SET pedido = $2, pacote = $3 WHERE rastreio = $1', [e.rastreio, e.pedido, e.pacote]);
+        }
+        if (ant.enviado_por_id !== eu.id) situacoes.push({ rastreio: e.rastreio, situacao: 'enviada', por: ant.enviado_por, em: ant.enviado_em.toISOString() });
+        else situacoes.push({ rastreio: e.rastreio, situacao: 'nova' });
+      }
+      await cli.query('UPDATE etq_arquivos SET novas = $2, repetidas = $3 WHERE id = $1', [arquivoId, limpas.length - repetidas, repetidas]);
+      return { arquivo_id: arquivoId, enviado_em: arq.rows[0].enviado_em.toISOString(), situacoes };
+    });
+    // Reimpressões já feitas e vínculo de cada SKU com o estoque.
+    const rastreios = limpas.map(e => e.rastreio);
+    const rp = await pool.query(`SELECT rastreio, COUNT(*)::INTEGER AS n FROM etq_reimpressoes WHERE rastreio = ANY($1::text[]) GROUP BY rastreio`, [rastreios]);
+    const nRe = {}; rp.rows.forEach(x => { nRe[x.rastreio] = x.n; });
+    out.situacoes.forEach(s => { s.reimpressoes = nRe[s.rastreio] || 0; });
+    const skus = Array.from(new Set([].concat.apply([], limpas.map(e => e.itens.map(i => i.sku.toLowerCase()))).filter(Boolean)));
+    const vinc = skus.length ? await pool.query(`SELECT LOWER(sku_shopee) AS sku, produto_nome, cor FROM estq_itens WHERE LOWER(sku_shopee) = ANY($1::text[])`, [skus]) : { rows: [] };
+    const mapa = {}; vinc.rows.forEach(v => { mapa[v.sku] = v.produto_nome + (v.cor ? ', ' + v.cor : ''); });
+    etqAgendar(rastreios);   // etiqueta que já estava bipada antes do envio passa a reservar agora
+    res.json({ arquivo_id: out.arquivo_id, enviado_em: out.enviado_em, etiquetas: out.situacoes, skus_vinculados: mapa, motivos_reimpressao: ETQ_MOTIVOS_REIMPRESSAO });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao registrar o arquivo.' });
+  }
+});
+
+// ── Baixar: marca como impressas as etiquetas que entraram no arquivo final ──
+app.post('/api/etq/arquivos/:id/baixar', autenticar, estqDisponivel, etqDisponivel, async (req, res) => {
+  try {
+    const arquivoId = estqInt(req.params.id);
+    const rastreios = (Array.isArray(req.body && req.body.rastreios) ? req.body.rastreios : []).map(etqRastreio).filter(Boolean).slice(0, ETQ_MAX_POR_ARQUIVO);
+    if (!arquivoId || !rastreios.length) return res.status(400).json({ erro: 'Nenhuma etiqueta para baixar.' });
+    const arq = await pool.query('SELECT id, usuario_id FROM etq_arquivos WHERE id = $1', [arquivoId]);
+    if (!arq.rows.length) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
+    if (arq.rows[0].usuario_id !== req.usuario.id) return res.status(403).json({ erro: 'Este arquivo foi enviado por outro usuário.' });
+    const out = await estqTx(async cli => {
+      // Só marca o que ainda não foi impresso. Se outra pessoa imprimiu nesse meio tempo, devolve quem foi.
+      const marc = await cli.query(`
+        UPDATE etq_etiquetas SET impressa_em = NOW(), impressa_por = $2
+        WHERE rastreio = ANY($1::text[]) AND impressa_em IS NULL
+        RETURNING rastreio, impressa_em
+      `, [rastreios, req.usuario.nome]);
+      await cli.query('UPDATE etq_arquivos SET baixado_em = NOW() WHERE id = $1', [arquivoId]);
+      const todas = await cli.query('SELECT rastreio, impressa_em, impressa_por FROM etq_etiquetas WHERE rastreio = ANY($1::text[])', [rastreios]);
+      const minhas = new Set(marc.rows.map(x => x.rastreio));
+      return todas.rows.map(x => ({ rastreio: x.rastreio, marcada: minhas.has(x.rastreio), por: x.impressa_por, em: x.impressa_em ? x.impressa_em.toISOString() : null }));
+    });
+    res.json({ ok: true, etiquetas: out });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao registrar a impressão.' });
+  }
+});
+
+// ── Reimpressão: qualquer usuário, com a própria senha e o motivo ─────
+app.post('/api/etq/reimprimir', autenticar, estqDisponivel, etqDisponivel, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const rastreio = etqRastreio(b.rastreio), motivo = String(b.motivo || '').trim();
+    if (!rastreio) return res.status(400).json({ erro: 'Etiqueta inválida.' });
+    if (!ETQ_MOTIVOS_REIMPRESSAO.includes(motivo)) return res.status(400).json({ erro: 'Selecione o motivo.' });
+    if (!(await estqSenhaConfere(req, b.senha))) return res.status(401).json({ erro: 'Senha incorreta.' });
+    const e = await pool.query('SELECT impressa_em, impressa_por FROM etq_etiquetas WHERE rastreio = $1', [rastreio]);
+    if (!e.rows.length) return res.status(404).json({ erro: 'Etiqueta não encontrada.' });
+    if (!e.rows[0].impressa_em) return res.status(400).json({ erro: 'Esta etiqueta ainda não foi impressa. Baixe o arquivo normalmente.' });
+    const r = await pool.query(`INSERT INTO etq_reimpressoes (rastreio, usuario_nome, motivo) VALUES ($1,$2,$3) RETURNING criado_em`, [rastreio, req.usuario.nome, motivo]);
+    const n = await pool.query('SELECT COUNT(*)::INTEGER AS n FROM etq_reimpressoes WHERE rastreio = $1', [rastreio]);
+    console.log(`REIMPRESSAO: ${rastreio} por ${req.usuario.nome} (${motivo})`);
+    res.json({ ok: true, em: r.rows[0].criado_em.toISOString(), por: req.usuario.nome, reimpressoes: n.rows[0].n });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao registrar a reimpressão.' });
+  }
+});
+
+// ── Histórico de arquivos enviados e reimpressões: 50 por página ──────
+app.get('/api/etq/historico', autenticar, estqDisponivel, etqDisponivel, async (req, res) => {
+  try {
+    const tot = await pool.query('SELECT (SELECT COUNT(*) FROM etq_arquivos)::INTEGER + (SELECT COUNT(*) FROM etq_reimpressoes)::INTEGER AS n');
+    const total = tot.rows[0].n, paginas = Math.max(1, Math.ceil(total / ESTQ_POR_PAGINA));
+    const pagina = Math.min(Math.max(1, estqInt(req.query.pagina) || 1), paginas);
+    const r = await pool.query(`
+      SELECT * FROM (
+        SELECT 'arquivo' AS tipo, a.id, a.enviado_em AS em, a.usuario_nome AS usuario, a.nome, a.total, a.novas, a.repetidas, a.baixado_em,
+               NULL::TEXT AS rastreio, NULL::TEXT AS motivo, NULL::TEXT AS primeira_por, NULL::TIMESTAMPTZ AS primeira_em
+        FROM etq_arquivos a
+        UNION ALL
+        SELECT 'reimpressao', p.id, p.criado_em, p.usuario_nome, NULL, 1, 0, 1, p.criado_em,
+               p.rastreio, p.motivo, e.impressa_por, e.impressa_em
+        FROM etq_reimpressoes p LEFT JOIN etq_etiquetas e ON e.rastreio = p.rastreio
+      ) h
+      ORDER BY em DESC, id DESC
+      LIMIT ${ESTQ_POR_PAGINA} OFFSET ${(pagina - 1) * ESTQ_POR_PAGINA}
+    `);
+    res.json({ pagina, paginas, total, por_pagina: ESTQ_POR_PAGINA, linhas: r.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar o histórico.' });
+  }
+});
+
+// ── Corrigir pedido e itens de uma etiqueta (casamento manual no Gerador) ──
+// Só enquanto a etiqueta não foi impressa nem teve estoque lançado.
+app.put('/api/etq/etiquetas/:rastreio/itens', autenticar, estqDisponivel, etqDisponivel, async (req, res) => {
+  try {
+    const rastreio = etqRastreio(req.params.rastreio), b = req.body || {};
+    if (!rastreio) return res.status(400).json({ erro: 'Etiqueta inválida.' });
+    const itens = [];
+    for (const it of (Array.isArray(b.itens) ? b.itens : []).slice(0, 50)) {
+      const qtd = estqInt(it && it.qtd);
+      if (!qtd || qtd < 1 || qtd > 9999) return res.status(400).json({ erro: 'Há item com quantidade inválida.' });
+      itens.push({ sku: etqTexto(it.sku, 80), variacao: etqTexto(it.variacao, 120), produto: etqTexto(it.produto, 200), qtd });
+    }
+    const out = await estqTx(async cli => {
+      const a = await cli.query('SELECT impressa_em FROM etq_etiquetas WHERE rastreio = $1 FOR UPDATE', [rastreio]);
+      if (!a.rows.length) return { status: 404, erro: 'Etiqueta não encontrada.' };
+      if (a.rows[0].impressa_em) return { status: 400, erro: 'Etiqueta já impressa: os itens não podem mais ser alterados.' };
+      const lanc = await cli.query(`SELECT 1 FROM etq_itens WHERE rastreio = $1 AND estado <> '' LIMIT 1`, [rastreio]);
+      if (lanc.rows.length) return { status: 400, erro: 'Esta etiqueta já foi bipada: os itens não podem mais ser alterados.' };
+      await cli.query('DELETE FROM etq_itens WHERE rastreio = $1', [rastreio]);
+      for (const it of itens) await cli.query(`INSERT INTO etq_itens (rastreio, sku, variacao, produto, qtd) VALUES ($1,$2,$3,$4,$5)`, [rastreio, it.sku, it.variacao, it.produto, it.qtd]);
+      await cli.query('UPDATE etq_etiquetas SET pedido = $2, pacote = $3 WHERE rastreio = $1', [rastreio, etqTexto(b.pedido, 40).toUpperCase(), estqInt(b.pacote) || 1]);
+      return { ok: true };
+    });
+    if (out.erro) return res.status(out.status).json({ erro: out.erro });
+    etqAgendar([rastreio]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao salvar os itens da etiqueta.' });
+  }
+});
+
+// ── SKUs que chegaram em etiquetas e ainda não têm vínculo no estoque ─
+app.get('/api/etq/skus-pendentes', autenticar, estqDisponivel, etqDisponivel, async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT i.sku, MAX(i.variacao) AS variacao, MAX(i.produto) AS produto, COUNT(DISTINCT i.rastreio)::INTEGER AS etiquetas
+      FROM etq_itens i JOIN etq_etiquetas e ON e.rastreio = i.rastreio
+      WHERE e.enviado_em > NOW() - INTERVAL '120 days' AND i.sku <> ''
+        AND NOT EXISTS (SELECT 1 FROM estq_itens s WHERE LOWER(s.sku_shopee) = LOWER(i.sku))
+      GROUP BY i.sku ORDER BY COUNT(DISTINCT i.rastreio) DESC, i.sku LIMIT 200
+    `);
+    res.json({ skus: r.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar os SKUs pendentes.' });
+  }
+});
+
+
 // ── Health check / Railway ────────────────────────────────────
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.get('/', (req, res) => res.json({ status: 'online', mensagem: 'API Bipagem', data: new Date() }));
@@ -3235,6 +3648,7 @@ initDB()
   .then(() => initLotes())
   .then(() => initInsumos())
   .then(() => initEstq())
+  .then(() => initEtq())
   .then(() => {
     server.listen(PORT, '0.0.0.0', () => console.log(`✓ Servidor na porta ${PORT}`));
   })

@@ -382,6 +382,7 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
       <button type="button" class="nav-item" id="nav-sku" style="display:none;" onclick="abrir('sku')">SKU por cor <span class="count" id="nav-sku-n" style="display:none;">0</span></button>
       <button type="button" class="nav-item" id="nav-contagem" style="display:none;" onclick="abrir('contagem')">Contagem</button>
       <div class="sidebar-divider"></div>
+      <a class="nav-item" href="/gerador.html">Gerador de Etiqueta</a>
       <a class="nav-item" href="/estoque-antigo.html">Estoque antigo (consulta)</a>
     </nav>
 
@@ -391,11 +392,12 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
       <section class="panel active" id="panel-saldo">
         <div class="page-title">Saldo do estoque</div>
         <div id="ligacao"></div>
-        <div class="aviso info">Nesta etapa o estoque recebe as coletas lançadas na Produção, os ajustes e as contagens. A reserva e a saída pela bipagem entram na segunda etapa, junto com o Gerador de Etiqueta.</div>
+        <div id="pendentes-saldo"></div>
         <div class="stats" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
           <div class="stat"><div class="stat-label">Estoque físico</div><div class="stat-value" id="t-fisico">0</div></div>
           <div class="stat"><div class="stat-label">Reservado</div><div class="stat-value" id="t-reservado" style="color:var(--warn);">0</div></div>
           <div class="stat"><div class="stat-label">Disponível</div><div class="stat-value" id="t-disp" style="color:var(--accent);">0</div></div>
+          <div class="stat"><div class="stat-label">Saídas hoje</div><div class="stat-value" id="t-saidas">0</div></div>
           <div class="stat"><div class="stat-label">Itens sem SKU</div><div class="stat-value" id="t-semsku">0</div></div>
         </div>
         <div class="barra">
@@ -434,6 +436,7 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
       <section class="panel" id="panel-sku">
         <div class="page-title">SKU da Shopee por produto e cor</div>
         <div class="sub">Os produtos e as cores vêm do cadastro da Produção. Preencha aqui o SKU que a Shopee usa para cada cor. É por ele que a etiqueta vai encontrar o item do estoque.</div>
+        <div id="pendentes-sku"></div>
         <div class="barra">
           <div class="field" style="flex:1;max-width:320px;"><label for="busca-sku">Buscar produto ou cor</label><input type="text" id="busca-sku" oninput="renderSku()" autocomplete="off"/></div>
           <label style="font-size:13px;color:var(--text2);display:flex;align-items:center;gap:6px;min-height:36px;"><input type="checkbox" id="so-sem-sku" onchange="renderSku()"/> Mostrar só sem SKU</label>
@@ -495,12 +498,15 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
 var token = null; try { token = localStorage.getItem('bip_token') || null; } catch (e) {}
 var usuario = null, dados = null, ehAdmin = false;
 var mov = { pagina: 1, paginas: 1 };
+var pendentes = [];     // SKUs que vieram em etiquetas e ainda não têm vínculo
 var contagem = {};      // item_id -> texto digitado
 var ajusteItem = null;
 var TIPOS = {
   entrada_coleta: ['Entrada por coleta', 'ent'], correcao_coleta: ['Correção de coleta', 'warn'],
   estorno_coleta: ['Estorno de coleta', 'sai'], ajuste_entrada: ['Ajuste de entrada', 'ent'],
-  ajuste_saida: ['Ajuste de saída', 'sai'], contagem: ['Contagem', 'neu']
+  ajuste_saida: ['Ajuste de saída', 'sai'], contagem: ['Contagem', 'neu'],
+  reserva: ['Reserva na separação', 'warn'], reserva_liberada: ['Reserva liberada', 'neu'],
+  saida_bipagem: ['Saída na coleta', 'sai'], saida_desfeita: ['Saída desfeita', 'neu']
 };
 function $(id) { return document.getElementById(id); }
 function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -555,6 +561,7 @@ async function iniciar() {
 async function carregar(avisar) {
   try {
     dados = await api('GET', '/api/estq/resumo');
+    try { pendentes = (await api('GET', '/api/etq/skus-pendentes')).skus || []; } catch (e) { pendentes = []; }
     renderLigacao(); renderSaldo(); preencherFiltroItens();
     if ($('panel-mov').classList.contains('active')) carregarMov(mov.pagina);
     if (avisar) toast('Estoque atualizado.');
@@ -575,6 +582,8 @@ function renderLigacao() {
   else if (l.fila_pendentes > 0) h = '<div class="aviso warn"><strong>Há ' + fmt(l.fila_pendentes) + ' aviso(s) de coleta aguardando envio na Produção.</strong> Eles são reenviados sozinhos a cada minuto.</div>';
   else h = '<div class="aviso ok">Ligação com a Produção ativa. ' + (l.ultima_coleta_em ? 'Última coleta recebida em ' + dataHora(l.ultima_coleta_em) + '.' : 'Nenhuma coleta recebida ainda.') + '</div>';
   $('ligacao').innerHTML = h;
+  var hp = pendentes.length ? '<div class="aviso warn"><strong>' + pendentes.length + ' SKU(s) de etiquetas ainda sem vínculo no estoque:</strong> ' + pendentes.slice(0, 12).map(function (p) { return esc(p.sku) + (p.variacao ? ' (' + esc(p.variacao) + ')' : ''); }).join(', ') + (pendentes.length > 12 ? ' e mais ' + (pendentes.length - 12) : '') + '. As etiquetas com esses SKUs não movimentam o estoque até o SKU ser preenchido' + (ehAdmin ? ' em SKU por cor.' : ' pelo administrador.') + '</div>' : '';
+  $('pendentes-saldo').innerHTML = hp; var ps = $('pendentes-sku'); if (ps) ps.innerHTML = hp;
 }
 function filtrar(busca) {
   var q = (busca || '').trim().toLowerCase();
@@ -584,6 +593,7 @@ function skuHtml(i) { return i.sku_shopee ? '<strong>' + esc(i.sku_shopee) + '</
 function renderSaldo() {
   var t = dados.totais;
   $('t-fisico').textContent = fmt(t.fisico); $('t-reservado').textContent = fmt(t.reservado); $('t-disp').textContent = fmt(t.disponivel);
+  $('t-saidas').textContent = fmt(t.saidas_hoje || 0);
   $('t-semsku').textContent = fmt(t.sem_sku); $('t-semsku').style.color = t.sem_sku ? 'var(--warn)' : '';
   $('nav-saldo-n').textContent = dados.itens.length;
   var n = $('nav-sku-n'); n.textContent = t.sem_sku; n.style.display = ehAdmin && t.sem_sku ? '' : 'none';
@@ -617,12 +627,19 @@ async function carregarMov(pagina) {
       var t = TIPOS[m.tipo] || [m.tipo, 'neu'];
       var det = [m.motivo, m.origem, m.obs].filter(function (x) { return x; }).join('. ');
       return '<tr><td style="white-space:nowrap;">' + dataHora(m.criado_em) + '</td><td><span class="tag ' + t[1] + '">' + t[0] + '</span></td><td>' + esc(m.produto_nome) + '</td><td>' + (m.cor ? esc(m.cor) : 'Cor única') + '</td>' +
-        '<td style="color:var(--text2);">' + esc(det) + '</td><td class="num" style="font-weight:600;color:' + (m.quantidade < 0 ? '#ff8a8a' : 'var(--accent)') + ';">' + (m.quantidade > 0 ? '+' : '') + fmt(m.quantidade) + '</td>' +
+        '<td style="color:var(--text2);">' + esc(det) + '</td>' + qtdHtml(m) +
         '<td class="num">' + fmt(m.saldo_depois) + '</td><td>' + esc(m.usuario_nome) + '</td></tr>';
     }).join('') : '<tr><td colspan="8"><div class="empty-state">Nenhuma movimentação encontrada.</div></td></tr>';
     $('pag-info').textContent = 'Página ' + r.pagina + ' de ' + r.paginas + ' (' + fmt(r.total) + ' registro' + (r.total === 1 ? '' : 's') + ')';
     $('pag-ant').disabled = r.pagina <= 1; $('pag-prox').disabled = r.pagina >= r.paginas;
   } catch (e) { toast(msgErro(e), 'err'); }
+}
+
+// Reserva não muda o físico: mostra a quantidade reservada ou liberada, em amarelo.
+function qtdHtml(m) {
+  var res = Number(m.reserva || 0);
+  if (m.quantidade === 0 && res !== 0) return '<td class="num" style="font-weight:600;color:var(--warn);">' + (res > 0 ? 'Reservou ' : 'Liberou ') + fmt(Math.abs(res)) + '</td>';
+  return '<td class="num" style="font-weight:600;color:' + (m.quantidade < 0 ? '#ff8a8a' : 'var(--accent)') + ';">' + (m.quantidade > 0 ? '+' : '') + fmt(m.quantidade) + '</td>';
 }
 
 /* ── SKU por cor ── */
