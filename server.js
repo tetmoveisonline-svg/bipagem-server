@@ -2801,6 +2801,431 @@ app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res
 });
 
 
+// ═══════════════════════════════════════════════════════════════════════
+// ESTOQUE NOVO (ligado à Produção)
+// Entrada: cada coleta lançada na OP, na Produção, chega aqui e soma no
+// estoque do produto e da cor. Ajuste manual e contagem ficam com o admin.
+// Reserva e saída pela bipagem entram na segunda etapa.
+// Só cria tabelas novas (estq_*). As tabelas do estoque antigo
+// (estoque_produtos, estoque_movimentos, lotes, insumos) não são tocadas.
+// ═══════════════════════════════════════════════════════════════════════
+const ESTQ_PRODUCAO_URL = (process.env.PRODUCAO_URL || 'https://producao-server-production.up.railway.app').replace(/\/+$/, '');
+const ESTQ_TOKEN = process.env.INTEGRACAO_TOKEN || '';
+const ESTQ_POR_PAGINA = 50;
+const ESTQ_MOTIVOS_AJUSTE = ['Avaria', 'Perda', 'Troca', 'Acerto de contagem', 'Outro'];
+let _estqPronto = false;
+let _estqSincronizando = false;
+let _estqFila = { pendentes: null, ultimo_erro: '' };   // fila de avisos na Produção (última leitura)
+
+async function initEstq() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS estq_itens (
+        id SERIAL PRIMARY KEY,
+        produto_ref INTEGER NOT NULL,
+        produto_nome TEXT NOT NULL,
+        sku_interno TEXT DEFAULT '',
+        cor TEXT NOT NULL DEFAULT '',
+        cor_chave TEXT NOT NULL DEFAULT '',
+        hex TEXT DEFAULT '',
+        sku_shopee TEXT,
+        fisico INTEGER NOT NULL DEFAULT 0,
+        reservado INTEGER NOT NULL DEFAULT 0,
+        ativo BOOLEAN NOT NULL DEFAULT TRUE,
+        criado_em TIMESTAMPTZ DEFAULT NOW(),
+        atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (produto_ref, cor_chave)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_estq_itens_sku ON estq_itens (LOWER(sku_shopee)) WHERE sku_shopee IS NOT NULL AND sku_shopee <> '';
+
+      CREATE TABLE IF NOT EXISTS estq_movimentos (
+        id BIGSERIAL PRIMARY KEY,
+        item_id INTEGER NOT NULL REFERENCES estq_itens(id),
+        tipo TEXT NOT NULL,
+        quantidade INTEGER NOT NULL,
+        saldo_antes INTEGER NOT NULL,
+        saldo_depois INTEGER NOT NULL,
+        motivo TEXT DEFAULT '',
+        obs TEXT DEFAULT '',
+        origem TEXT DEFAULT '',
+        usuario_nome TEXT DEFAULT '',
+        criado_em TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_estq_mov_criado ON estq_movimentos (criado_em DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_estq_mov_item ON estq_movimentos (item_id, criado_em DESC);
+
+      CREATE TABLE IF NOT EXISTS estq_coletas (
+        coleta_id INTEGER PRIMARY KEY,
+        item_id INTEGER NOT NULL REFERENCES estq_itens(id),
+        quantidade INTEGER NOT NULL,
+        op_numero TEXT DEFAULT '',
+        numero_requisicao TEXT DEFAULT '',
+        recebido_em TIMESTAMPTZ DEFAULT NOW(),
+        atualizado_em TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS estq_config (
+        chave TEXT PRIMARY KEY,
+        valor TEXT NOT NULL
+      );
+    `);
+    _estqPronto = true;
+    if (!ESTQ_TOKEN) console.warn('[estoque] INTEGRACAO_TOKEN não configurado: a ligação com a Produção fica desligada até a variável ser criada.');
+    console.log('[estoque] estoque novo pronto');
+    setTimeout(() => { estqSincronizarProdutos(); }, 5000);
+    const t = setInterval(() => { estqSincronizarProdutos(); }, 30 * 60 * 1000);
+    if (t.unref) t.unref();
+  } catch (e) {
+    // Não derruba a Bipagem: sem as tabelas, só a tela nova de Estoque fica indisponível.
+    console.error('[estoque] estoque novo indisponível, erro ao preparar:', e.message);
+  }
+}
+
+function estqChave(cor) { return String(cor || '').trim().toUpperCase(); }
+function estqInt(v) { const n = Number(v); return Number.isInteger(n) ? n : null; }
+
+async function estqTx(fn) {
+  const cli = await pool.connect();
+  try {
+    await cli.query('BEGIN');
+    const out = await fn(cli);
+    await cli.query('COMMIT');
+    return out;
+  } catch (e) {
+    await cli.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally { cli.release(); }
+}
+
+async function estqConfig(chave, valor) {
+  await pool.query(`INSERT INTO estq_config (chave, valor) VALUES ($1, $2)
+    ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`, [chave, String(valor)]);
+}
+
+// Acha o item (produto + cor) ou cria. Não mexe em SKU nem em saldo de item existente.
+async function estqItem(cli, d) {
+  const r = await cli.query(`
+    INSERT INTO estq_itens (produto_ref, produto_nome, sku_interno, cor, cor_chave, hex)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (produto_ref, cor_chave) DO UPDATE
+      SET produto_nome = EXCLUDED.produto_nome,
+          sku_interno = EXCLUDED.sku_interno,
+          hex = CASE WHEN EXCLUDED.hex <> '' THEN EXCLUDED.hex ELSE estq_itens.hex END,
+          ativo = TRUE, atualizado_em = NOW()
+    RETURNING id
+  `, [d.produto_id, String(d.produto_nome || '').trim() || 'Produto ' + d.produto_id, String(d.sku || ''),
+      String(d.cor || '').trim(), estqChave(d.cor), String(d.hex || '')]);
+  return r.rows[0].id;
+}
+
+// Único ponto que altera o saldo físico: trava o item, grava o movimento com saldo antes e depois.
+async function estqMovimentar(cli, itemId, delta, tipo, info) {
+  const r = await cli.query('SELECT fisico FROM estq_itens WHERE id = $1 FOR UPDATE', [itemId]);
+  if (!r.rows.length) throw new Error('item de estoque não encontrado');
+  const antes = r.rows[0].fisico, depois = antes + delta;
+  await cli.query('UPDATE estq_itens SET fisico = $1, atualizado_em = NOW() WHERE id = $2', [depois, itemId]);
+  await cli.query(`
+    INSERT INTO estq_movimentos (item_id, tipo, quantidade, saldo_antes, saldo_depois, motivo, obs, origem, usuario_nome)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+  `, [itemId, tipo, delta, antes, depois, info.motivo || '', info.obs || '', info.origem || '', info.usuario || '']);
+  return { antes, depois };
+}
+
+function autenticarIntegracao(req, res, next) {
+  const recebido = String(req.headers['x-integracao-token'] || '');
+  if (!ESTQ_TOKEN || !recebido) return res.status(401).json({ erro: 'Integração não autorizada.' });
+  const a = crypto.createHash('sha256').update(recebido).digest();
+  const b = crypto.createHash('sha256').update(ESTQ_TOKEN).digest();
+  if (!crypto.timingSafeEqual(a, b)) return res.status(401).json({ erro: 'Integração não autorizada.' });
+  next();
+}
+
+// ── Recebe da Produção: coleta criada, editada ou excluída ─────────────
+// Pode chegar repetido (reenvio da fila): repetir o mesmo aviso não muda o saldo.
+app.post('/api/integracao/coleta', autenticarIntegracao, async (req, res) => {
+  try {
+    if (!_estqPronto) return res.status(503).json({ erro: 'Estoque indisponível.' });
+    const evento = req.body && req.body.evento;
+    const c = (req.body && req.body.coleta) || {};
+    const coletaId = estqInt(c.id);
+    if (!['upsert', 'delete'].includes(evento) || !coletaId) return res.status(400).json({ erro: 'Aviso inválido.' });
+
+    if (evento === 'delete') {
+      const out = await estqTx(async cli => {
+        const a = await cli.query('SELECT * FROM estq_coletas WHERE coleta_id = $1 FOR UPDATE', [coletaId]);
+        if (!a.rows.length) return { alterou: false };
+        const ant = a.rows[0];
+        await estqMovimentar(cli, ant.item_id, -ant.quantidade, 'estorno_coleta', {
+          motivo: 'Coleta excluída na Produção',
+          origem: `Coleta ${coletaId}, OP #${ant.op_numero}`, usuario: 'Produção'
+        });
+        await cli.query('DELETE FROM estq_coletas WHERE coleta_id = $1', [coletaId]);
+        return { alterou: true };
+      });
+      if (out.alterou) broadcast('estq:atualizado', {});
+      return res.json({ ok: true, alterou: out.alterou });
+    }
+
+    const produtoId = estqInt(c.produto_id), qtd = estqInt(c.quantidade);
+    if (!produtoId || !qtd || qtd < 1) return res.status(400).json({ erro: 'Aviso inválido.' });
+    const opNumero = String(c.op_numero || ''), req_ = String(c.numero_requisicao || '');
+    const origem = `Coleta ${coletaId}, OP #${opNumero}` + (req_ ? `, requisição ${req_}` : '');
+
+    const out = await estqTx(async cli => {
+      const itemId = await estqItem(cli, c);
+      const a = await cli.query('SELECT * FROM estq_coletas WHERE coleta_id = $1 FOR UPDATE', [coletaId]);
+      if (!a.rows.length) {
+        await cli.query(`INSERT INTO estq_coletas (coleta_id, item_id, quantidade, op_numero, numero_requisicao) VALUES ($1,$2,$3,$4,$5)`,
+          [coletaId, itemId, qtd, opNumero, req_]);
+        await estqMovimentar(cli, itemId, qtd, 'entrada_coleta', { origem, usuario: 'Produção' });
+        return { alterou: true };
+      }
+      const ant = a.rows[0];
+      let alterou = false;
+      if (ant.item_id !== itemId) {
+        // A coleta mudou de cor: sai do item antigo e entra no novo.
+        await estqMovimentar(cli, ant.item_id, -ant.quantidade, 'correcao_coleta', { motivo: 'Coleta editada na Produção (cor alterada)', origem, usuario: 'Produção' });
+        await estqMovimentar(cli, itemId, qtd, 'correcao_coleta', { motivo: 'Coleta editada na Produção (cor alterada)', origem, usuario: 'Produção' });
+        alterou = true;
+      } else if (ant.quantidade !== qtd) {
+        await estqMovimentar(cli, itemId, qtd - ant.quantidade, 'correcao_coleta', { motivo: `Coleta editada na Produção (de ${ant.quantidade} para ${qtd})`, origem, usuario: 'Produção' });
+        alterou = true;
+      }
+      await cli.query(`UPDATE estq_coletas SET item_id = $2, quantidade = $3, op_numero = $4, numero_requisicao = $5, atualizado_em = NOW() WHERE coleta_id = $1`,
+        [coletaId, itemId, qtd, opNumero, req_]);
+      return { alterou };
+    });
+    if (out.alterou) broadcast('estq:atualizado', {});
+    res.json({ ok: true, alterou: out.alterou });
+  } catch (e) {
+    console.error('[estoque] erro ao receber coleta:', e);
+    res.status(500).json({ erro: 'Erro ao registrar a coleta no estoque.' });
+  }
+});
+
+// ── Importa produtos e cores cadastrados na Produção ──────────────────
+// Só cria e atualiza nome/cor. Nunca altera SKU da Shopee nem saldo.
+async function estqSincronizarProdutos() {
+  if (!_estqPronto || _estqSincronizando) return { ok: false, erro: 'Sincronização em andamento.' };
+  if (!ESTQ_TOKEN) return { ok: false, erro: 'Variável INTEGRACAO_TOKEN não configurada.' };
+  if (typeof fetch !== 'function') return { ok: false, erro: 'Versão do Node sem fetch.' };
+  _estqSincronizando = true;
+  try {
+    const pedir = async caminho => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
+      try {
+        const r = await fetch(ESTQ_PRODUCAO_URL + caminho, { headers: { 'x-integracao-token': ESTQ_TOKEN }, signal: ctrl.signal });
+        if (!r.ok) throw new Error(r.status === 401 ? 'Token recusado pela Produção.' : 'Produção respondeu HTTP ' + r.status + '.');
+        return await r.json();
+      } finally { clearTimeout(timer); }
+    };
+    const dados = await pedir('/api/integracao/produtos');
+    const produtos = Array.isArray(dados.produtos) ? dados.produtos : [];
+    let criados = 0;
+    await estqTx(async cli => {
+      const vistos = [];
+      for (const p of produtos) {
+        const pid = estqInt(p.produto_id);
+        if (!pid) continue;
+        const cores = Array.isArray(p.cores) && p.cores.length ? p.cores : [{ cor: '', hex: '' }];
+        for (const c of cores) {
+          const antes = await cli.query('SELECT id FROM estq_itens WHERE produto_ref = $1 AND cor_chave = $2', [pid, estqChave(c.cor)]);
+          const id = await estqItem(cli, { produto_id: pid, produto_nome: p.nome, sku: p.sku, cor: c.cor, hex: c.hex });
+          if (!antes.rows.length) criados++;
+          if (p.ativo === false) await cli.query('UPDATE estq_itens SET ativo = FALSE WHERE id = $1', [id]);
+          vistos.push(id);
+        }
+      }
+      // O que sumiu do cadastro da Produção fica inativo (continua aparecendo enquanto tiver saldo).
+      if (produtos.length) await cli.query('UPDATE estq_itens SET ativo = FALSE WHERE NOT (id = ANY($1::int[]))', [vistos]);
+    });
+    try { _estqFila = await pedir('/api/integracao/status'); } catch (e) { _estqFila = { pendentes: null, ultimo_erro: '' }; }
+    await estqConfig('sync_em', new Date().toISOString());
+    await estqConfig('sync_erro', '');
+    if (criados) broadcast('estq:atualizado', {});
+    return { ok: true, criados, total: produtos.length };
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? 'Produção não respondeu em 10 segundos.' : (e.message || 'Falha ao falar com a Produção.');
+    console.error('[estoque] sincronização de produtos falhou:', msg);
+    try { await estqConfig('sync_erro', msg); } catch (_) {}
+    return { ok: false, erro: msg };
+  } finally {
+    _estqSincronizando = false;
+  }
+}
+
+function estqDisponivel(req, res, next) {
+  if (!_estqPronto) return res.status(503).json({ erro: 'Estoque indisponível. Verifique o log do servidor.' });
+  next();
+}
+
+async function estqSenhaConfere(req, senha) {
+  if (!senha) return false;
+  const r = await pool.query('SELECT senha FROM usuarios WHERE id = $1', [req.usuario.id]);
+  return r.rows.length > 0 && r.rows[0].senha === hashSenha(String(senha));
+}
+
+// ── Saldos + situação da ligação ──────────────────────────────────────
+app.get('/api/estq/resumo', autenticar, estqDisponivel, async (req, res) => {
+  try {
+    const itens = await pool.query(`
+      SELECT id, produto_ref, produto_nome, sku_interno, cor, hex, sku_shopee, fisico, reservado, ativo
+      FROM estq_itens
+      WHERE ativo = TRUE OR fisico <> 0 OR reservado <> 0
+      ORDER BY produto_nome, cor
+    `);
+    const cfg = await pool.query(`SELECT chave, valor FROM estq_config WHERE chave IN ('sync_em','sync_erro')`);
+    const conf = {}; cfg.rows.forEach(r => { conf[r.chave] = r.valor; });
+    const ult = await pool.query('SELECT MAX(atualizado_em) AS em FROM estq_coletas');
+    // Lista velha (mais de 10 min): atualiza em segundo plano, sem segurar a tela.
+    if (ESTQ_TOKEN && (!conf.sync_em || Date.now() - new Date(conf.sync_em).getTime() > 10 * 60 * 1000)) estqSincronizarProdutos();
+    let fisico = 0, reservado = 0, semSku = 0;
+    itens.rows.forEach(i => { fisico += i.fisico; reservado += i.reservado; if (i.ativo && !i.sku_shopee) semSku++; });
+    res.json({
+      itens: itens.rows,
+      totais: { fisico, reservado, disponivel: fisico - reservado, sem_sku: semSku },
+      motivos_ajuste: ESTQ_MOTIVOS_AJUSTE,
+      ligacao: {
+        token_configurado: !!ESTQ_TOKEN,
+        produtos_em: conf.sync_em || null,
+        produtos_erro: conf.sync_erro || '',
+        ultima_coleta_em: ult.rows[0].em ? ult.rows[0].em.toISOString() : null,
+        fila_pendentes: _estqFila.pendentes,
+        fila_erro: _estqFila.ultimo_erro || ''
+      }
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar o estoque.' });
+  }
+});
+
+// ── Movimentações: 50 por página, paginadas no servidor ───────────────
+app.get('/api/estq/movimentos', autenticar, estqDisponivel, async (req, res) => {
+  try {
+    const where = [], params = [];
+    const itemId = estqInt(req.query.item_id);
+    if (itemId) { params.push(itemId); where.push(`m.item_id = $${params.length}`); }
+    if (req.query.tipo) { params.push(String(req.query.tipo)); where.push(`m.tipo = $${params.length}`); }
+    const dataOk = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+    if (dataOk(req.query.de)) { params.push(req.query.de); where.push(`m.criado_em >= ($${params.length}::date)::timestamp AT TIME ZONE 'America/Sao_Paulo'`); }
+    if (dataOk(req.query.ate)) { params.push(req.query.ate); where.push(`m.criado_em < ($${params.length}::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo'`); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const tot = await pool.query(`SELECT COUNT(*)::INTEGER AS n FROM estq_movimentos m ${w}`, params);
+    const total = tot.rows[0].n;
+    const paginas = Math.max(1, Math.ceil(total / ESTQ_POR_PAGINA));
+    const pagina = Math.min(Math.max(1, estqInt(req.query.pagina) || 1), paginas);
+    const r = await pool.query(`
+      SELECT m.id, m.item_id, m.tipo, m.quantidade, m.saldo_antes, m.saldo_depois, m.motivo, m.obs, m.origem,
+             m.usuario_nome, m.criado_em, i.produto_nome, i.cor, i.sku_shopee
+      FROM estq_movimentos m JOIN estq_itens i ON i.id = m.item_id
+      ${w}
+      ORDER BY m.criado_em DESC, m.id DESC
+      LIMIT ${ESTQ_POR_PAGINA} OFFSET ${(pagina - 1) * ESTQ_POR_PAGINA}
+    `, params);
+    res.json({ pagina, paginas, total, por_pagina: ESTQ_POR_PAGINA, movimentos: r.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao carregar as movimentações.' });
+  }
+});
+
+// ── Atualizar a lista de produtos agora (admin) ───────────────────────
+app.post('/api/estq/produtos/sincronizar', autenticar, apenasAdmin, estqDisponivel, async (req, res) => {
+  const r = await estqSincronizarProdutos();
+  if (!r.ok) return res.status(502).json({ erro: r.erro });
+  res.json(r);
+});
+
+// ── SKU da Shopee por produto e cor (admin) ───────────────────────────
+app.put('/api/estq/itens/:id/sku', autenticar, apenasAdmin, estqDisponivel, async (req, res) => {
+  try {
+    const id = estqInt(req.params.id);
+    const sku = String((req.body && req.body.sku_shopee) || '').trim();
+    if (!id) return res.status(400).json({ erro: 'Item inválido.' });
+    if (sku.length > 80) return res.status(400).json({ erro: 'SKU muito longo.' });
+    if (sku) {
+      const dup = await pool.query('SELECT produto_nome, cor FROM estq_itens WHERE LOWER(sku_shopee) = LOWER($1) AND id <> $2 LIMIT 1', [sku, id]);
+      if (dup.rows.length) return res.status(409).json({ erro: `Este SKU já está em ${dup.rows[0].produto_nome}${dup.rows[0].cor ? ', cor ' + dup.rows[0].cor : ''}.` });
+    }
+    const r = await pool.query('UPDATE estq_itens SET sku_shopee = $1, atualizado_em = NOW() WHERE id = $2 RETURNING id, sku_shopee', [sku || null, id]);
+    if (!r.rows.length) return res.status(404).json({ erro: 'Item não encontrado.' });
+    broadcast('estq:atualizado', {});
+    res.json(r.rows[0]);
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ erro: 'Este SKU já está em outro item.' });
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao salvar o SKU.' });
+  }
+});
+
+// ── Ajuste manual (admin, com senha e motivo) ─────────────────────────
+app.post('/api/estq/ajuste', autenticar, apenasAdmin, estqDisponivel, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const itemId = estqInt(b.item_id), qtd = estqInt(b.quantidade);
+    const motivo = String(b.motivo || '').trim(), obs = String(b.obs || '').trim().slice(0, 300);
+    if (!itemId) return res.status(400).json({ erro: 'Item inválido.' });
+    if (!['entrada', 'saida'].includes(b.tipo)) return res.status(400).json({ erro: 'Escolha entrada ou saída.' });
+    if (!qtd || qtd < 1) return res.status(400).json({ erro: 'Informe uma quantidade maior que zero.' });
+    if (!ESTQ_MOTIVOS_AJUSTE.includes(motivo)) return res.status(400).json({ erro: 'Selecione o motivo.' });
+    if (motivo === 'Outro' && !obs) return res.status(400).json({ erro: 'Descreva o motivo na observação.' });
+    if (!(await estqSenhaConfere(req, b.senha))) return res.status(401).json({ erro: 'Senha incorreta.' });
+    const out = await estqTx(async cli => {
+      const it = await cli.query('SELECT fisico FROM estq_itens WHERE id = $1 FOR UPDATE', [itemId]);
+      if (!it.rows.length) return { erro: 'Item não encontrado.', status: 404 };
+      if (b.tipo === 'saida' && qtd > it.rows[0].fisico) return { erro: `Saída maior que o estoque físico (${it.rows[0].fisico}). Para corrigir o saldo, use a contagem.`, status: 400 };
+      return await estqMovimentar(cli, itemId, b.tipo === 'entrada' ? qtd : -qtd, b.tipo === 'entrada' ? 'ajuste_entrada' : 'ajuste_saida',
+        { motivo, obs, usuario: req.usuario.nome });
+    });
+    if (out.erro) return res.status(out.status).json({ erro: out.erro });
+    broadcast('estq:atualizado', {});
+    res.json({ ok: true, fisico: out.depois });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao registrar o ajuste.' });
+  }
+});
+
+// ── Contagem em lote (admin, com senha) ───────────────────────────────
+// Recebe o saldo contado de cada item e o sistema calcula a diferença.
+app.post('/api/estq/contagem', autenticar, apenasAdmin, estqDisponivel, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const obs = String(b.obs || '').trim().slice(0, 300);
+    const lista = Array.isArray(b.itens) ? b.itens : [];
+    if (!lista.length) return res.status(400).json({ erro: 'Informe a contagem de pelo menos um item.' });
+    if (lista.length > 2000) return res.status(400).json({ erro: 'Itens demais em uma única contagem.' });
+    const limpos = [];
+    for (const x of lista) {
+      const itemId = estqInt(x.item_id), contado = estqInt(x.contado);
+      if (!itemId || contado === null || contado < 0) return res.status(400).json({ erro: 'Há quantidade inválida na contagem.' });
+      limpos.push({ itemId, contado });
+    }
+    if (!(await estqSenhaConfere(req, b.senha))) return res.status(401).json({ erro: 'Senha incorreta.' });
+    const out = await estqTx(async cli => {
+      let alterados = 0, iguais = 0;
+      for (const x of limpos) {
+        const it = await cli.query('SELECT fisico FROM estq_itens WHERE id = $1 FOR UPDATE', [x.itemId]);
+        if (!it.rows.length) throw Object.assign(new Error('item'), { estq: 'Item da contagem não encontrado.' });
+        const delta = x.contado - it.rows[0].fisico;
+        if (delta === 0) { iguais++; continue; }
+        await estqMovimentar(cli, x.itemId, delta, 'contagem', { motivo: 'Contagem de estoque', obs, usuario: req.usuario.nome });
+        alterados++;
+      }
+      return { alterados, iguais };
+    });
+    broadcast('estq:atualizado', {});
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    if (e.estq) return res.status(400).json({ erro: e.estq });
+    console.error(e);
+    res.status(500).json({ erro: 'Erro ao registrar a contagem.' });
+  }
+});
+
+
 // ── Health check / Railway ────────────────────────────────────
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.get('/', (req, res) => res.json({ status: 'online', mensagem: 'API Bipagem', data: new Date() }));
@@ -2809,6 +3234,7 @@ initDB()
   .then(() => initEstoque())
   .then(() => initLotes())
   .then(() => initInsumos())
+  .then(() => initEstq())
   .then(() => {
     server.listen(PORT, '0.0.0.0', () => console.log(`✓ Servidor na porta ${PORT}`));
   })
