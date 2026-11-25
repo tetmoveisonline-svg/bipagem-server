@@ -321,6 +321,17 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
 .tag.neu{background:var(--surface3);color:var(--text2);}
 .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
 .data-table th.num{text-align:right;}
+/* seleção para reimpressão em massa */
+.data-table th.colsel,.data-table td.colsel{width:34px;text-align:center;padding-left:10px;padding-right:4px;}
+.data-table input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;vertical-align:middle;}
+.data-table tr.sel{background:rgba(0,229,160,.10);}
+.rl-atalho{font-size:11px;color:var(--text3);background:transparent;border:1px dashed var(--border);border-radius:20px;padding:3px 11px;cursor:pointer;margin-left:8px;}
+.rl-atalho:hover{color:var(--accent);border-color:var(--accent);}
+.rl-barra{position:fixed;left:0;right:0;bottom:0;transform:translateY(130%);transition:transform .18s ease;background:#0e1714;border-top:1px solid rgba(0,229,160,.4);box-shadow:0 -8px 24px rgba(0,0,0,.5);z-index:120;}
+.rl-barra.on{transform:translateY(0);}
+.rl-in{max-width:1100px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:12px 16px;flex-wrap:wrap;}
+.rl-cnt{font-size:13px;font-weight:600;color:var(--text);}
+.rl-cnt b{color:var(--accent);font-family:var(--mono);}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid rgba(255,255,255,.25);margin-right:6px;vertical-align:middle;}
 .barra{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;}
 .barra .field{min-width:150px;}
@@ -422,11 +433,19 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
             <div class="stat"><div class="stat-label">Precisam de atenção</div><div class="stat-value" id="n-atencao">0</div></div>
           </div>
           <div id="res-avisos"></div>
-          <div style="font-size:12px;color:var(--text2);margin:10px 0;">Clique numa linha para ver a etiqueta antes e depois.</div>
+          <div style="font-size:12px;color:var(--text2);margin:10px 0;">Clique numa linha para ver a etiqueta antes e depois. Marque as caixas para reimprimir em massa.<button type="button" class="rl-atalho" onclick="selJaImpressas()">Selecionar as já impressas</button></div>
           <div class="table-wrap tbl-x"><table class="data-table">
-            <thead><tr><th>Pedido</th><th>Rastreio</th><th>SKU</th><th>Variação</th><th class="num">Qtd</th><th>Situação</th></tr></thead>
+            <thead><tr><th class="colsel"><input type="checkbox" id="chk-all" title="Selecionar todas as reimprimíveis" onclick="selTodasReimp(this.checked)"></th><th>Pedido</th><th>Rastreio</th><th>SKU</th><th>Variação</th><th class="num">Qtd</th><th>Situação</th></tr></thead>
             <tbody id="tb-res"></tbody>
           </table></div>
+          <div class="rl-barra" id="rl-barra">
+            <div class="rl-in">
+              <span class="rl-cnt"><b id="rl-n">0</b> selecionada(s) para reimprimir</span>
+              <span style="flex:1;"></span>
+              <button type="button" class="btn btn-ghost" onclick="selLimpar()">Limpar</button>
+              <button type="button" class="btn btn-primary" onclick="abrirReimpLote()">Reimprimir selecionadas</button>
+            </div>
+          </div>
           <div class="barra" style="margin-top:14px;">
             <button type="button" class="btn btn-primary" id="btn-baixar" onclick="baixar()">Baixar etiquetas com SKU</button>
             <button type="button" class="btn btn-ghost" onclick="novoEnvio()">Enviar outro arquivo</button>
@@ -476,6 +495,21 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
   </div>
 </div>
 
+<!-- REIMPRESSÃO EM MASSA -->
+<div class="modal-overlay" id="modal-rpl" style="display:none;" onclick="if(event.target===this)fecharModais()">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rpl-titulo">
+    <div class="modal-title" id="rpl-titulo">Reimprimir selecionadas</div>
+    <div class="modal-info" id="rpl-info"></div>
+    <div class="modal-field"><label for="rpl-motivo">Motivo da reimpressão</label><select id="rpl-motivo"></select></div>
+    <div class="modal-field"><label for="rpl-senha">Sua senha</label><input type="password" id="rpl-senha" autocomplete="off" onkeydown="if(event.key==='Enter')confirmarReimpLote()"/></div>
+    <div class="modal-erro" id="rpl-erro"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="fecharModais()">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="rpl-ok" onclick="confirmarReimpLote()">Confirmar reimpressão</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-area" id="toast-area" role="status"></div>
 
 <script src="vendor/pdf.min.js"></script>
@@ -485,7 +519,7 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
 <script>
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 var token = null; try { token = localStorage.getItem('bip_token') || null; } catch (e) {}
-var usuario = null, R = null, arquivoId = null, enviadoEm = null, nomeArquivo = '', baixou = false, motivos = [], skusVinc = {}, rpEt = null;
+var usuario = null, R = null, arquivoId = null, enviadoEm = null, nomeArquivo = '', baixou = false, motivos = [], skusVinc = {}, rpEt = null, selSet = {};
 var hist = { pagina: 1, paginas: 1 };
 function $(id) { return document.getElementById(id); }
 function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -535,7 +569,7 @@ function abrir(p) {
   s.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files.length) escolheu(e.dataTransfer.files); });
 })();
 function mostrar(qual) { ['envio', 'leitura', 'resultado'].forEach(function (x) { $('area-' + x).style.display = x === qual ? '' : 'none'; }); }
-function novoEnvio() { R = null; arquivoId = null; baixou = false; $('arq').value = ''; mostrar('envio'); }
+function novoEnvio() { R = null; arquivoId = null; baixou = false; selSet = {}; $('arq').value = ''; mostrar('envio'); }
 async function escolheu(files) {
   var lista = Array.prototype.slice.call(files || []);
   if (!lista.length) return;
@@ -604,9 +638,12 @@ function render() {
     if (!p && semVinculo(e)) extra += '<div class="mini">SKU sem vínculo no estoque</div>';
     if (e.manual) extra += '<div class="mini">Pedido escolhido à mão</div>';
     e.avisos.filter(function (a) { return /confira/.test(a); }).forEach(function (a) { extra += '<div class="mini">' + esc(a) + '</div>'; });
-    return '<tr class="linha-clic" tabindex="0" onclick="verPrevia(' + n + ')" onkeydown="if(event.key===\'Enter\'&&event.target===this)verPrevia(' + n + ')"><td>' + (e.pedido ? esc(e.pedido) : '') + '</td><td>' + (e.rastreio ? esc(e.rastreio) : '') + '</td><td>' + skus + '</td>' +
+    var reimp = (jaImpressa(e) || e.baixada);
+    var cb = reimp ? '<td class="colsel" onclick="event.stopPropagation()"><input type="checkbox" class="chk-reimp" data-rt="' + esc(e.rastreio) + '"' + (selSet[e.rastreio] ? ' checked' : '') + '></td>' : '<td class="colsel"></td>';
+    return '<tr class="linha-clic' + (selSet[e.rastreio] ? ' sel' : '') + '" tabindex="0" onclick="verPrevia(' + n + ')" onkeydown="if(event.key===\'Enter\'&&event.target===this)verPrevia(' + n + ')">' + cb + '<td>' + (e.pedido ? esc(e.pedido) : '') + '</td><td>' + (e.rastreio ? esc(e.rastreio) : '') + '</td><td>' + skus + '</td>' +
       '<td>' + e.itens.map(function (i) { return esc(i.variacao); }).join('<br>') + '</td><td class="num">' + e.itens.map(function (i) { return i.qtd; }).join('<br>') + '</td><td>' + sit + extra + '</td></tr>';
   }).join('');
+  pruneSel(); selSync();
   var b = $('btn-baixar'); b.disabled = !prontas; b.textContent = prontas ? 'Baixar ' + prontas + ' etiqueta(s) com SKU' : (baixou ? 'Arquivo já baixado' : 'Nenhuma etiqueta para baixar');
 }
 function seletorPedido(n) {
@@ -643,7 +680,7 @@ function verPrevia(n) {
   });
   $('modal-pv').style.display = 'flex';
 }
-function fecharModais() { $('modal-pv').style.display = 'none'; $('modal-rp').style.display = 'none'; rpEt = null; }
+function fecharModais() { $('modal-pv').style.display = 'none'; $('modal-rp').style.display = 'none'; $('modal-rpl').style.display = 'none'; rpEt = null; }
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') fecharModais(); });
 
 /* ── baixar ── */
@@ -699,6 +736,59 @@ async function confirmarReimp() {
   b.disabled = false;
 }
 
+/* ── seleção para reimpressão em massa ── */
+function reimprimiveis() { return R ? R.etiquetas.filter(function (e) { return jaImpressa(e) || e.baixada; }) : []; }
+function pruneSel() { if (!R) { selSet = {}; return; } Object.keys(selSet).forEach(function (rt) { if (!R.etiquetas.some(function (e) { return e.rastreio === rt && (jaImpressa(e) || e.baixada); })) delete selSet[rt]; }); }
+function selToggle(rt, on) { if (!rt) return; if (on) selSet[rt] = true; else delete selSet[rt]; selSync(); }
+function selTodasReimp(on) { selSet = {}; if (on) reimprimiveis().forEach(function (e) { selSet[e.rastreio] = true; }); aplicarChecks(); selSync(); }
+function selJaImpressas() { selSet = {}; reimprimiveis().forEach(function (e) { if (jaImpressa(e)) selSet[e.rastreio] = true; }); aplicarChecks(); selSync(); }
+function selLimpar() { selSet = {}; aplicarChecks(); selSync(); }
+function aplicarChecks() { [].forEach.call(document.querySelectorAll('.chk-reimp'), function (c) { c.checked = !!selSet[c.getAttribute('data-rt')]; }); }
+function selSync() {
+  var n = Object.keys(selSet).length, total = reimprimiveis().length;
+  var barra = $('rl-barra'); if (barra) barra.classList.toggle('on', n > 0);
+  var cnt = $('rl-n'); if (cnt) cnt.textContent = n;
+  var all = $('chk-all'); if (all) all.checked = total > 0 && n >= total;
+  [].forEach.call(document.querySelectorAll('.chk-reimp'), function (c) { c.closest('tr').classList.toggle('sel', !!selSet[c.getAttribute('data-rt')]); });
+}
+function abrirReimpLote() {
+  var sel = reimprimiveis().filter(function (e) { return selSet[e.rastreio]; });
+  if (!sel.length) { toast('Selecione ao menos uma etiqueta para reimprimir.', 'warn'); return; }
+  var probl = sel.filter(function (e) { return problema(e); }).length;
+  $('rpl-info').innerHTML = '<strong>' + sel.length + ' etiqueta(s) selecionada(s) para reimprimir.</strong>' + (probl ? '<br><span style="color:var(--warn);">' + probl + ' não pode(m) ser gerada(s) e será(ão) ignorada(s).</span>' : '');
+  $('rpl-motivo').innerHTML = '<option value="">Selecione o motivo</option>' + motivos.map(function (m) { return '<option>' + esc(m) + '</option>'; }).join('');
+  $('rpl-senha').value = ''; $('rpl-erro').textContent = '';
+  $('modal-rpl').style.display = 'flex'; $('rpl-motivo').focus();
+}
+async function confirmarReimpLote() {
+  var err = $('rpl-erro'); err.textContent = '';
+  if (!$('rpl-motivo').value) { err.textContent = 'Selecione o motivo.'; return; }
+  if (!$('rpl-senha').value) { err.textContent = 'Digite sua senha para confirmar.'; return; }
+  var sel = reimprimiveis().filter(function (e) { return selSet[e.rastreio] && !problema(e); });
+  if (!sel.length) { err.textContent = 'Nenhuma etiqueta válida para reimprimir.'; return; }
+  var b = $('rpl-ok'); b.disabled = true;
+  var motivo = $('rpl-motivo').value, senha = $('rpl-senha').value, okEt = [], falhas = 0, authErro = null;
+  for (var i = 0; i < sel.length; i++) {
+    var e = sel[i];
+    try {
+      var r = await api('POST', '/api/etq/reimprimir', { rastreio: e.rastreio, motivo: motivo, senha: senha });
+      e.sit = e.sit || { situacao: 'impressa' }; e.sit.reimpressoes = r.reimpressoes; e.sit.ultimaReimp = { por: r.por, em: r.em };
+      okEt.push(e);
+    } catch (x) {
+      falhas++;
+      if (x && x.erro && /senha|autenticad|sess/i.test(x.erro)) { authErro = x.erro; break; }
+    }
+  }
+  if (authErro && !okEt.length) { err.textContent = authErro; b.disabled = false; return; }
+  if (okEt.length) {
+    salvarArquivo(okEt.map(function (e) { return EtqLeitor.zplComSku(e); }).join(''), 'reimpressao-lote-' + carimbo() + '.txt');
+    selLimpar(); fecharModais(); render();
+    toast(okEt.length + ' etiqueta(s) reimpressa(s) e baixada(s)' + (falhas ? '. ' + falhas + ' falhou(aram).' : '.'), falhas ? 'warn' : 'ok', 6000);
+  } else {
+    err.textContent = 'Nenhuma etiqueta foi reimpressa.' + (falhas ? ' ' + falhas + ' falha(s).' : ''); b.disabled = false;
+  }
+}
+
 /* ── histórico (50 por página, vindo do servidor) ── */
 async function carregarHist(pagina) {
   try {
@@ -718,6 +808,7 @@ async function carregarHist(pagina) {
 
 function relogio() { $('data-full').textContent = new Date().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' }); }
 relogio(); setInterval(relogio, 60000);
+$('tb-res').addEventListener('change', function (e) { if (e.target && e.target.classList && e.target.classList.contains('chk-reimp')) selToggle(e.target.getAttribute('data-rt'), e.target.checked); });
 window.addEventListener('beforeunload', function (e) { if (R && !baixou && R.etiquetas.some(entra)) { e.preventDefault(); e.returnValue = ''; } });
 (async function () {
   if (token) { try { usuario = await api('GET', '/api/me'); return iniciar(); } catch (e) {} }
