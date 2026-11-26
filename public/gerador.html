@@ -757,7 +757,7 @@ function abrirReimpLote() {
   var probl = sel.filter(function (e) { return problema(e); }).length;
   $('rpl-info').innerHTML = '<strong>' + sel.length + ' etiqueta(s) selecionada(s) para reimprimir.</strong>' + (probl ? '<br><span style="color:var(--warn);">' + probl + ' não pode(m) ser gerada(s) e será(ão) ignorada(s).</span>' : '');
   $('rpl-motivo').innerHTML = '<option value="">Selecione o motivo</option>' + motivos.map(function (m) { return '<option>' + esc(m) + '</option>'; }).join('');
-  $('rpl-senha').value = ''; $('rpl-erro').textContent = '';
+  $('rpl-senha').value = ''; $('rpl-erro').textContent = ''; $('rpl-ok').disabled = false;
   $('modal-rpl').style.display = 'flex'; $('rpl-motivo').focus();
 }
 async function confirmarReimpLote() {
@@ -782,7 +782,7 @@ async function confirmarReimpLote() {
   if (authErro && !okEt.length) { err.textContent = authErro; b.disabled = false; return; }
   if (okEt.length) {
     salvarArquivo(okEt.map(function (e) { return EtqLeitor.zplComSku(e); }).join(''), 'reimpressao-lote-' + carimbo() + '.txt');
-    selLimpar(); fecharModais(); render();
+    selLimpar(); fecharModais(); render(); b.disabled = false;
     toast(okEt.length + ' etiqueta(s) reimpressa(s) e baixada(s)' + (falhas ? '. ' + falhas + ' falhou(aram).' : '.'), falhas ? 'warn' : 'ok', 6000);
   } else {
     err.textContent = 'Nenhuma etiqueta foi reimpressa.' + (falhas ? ' ' + falhas + ' falha(s).' : ''); b.disabled = false;
