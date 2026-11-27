@@ -512,13 +512,12 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
 
 <div class="toast-area" id="toast-area" role="status"></div>
 
-<script src="vendor/pdf.min.js"></script>
+<script type="module" src="pdf-leitor.mjs"></script>
 <script src="vendor/jsQR.js"></script>
 <script src="vendor/tess/tesseract.min.js"></script>
 <script src="gerador-leitor.js"></script>
 <script>
-if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
-var token = null; try { token = localStorage.getItem('bip_token') || null; } catch (e) {}
+try { localStorage.removeItem('bip_token'); } catch (e) {}
 var usuario = null, R = null, arquivoId = null, enviadoEm = null, nomeArquivo = '', baixou = false, motivos = [], skusVinc = {}, rpEt = null, selSet = {};
 var hist = { pagina: 1, paginas: 1 };
 function $(id) { return document.getElementById(id); }
@@ -526,7 +525,7 @@ function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function
 function dataHora(iso) { if (!iso) return ''; return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
 function toast(msg, tipo, dur) { var el = document.createElement('div'); el.className = 'toast ' + (tipo || 'ok'); el.textContent = msg; $('toast-area').appendChild(el); setTimeout(function () { el.remove(); }, dur || 4000); }
 async function api(metodo, caminho, corpo) {
-  var o = { method: metodo, headers: { 'Content-Type': 'application/json', 'Authorization': token || '' } };
+  var o = { method: metodo, headers: { 'Content-Type': 'application/json' } };
   if (corpo) o.body = JSON.stringify(corpo);
   var r = await fetch(caminho, o), j = null;
   try { j = await r.json(); } catch (e) { j = {}; }
@@ -545,12 +544,11 @@ async function fazerLogin() {
     var r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, senha: s }) });
     var d = await r.json();
     if (!r.ok) { err.textContent = d.erro || 'Erro ao entrar.'; return; }
-    token = d.token; usuario = d.usuario;
-    try { localStorage.setItem('bip_token', token); } catch (e) {}
+    usuario = d.usuario;
     iniciar();
   } catch (e) { err.textContent = 'Erro de conexão.'; }
 }
-function sair() { try { localStorage.removeItem('bip_token'); } catch (e) {} token = null; $('app').style.display = 'none'; $('login-wrap').style.display = 'flex'; }
+function sair() { usuario = null; $('app').style.display = 'none'; $('login-wrap').style.display = 'flex'; }
 async function fazerLogout() { try { await api('POST', '/api/logout'); } catch (e) {} sair(); }
 function iniciar() {
   $('login-wrap').style.display = 'none'; $('app').style.display = 'block';
@@ -811,7 +809,7 @@ relogio(); setInterval(relogio, 60000);
 $('tb-res').addEventListener('change', function (e) { if (e.target && e.target.classList && e.target.classList.contains('chk-reimp')) selToggle(e.target.getAttribute('data-rt'), e.target.checked); });
 window.addEventListener('beforeunload', function (e) { if (R && !baixou && R.etiquetas.some(entra)) { e.preventDefault(); e.returnValue = ''; } });
 (async function () {
-  if (token) { try { usuario = await api('GET', '/api/me'); return iniciar(); } catch (e) {} }
+  try { usuario = await api('GET', '/api/me'); return iniciar(); } catch (e) {}
   sair();
 })();
 </script>

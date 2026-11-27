@@ -10,12 +10,12 @@
 (function(){try{var t=localStorage.getItem('bip_tema');if(t&&t!=='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
 </script>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
 <!-- Leitura do PDF de etiquetas: acontece AQUI no navegador, não no servidor.
      O servidor aceita 2 MB por requisição e um PDF de etiquetas passa de 8 MB.
      Servidas do próprio servidor, e não de CDN: se o CDN falhar ou for bloqueado,
      a leitura devolvia "0 códigos" sem explicar o motivo. -->
-<script src="vendor/pdf.min.js"></script>
+<script type="module" src="pdf-leitor.mjs"></script>
 <script src="vendor/jsQR.js"></script>
 <style>
 :root{
@@ -1245,6 +1245,17 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 </div>
 
 <script>
+// Texto para conteúdo HTML e atributos entre aspas.
+function htmlTexto(valor) {
+  const entidades = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(valor ?? '').replace(/[&<>"']/g, c => entidades[c]);
+}
+
+// Argumento em uma string JavaScript entre aspas simples, dentro de HTML.
+function htmlJs(valor) {
+  return htmlTexto(JSON.stringify(String(valor ?? '')).slice(1, -1).replace(/'/g, "\\'"));
+}
+
   async function aplicarFiltro() {
   const dia = document.getElementById('filtroDia').value;
   const mes = document.getElementById('filtroMes').value;
@@ -1284,7 +1295,7 @@ function limparFiltro() {
 // ── State ─────────────────────────────────────────────────────
 let S = { colaboradores:[], marketplaces:[], bipagens:[], pendencias:[], retornos:[] };
 let usuarioLogado = null;
-let token = localStorage.getItem('bip_token') || null;
+try { localStorage.removeItem('bip_token'); } catch (e) {}
 let selectedColabId = parseInt(localStorage.getItem('bip_colab')) || null;
 let selectedColor = '#ff5722';
 let ws = null;
@@ -1305,14 +1316,14 @@ function toast(msg, type='ok', dur=3000) {
   const el = document.createElement('div');
   const icons = {ok:'✓',err:'✕',warn:'⚠',info:'ℹ'};
   el.className = `toast ${type}`;
-  el.innerHTML = `<span>${icons[type]||'·'}</span><span>${msg}</span>`;
+  el.innerHTML = `<span>${icons[type]||'·'}</span><span>${htmlTexto(msg)}</span>`;
   area.appendChild(el);
   setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, dur);
 }
 
 // ── API ───────────────────────────────────────────────────────
 async function api(method, path, body) {
-  const opts = { method, headers: { 'Content-Type':'application/json', 'Authorization': token||'' } };
+  const opts = { method, headers: { 'Content-Type':'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(path, opts);
   const json = await r.json();
@@ -1334,28 +1345,22 @@ async function fazerLogin() {
     });
     const data = await res.json();
     if (!res.ok) { err.textContent = data.erro || 'Erro ao entrar.'; return; }
-    token = data.token;
     usuarioLogado = data.usuario;
-    localStorage.setItem('bip_token', token);
     iniciarApp();
   } catch(e) { err.textContent = 'Erro de conexão.'; }
 }
 
 async function fazerLogout() {
   try { await api('POST','/api/logout'); } catch(e) {}
-  token = null; usuarioLogado = null;
-  localStorage.removeItem('bip_token');
+  usuarioLogado = null;
   location.reload();
 }
 
 async function verificarToken() {
-  if (!token) return false;
   try {
     usuarioLogado = await api('GET','/api/me');
     return true;
   } catch(e) {
-    localStorage.removeItem('bip_token');
-    token = null;
     return false;
   }
 }
@@ -1363,7 +1368,7 @@ async function verificarToken() {
 // ── WebSocket ─────────────────────────────────────────────────
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}`);
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.onopen = () => {
     document.getElementById('ws-dot').classList.add('connected');
     document.getElementById('ws-label').textContent = 'online';
@@ -1371,12 +1376,16 @@ function connectWS() {
   ws.onclose = () => {
     document.getElementById('ws-dot').classList.remove('connected');
     document.getElementById('ws-label').textContent = 'reconectando...';
-    setTimeout(connectWS, 3000);
+    setTimeout(async () => {
+      if (await verificarToken()) connectWS();
+      else location.reload();
+    }, 3000);
   };
   ws.onerror = () => ws.close();
   ws.onmessage = (e) => {
     const { event, data } = JSON.parse(e.data);
     handleWS(event, data);
+    if (event === 'etq:reserva') document.dispatchEvent(new CustomEvent(event, { detail: data }));
   };
 }
 
@@ -1661,7 +1670,7 @@ function renderTemaGrid(){
         </div>
       </div>
       <div class="tema-info">
-        <div class="tema-name">${t.nome}${sel?' <span class="tema-check">✓</span>':''}</div>
+        <div class="tema-name">${htmlTexto(t.nome)}${sel?' <span class="tema-check">✓</span>':''}</div>
         <div class="tema-desc">${t.desc}</div>
       </div>
     </div>`;
@@ -1727,9 +1736,9 @@ function populateTranspSelect(){
   const sel = document.getElementById('col-transp-sel');
   const filtro = document.getElementById('col-filter-transp');
   if (sel) sel.innerHTML = '<option value="">— selecionar —</option>' +
-    TRANSPS.map(t=>`<option value="${t.nome}">${t.nome}</option>`).join('');
+    TRANSPS.map(t=>`<option value="${htmlTexto(t.nome)}">${htmlTexto(t.nome)}</option>`).join('');
   if (filtro) filtro.innerHTML = '<option value="">Todas transportadoras</option>' +
-    TRANSPS.map(t=>`<option value="${t.nome}">${t.nome}</option>`).join('');
+    TRANSPS.map(t=>`<option value="${htmlTexto(t.nome)}">${htmlTexto(t.nome)}</option>`).join('');
 }
 
 function populateColetaFilters(){
@@ -1770,7 +1779,7 @@ function renderMktPills(){
     const corBorda = ativo ? p.cor : 'var(--border)';
     const corTexto = (ativo || !zero) ? p.cor : 'var(--text2)';
     return `<span class="col-pill ${ativo?'active':''} ${zero?'zero':''}"
-      onclick="filtrarPorMkt('${p.nome.replace(/'/g,"\\'")}')"
+      onclick="filtrarPorMkt('${htmlJs(p.nome)}')"
       style="border-color:${corBorda};color:${corTexto};">
       ${p.label} <span class="col-pill-count">${p.count.toLocaleString('pt-BR')}</span>
     </span>`;
@@ -1880,7 +1889,7 @@ function renderSitPills(){
     const ativo = p.id === filtroSitAtiva;
     return `<span class="col-pill ${ativo?'active':''}"
       onclick="filtrarPorSituacao('${p.id}')"
-      style="border-color:${ativo ? p.cor : 'var(--border)'};color:${p.cor};">
+      style="border-color:${ativo ? p.cor : 'var(--border)'};color:${htmlTexto(p.cor)};">
       ${p.label} <span class="col-pill-count">${p.count.toLocaleString('pt-BR')}</span>
     </span>`;
   }).join('');
@@ -2051,30 +2060,30 @@ function renderColetas(){
         const quando = c.cancelada_em ? new Date(c.cancelada_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
         const tip = `Cancelada${quando ? ' em ' + quando : ''}${c.cancelada_por ? ' por ' + c.cancelada_por : ''}${c.cancelamento_motivo ? ' — ' + c.cancelamento_motivo : ''}`;
         return `<tr style="background:rgba(255,181,71,.05);">
-          <td class="col-etiq" style="color:var(--text2);">${c.etiqueta}</td>
-          <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${c.marketplace_nome||'-'}</span></td>
-          <td style="color:var(--text2);">${c.colaborador_nome||'-'}</td>
+          <td class="col-etiq" style="color:var(--text2);">${htmlTexto(c.etiqueta)}</td>
+          <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${htmlTexto(c.marketplace_nome||'-')}</span></td>
+          <td style="color:var(--text2);">${htmlTexto(c.colaborador_nome||'-')}</td>
           <td class="col-tempo" style="color:var(--text3);">${fmtDuracao(c.segundos_parado)}</td>
           <td><span title="${tip.replace(/"/g,'&quot;')}" style="font-size:9px;color:var(--warn);border:1px solid rgba(255,181,71,.45);background:rgba(255,181,71,.1);border-radius:3px;padding:2px 7px;font-weight:700;white-space:nowrap;">✕ CANCELADA</span></td>
           <td style="text-align:center;"><button title="Desfazer cancelamento" onclick="reabrirEtiqueta('${c.id}')" style="background:transparent;border:1px solid rgba(255,181,71,.5);color:var(--warn);border-radius:5px;width:26px;height:26px;font-size:11px;cursor:pointer;padding:0;">↶</button></td>
         </tr>`;
       }
       return `<tr>
-        <td class="col-etiq">${c.etiqueta}</td>
-        <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${c.marketplace_nome||'-'}</span></td>
-        <td>${c.colaborador_nome||'-'}</td>
+        <td class="col-etiq">${htmlTexto(c.etiqueta)}</td>
+        <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${htmlTexto(c.marketplace_nome||'-')}</span></td>
+        <td>${htmlTexto(c.colaborador_nome||'-')}</td>
         <td class="col-tempo ${cor}">${fmtDuracao(c.segundos_parado)}</td>
         <td><span class="col-status-pill ${cor}">${cor==='vermelho'?'atrasado':cor==='amarelo'?'atenção':'ok'}</span></td>
-        <td style="text-align:center;"><button title="Marcar como cancelada" onclick="cancelarEtiqueta('${c.id}','${(c.etiqueta||'').replace(/'/g,"\\'")}')" style="background:transparent;border:1px solid var(--border);color:var(--text3);border-radius:5px;width:26px;height:26px;font-size:11px;cursor:pointer;padding:0;">✕</button></td>
+        <td style="text-align:center;"><button title="Marcar como cancelada" onclick="cancelarEtiqueta('${c.id}','${htmlJs(c.etiqueta)}')" style="background:transparent;border:1px solid var(--border);color:var(--text3);border-radius:5px;width:26px;height:26px;font-size:11px;cursor:pointer;padding:0;">✕</button></td>
       </tr>`;
     } else {
       const dt = new Date(c.coletada_em);
       const quando = dt.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
       return `<tr>
         <td class="col-etiq">${_colRealce(c.etiqueta, colBusca)}</td>
-        <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${c.marketplace_nome||'-'}</span></td>
-        <td>${c.colaborador_nome||'-'}</td>
-        <td>${c.transportadora||'-'}</td>
+        <td><span class="col-mkt-pill" style="background:${mktColor}22;color:${mktColor};">${htmlTexto(c.marketplace_nome||'-')}</span></td>
+        <td>${htmlTexto(c.colaborador_nome||'-')}</td>
+        <td>${htmlTexto(c.transportadora||'-')}</td>
         <td>${quando}</td>
         <td class="col-tempo ${cor}">${fmtDuracao(c.segundos_parado)}</td>
         <td><button class="col-undo-btn" onclick="desfazerColeta('${c.id}')">↶ desfazer</button></td>
@@ -2173,18 +2182,18 @@ async function bipColeta(){
     const notaCancel = res.estava_cancelada
       ? ` <span style="color:var(--warn);">· estava marcada como cancelada, foi reaberta e coletada</span>`
       : '';
-    fb.innerHTML = `<div class="col-feedback-ok">✓ ${etiqueta} → ${transp} · separada por ${res.colaborador_nome} (parou ${fmtDuracao(res.segundos_parado)})${notaCancel}</div>`;
+    fb.innerHTML = `<div class="col-feedback-ok">✓ ${htmlTexto(etiqueta)} → ${htmlTexto(transp)} · separada por ${htmlTexto(res.colaborador_nome)} (parou ${fmtDuracao(res.segundos_parado)})${notaCancel}</div>`;
     inp.value = ''; inp.focus();
   } catch(e) {
     if (e.erro === 'NÃO_SEPARADA') {
       falar('Etiqueta não foi separada ainda');
-      fb.innerHTML = `<div class="col-feedback-err">✗ ${etiqueta} — não foi bipada na separação ainda.</div>`;
+      fb.innerHTML = `<div class="col-feedback-err">✗ ${htmlTexto(etiqueta)} — não foi bipada na separação ainda.</div>`;
     } else if (e.erro === 'JÁ_COLETADA') {
       const quando = e.bipagem?.coletada_em ? tempoDecorridoFalado(e.bipagem.coletada_em) : 'anteriormente';
       falar(`Etiqueta duplicada, já coletada ${quando}`);
-      fb.innerHTML = `<div class="col-feedback-warn">⚠ ${etiqueta} — ${e.mensagem}</div>`;
+      fb.innerHTML = `<div class="col-feedback-warn">⚠ ${htmlTexto(etiqueta)} — ${htmlTexto(e.mensagem)}</div>`;
     } else {
-      fb.innerHTML = `<div class="col-feedback-err">✗ ${e.erro||'Erro'}: ${e.mensagem||''}</div>`;
+      fb.innerHTML = `<div class="col-feedback-err">✗ ${htmlTexto(e.erro||'Erro')}: ${htmlTexto(e.mensagem||'')}</div>`;
     }
     inp.select();
   }
@@ -2197,8 +2206,6 @@ let romaneioParsed = null; // { etiquetas: [{etiqueta, pickup_time}], total }
 // O PDF não sobe pro servidor: é lido aqui, e só a lista de rastreios é enviada.
 let _LOTE = { modo: null, codigos: [], diag: null };
 // Sem apontar o worker, o pdf.js não processa o arquivo.
-if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc =
-  'vendor/pdf.worker.min.js';
 const _LOTE_RE = /^BR\d{10,13}[A-Z0-9]$/;
 
 function abrirLotePDF(modo) {
@@ -2222,9 +2229,9 @@ function abrirLotePDF(modo) {
     const m = document.getElementById('lote-mkt');
     const c = document.getElementById('lote-colab');
     m.innerHTML = '<option value="">— selecionar —</option>' +
-      (S.marketplaces || []).map(x => `<option value="${x.id}">${x.nome}</option>`).join('');
+      (S.marketplaces || []).map(x => `<option value="${x.id}">${htmlTexto(x.nome)}</option>`).join('');
     c.innerHTML = '<option value="">— selecionar —</option>' +
-      (S.colaboradores || []).map(x => `<option value="${x.id}">${x.nome}</option>`).join('');
+      (S.colaboradores || []).map(x => `<option value="${x.id}">${htmlTexto(x.nome)}</option>`).join('');
   }
   document.getElementById('modal-lote').style.display = 'flex';
 }
@@ -2338,7 +2345,7 @@ function renderConferencia() {
       <div style="margin-bottom:22px;">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:14px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
           <div>
-            <div style="font-size:16px;font-weight:600;">📦 ${c.produto}</div>
+            <div style="font-size:16px;font-weight:600;">📦 ${htmlTexto(c.produto)}</div>
             <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:4px;">
               ${c.arquivo} · ${c.paginas} páginas · ${c.total} etiqueta${c.total===1?'':'s'} lida${c.total===1?'':'s'}
               ${c.paginasSemLeitura ? ` · <span style="color:var(--warn);">${c.paginasSemLeitura} página(s) sem leitura</span>` : ''}
@@ -2480,7 +2487,7 @@ async function lerConferencia() {
         toast(`"${f.name}" não é um PDF.`, 'err');
         continue;
       }
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const pdf = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
       const achados = {}; const pendentes = [];
       for (let n = 1; n <= pdf.numPages; n++) {
         const c = await _loteLerPagina(pdf, n, 5, cv, ctx);
@@ -2554,7 +2561,7 @@ async function lerPDFLote() {
 
   try {
     const buf = await f.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
     const cv = document.createElement('canvas');
     const ctx = cv.getContext('2d', { willReadFrequently: true });
     const achados = {};
@@ -2598,7 +2605,7 @@ async function lerPDFLote() {
     await _loteDiagnosticar(avisoFalhas, pdf.numPages);
   } catch (e) {
     prog.style.display = 'none';
-    diag.innerHTML = `<div style="color:#ff8a8a;">Erro ao ler o PDF: ${e.message}</div>`;
+    diag.innerHTML = `<div style="color:#ff8a8a;">Erro ao ler o PDF: ${htmlTexto(e.message)}</div>`;
     _loteBotao(false, 'Confirmar');
   }
 }
@@ -2629,13 +2636,13 @@ async function _loteDiagnosticar(avisoFalhas, totalPaginas) {
       <div style="display:flex;justify-content:space-between;padding:8px 11px;background:var(--surface2);font-size:12px;font-weight:600;color:${cor};">
         <span>${titulo}</span><span style="font-family:var(--mono,monospace);">${n}</span>
       </div>
-      ${n ? `<div style="padding:8px 11px;font-family:var(--mono,monospace);font-size:11px;color:var(--text2);line-height:1.8;max-height:88px;overflow:auto;">${itens}</div>` : ''}
+      ${n ? `<div style="padding:8px 11px;font-family:var(--mono,monospace);font-size:11px;color:var(--text2);line-height:1.8;max-height:88px;overflow:auto;">${htmlTexto(itens)}</div>` : ''}
     </div>`;
 
   if (entrada) {
     const dup = (r.duplicadas || []).map(d => `${d.etiqueta}${d.colaborador_nome ? ' (' + d.colaborador_nome + ')' : ''}`).join(' · ');
     diag.innerHTML = avisoFalhas
-      + `<div style="font-size:12px;color:var(--text2);margin-bottom:9px;">${totalPaginas} páginas · <b style="color:var(--text);">${r.total_lidas}</b> etiquetas lidas · ${r.marketplace} · ${r.colaborador}</div>`
+      + `<div style="font-size:12px;color:var(--text2);margin-bottom:9px;">${totalPaginas} páginas · <b style="color:var(--text);">${r.total_lidas}</b> etiquetas lidas · ${htmlTexto(r.marketplace)} · ${r.colaborador}</div>`
       + bloco('var(--accent)', 'Vão ser bipadas', (r.novas || []).length, (r.novas || []).join(' · '))
       + bloco('#ffb547', 'Já estavam bipadas — serão puladas', (r.duplicadas || []).length, dup);
     _loteBotao((r.novas || []).length > 0, `Bipar as ${(r.novas || []).length}`);
@@ -2691,7 +2698,7 @@ function abrirImportRomaneio(){
   // Sincroniza o select de transportadora do modal com o do sistema
   const sel = document.getElementById('imp-transp-sel');
   sel.innerHTML = '<option value="">— selecionar —</option>' +
-    TRANSPS.map(t=>`<option value="${t.nome}">${t.nome}</option>`).join('');
+    TRANSPS.map(t=>`<option value="${htmlTexto(t.nome)}">${htmlTexto(t.nome)}</option>`).join('');
   // Pré-seleciona a transportadora se já estiver escolhida no campo de bipe
   const bipSel = document.getElementById('col-transp-sel').value;
   if (bipSel) sel.value = bipSel;
@@ -2783,7 +2790,7 @@ async function lerRomaneio(){
   try {
     buf = await file.arrayBuffer();
   } catch (e) {
-    preview.innerHTML = `<div class="col-feedback-err">⚠ Não foi possível abrir o arquivo: ${e.message}</div>`;
+    preview.innerHTML = `<div class="col-feedback-err">⚠ Não foi possível abrir o arquivo: ${htmlTexto(e.message)}</div>`;
     return;
   }
 
@@ -2885,15 +2892,15 @@ async function _lerRomaneioXLSX(buf, aviso){
       ${aviso ? `<div style="color:var(--info);margin-bottom:6px;">ℹ ${aviso}</div>` : ''}
       <div class="col-feedback-ok" style="margin-bottom:6px;">✓ ${etiquetas.length.toLocaleString('pt-BR')} etiquetas encontradas</div>
       <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">
-        Primeira: ${etiquetas[0].etiqueta}<br>
-        Última: ${etiquetas[etiquetas.length-1].etiqueta}<br>
+        Primeira: ${htmlTexto(etiquetas[0].etiqueta)}<br>
+        Última: ${htmlTexto(etiquetas[etiquetas.length-1].etiqueta)}<br>
         ${semHora ? `<span style="color:var(--warn);">⚠ ${semHora} sem horário de coleta (vai usar agora)</span>` : '✓ Todas com horário de coleta'}
       </div>
     `;
     habilitarConfirmImport();
   } catch (e) {
     console.error('Erro ao ler romaneio:', e);
-    preview.innerHTML = `<div class="col-feedback-err">⚠ Erro ao ler arquivo: ${e.message}</div>`;
+    preview.innerHTML = `<div class="col-feedback-err">⚠ Erro ao ler arquivo: ${htmlTexto(e.message)}</div>`;
     desabilitarConfirmImport();
   }
 }
@@ -2973,7 +2980,7 @@ async function _lerReciboPDF(buf, aviso){
 
   preview.innerHTML = `<div style="color:var(--text2);">⏳ Lendo o recibo...</div>`;
   try {
-    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
     const linhas = await _reciboLinhas(pdf);
     const texto = linhas.map(p => p.join(' ')).join('\n');
     const itens = _reciboExtrair(linhas);
@@ -3016,8 +3023,8 @@ async function _lerReciboPDF(buf, aviso){
       <div style="font-size:11px;color:var(--text2);font-family:var(--mono);line-height:1.8;">
         ${agencia ? `Agência: ${agencia}<br>` : ''}
         Coleta: ${itens[0]._quando} (do próprio recibo)<br>
-        Primeira: ${itens[0].etiqueta}<br>
-        Última: ${itens[itens.length-1].etiqueta}<br>
+        Primeira: ${htmlTexto(itens[0].etiqueta)}<br>
+        Última: ${htmlTexto(itens[itens.length-1].etiqueta)}<br>
         ${semHora ? `<span style="color:var(--warn);">⚠ ${semHora} sem hora de coleta (vai usar agora)</span>` : '✓ Todas com data e hora de coleta'}
       </div>
     `;
@@ -3027,7 +3034,7 @@ async function _lerReciboPDF(buf, aviso){
     habilitarConfirmImport();
   } catch (e) {
     console.error('Erro ao ler recibo PDF:', e);
-    preview.innerHTML = `<div class="col-feedback-err">⚠ Erro ao ler o PDF: ${e.message}</div>`;
+    preview.innerHTML = `<div class="col-feedback-err">⚠ Erro ao ler o PDF: ${htmlTexto(e.message)}</div>`;
     desabilitarConfirmImport();
   }
 }
@@ -3098,7 +3105,7 @@ async function confirmarImportRomaneio(){
     // Recarrega coletas pra refletir
     carregarColetas();
   } catch(e) {
-    step2.innerHTML = `<div class="col-feedback-err">✗ Erro: ${e.erro || e.message}</div>`;
+    step2.innerHTML = `<div class="col-feedback-err">✗ Erro: ${htmlTexto(e.erro || e.message)}</div>`;
     habilitarConfirmImport();
   }
 }
@@ -3210,7 +3217,7 @@ async function abrirSetupCarga(){
     else if (tlow.includes('mercado')) qtd = aguardandoMap.mercado || 0;
     else if (tlow.includes('amazon')) qtd = aguardandoMap.amazon || 0;
     else if (tlow.includes('shein')) qtd = aguardandoMap.shein || 0;
-    return `<button onclick="selecionarTranspCarga('${t.nome.replace(/'/g,"\\'")}', this)" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 12px;text-align:center;color:var(--text);font-size:13px;cursor:pointer;font-family:var(--font);">${t.nome}<br>${qtd !== '' ? `<span style="font-size:10px;color:var(--text2);font-weight:400;">${qtd} aguard.</span>` : ''}</button>`;
+    return `<button onclick="selecionarTranspCarga('${htmlJs(t.nome)}', this)" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 12px;text-align:center;color:var(--text);font-size:13px;cursor:pointer;font-family:var(--font);">${htmlTexto(t.nome)}<br>${qtd !== '' ? `<span style="font-size:10px;color:var(--text2);font-weight:400;">${qtd} aguard.</span>` : ''}</button>`;
   }).join('');
 }
 
@@ -3315,8 +3322,8 @@ function renderCarregSetupGrid(){
     else if (tlow.includes('amazon')) qtd = aguardandoMap.amazon || 0;
     else if (tlow.includes('shein')) qtd = aguardandoMap.shein || 0;
     return `
-      <button onclick="iniciarCarregamento('${t.nome.replace(/'/g,"\\'")}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px 12px;color:var(--text);font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;text-align:center;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)';" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text)';">
-        ${t.nome}<br>
+      <button onclick="iniciarCarregamento('${htmlJs(t.nome)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px 12px;color:var(--text);font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;text-align:center;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)';" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text)';">
+        ${htmlTexto(t.nome)}<br>
         ${qtd !== '' ? `<span style="font-size:11px;color:var(--text2);font-weight:400;">${qtd} aguardando</span>` : ''}
       </button>
     `;
@@ -3339,7 +3346,7 @@ function iniciarCarregamento(transportadora){
   const headerBar = document.getElementById('carreg-header-bar');
   if (CARREG.carga) {
     const aberta = new Date(CARREG.carga.aberta_em);
-    cargaInfo.innerHTML = `<strong style="color:var(--accent);">CARGA #${String(CARREG.carga.numero).padStart(3,'0')}</strong> · aberta ${aberta.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}${CARREG.carga.observacao ? ' · ' + CARREG.carga.observacao : ''}`;
+    cargaInfo.innerHTML = `<strong style="color:var(--accent);">CARGA #${String(CARREG.carga.numero).padStart(3,'0')}</strong> · aberta ${aberta.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}${htmlTexto(CARREG.carga.observacao ? ' · ' + CARREG.carga.observacao : '')}`;
     cargaInfo.style.display = 'block';
     btnFinalizar.style.display = 'inline-block';
     modoLabel.textContent = '📦 Modo Carga';
@@ -3503,10 +3510,10 @@ function mostrarFeedbackCarreg(tipo, etiqueta, msg){
   }[tipo] || '';
 
   fb.innerHTML = `
-    <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.15em;font-family:var(--mono);margin-bottom:10px;">${labelTopo}</div>
+    <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.15em;font-family:var(--mono);margin-bottom:10px;">${htmlTexto(labelTopo)}</div>
     <div style="background:${c.bg};border-left:6px solid ${c.borda};border-radius:4px;padding:22px 26px;">
-      <div style="font-size:${tipo==='dup'?'56':'48'}px;font-weight:600;font-family:var(--mono);color:${c.cor};letter-spacing:.04em;line-height:1.1;word-break:break-all;">${etiqueta}</div>
-      <div style="font-size:16px;color:${c.cor};font-weight:600;margin-top:10px;">${msg}</div>
+      <div style="font-size:${tipo==='dup'?'56':'48'}px;font-weight:600;font-family:var(--mono);color:${htmlTexto(c.cor)};letter-spacing:.04em;line-height:1.1;word-break:break-all;">${htmlTexto(etiqueta)}</div>
+      <div style="font-size:16px;color:${htmlTexto(c.cor)};font-weight:600;margin-top:10px;">${htmlTexto(msg)}</div>
     </div>
   `;
 }
@@ -3547,7 +3554,7 @@ function renderCarregHistorico(){
     const c2 = cores[h.tipo] || cores.ok;
     return `
       <div style="padding:6px 8px;background:${c2.bg};border-left:2px solid ${c2.borda};margin-bottom:3px;">
-        <div style="color:${c2.cor};font-weight:${h.tipo!=='ok'?'600':'400'};word-break:break-all;">${h.etiqueta}</div>
+        <div style="color:${htmlTexto(c2.cor)};font-weight:${h.tipo!=='ok'?'600':'400'};word-break:break-all;">${htmlTexto(h.etiqueta)}</div>
         <div style="color:var(--text3);font-size:10px;">${h.hora} · ${h.extra || h.tipo.toUpperCase()}</div>
       </div>
     `;
@@ -3619,7 +3626,7 @@ async function carregarCargas(){
     CARGAS = await api('GET', '/api/cargas' + qs);
     renderCargas();
   } catch(e) {
-    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${e.erro || e.message}</div>`;
+    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${htmlTexto(e.erro || e.message)}</div>`;
   }
 }
 
@@ -3663,15 +3670,15 @@ function renderCargas(){
 
     return `
       <div onclick="abrirDetalheCarga(${c.id})" style="background:${statusInfo.bg};border:1px solid ${statusInfo.borda};border-radius:8px;padding:14px 18px;display:grid;grid-template-columns:80px 1fr 100px 100px 100px;gap:14px;align-items:center;cursor:pointer;transition:all .15s;margin-bottom:8px;" onmouseover="this.style.background='var(--surface)';" onmouseout="this.style.background='${statusInfo.bg}';">
-        <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:${statusInfo.cor};">#${String(c.numero).padStart(3,'0')}</div>
+        <div style="font-size:22px;font-weight:700;font-family:var(--mono);color:${htmlTexto(statusInfo.cor)};">#${String(c.numero).padStart(3,'0')}</div>
         <div>
           <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-            ${c.transportadora}
-            <span style="font-size:9px;padding:2px 8px;border-radius:8px;font-weight:600;font-family:var(--mono);background:${statusInfo.bg};color:${statusInfo.cor};border:1px solid ${statusInfo.cor};">${statusInfo.label}</span>
+            ${htmlTexto(c.transportadora)}
+            <span style="font-size:9px;padding:2px 8px;border-radius:8px;font-weight:600;font-family:var(--mono);background:${statusInfo.bg};color:${htmlTexto(statusInfo.cor)};border:1px solid ${htmlTexto(statusInfo.cor)};">${statusInfo.label}</span>
           </div>
           <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">
-            ${aberta.toLocaleDateString('pt-BR')} · ${aberta.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}${fechada ? ' → ' + fechada.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''} · por ${c.aberta_por}
-            ${c.observacao ? '<br>' + c.observacao : ''}
+            ${aberta.toLocaleDateString('pt-BR')} · ${aberta.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}${fechada ? ' → ' + fechada.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''} · por ${htmlTexto(c.aberta_por)}
+            ${c.observacao ? '<br>' + htmlTexto(c.observacao) : ''}
           </div>
         </div>
         <div style="text-align:center;">
@@ -3713,10 +3720,10 @@ async function abrirDetalheCarga(id){
       const hora = b.coletada_em ? new Date(b.coletada_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
       return `
         <div style="display:grid;grid-template-columns:1fr 90px 1fr 90px;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;font-family:var(--mono);">
-          <div>${b.etiqueta}</div>
+          <div>${htmlTexto(b.etiqueta)}</div>
           <div style="color:var(--text2);">${hora}</div>
-          <div>${b.colaborador_nome || '—'}</div>
-          <div style="color:var(--text2);">${b.marketplace_nome || '—'}</div>
+          <div>${htmlTexto(b.colaborador_nome || '—')}</div>
+          <div style="color:var(--text2);">${htmlTexto(b.marketplace_nome || '—')}</div>
         </div>
       `;
     }).join('');
@@ -3728,12 +3735,12 @@ async function abrirDetalheCarga(id){
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:10px;">
           <div>
             <div style="font-size:24px;font-weight:700;margin-bottom:4px;">CARGA #${String(c.numero).padStart(3,'0')}</div>
-            <div style="font-size:13px;color:var(--text2);font-family:var(--mono);">${c.transportadora}${c.observacao ? ' · ' + c.observacao : ''}</div>
+            <div style="font-size:13px;color:var(--text2);font-family:var(--mono);">${htmlTexto(c.transportadora)}${htmlTexto(c.observacao ? ' · ' + c.observacao : '')}</div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">${aberta.toLocaleDateString('pt-BR')}</div>
             <div style="font-size:13px;font-family:var(--mono);">${aberta.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}${fechada ? ' → ' + fechada.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) + ` <span style="color:var(--accent);">(${duracaoStr})</span>` : ' <span style="color:var(--warn);">(em andamento)</span>'}</div>
-            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">aberta por ${c.aberta_por}${c.fechada_por ? ' · finalizada por ' + c.fechada_por : ''}</div>
+            <div style="font-size:11px;color:var(--text2);font-family:var(--mono);">aberta por ${htmlTexto(c.aberta_por)}${c.fechada_por ? ' · finalizada por ' + c.fechada_por : ''}</div>
           </div>
         </div>
 
@@ -3764,7 +3771,7 @@ async function abrirDetalheCarga(id){
       </div>
     `;
   } catch(e) {
-    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${e.erro || e.message}</div>`;
+    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${htmlTexto(e.erro || e.message)}</div>`;
   }
 }
 
@@ -3848,7 +3855,7 @@ function renderTranspConfig(){
   }
   grid.innerHTML = TRANSPS.map(t=>`
     <div class="config-item">
-      <div class="config-name">🚚 ${t.nome}</div>
+      <div class="config-name">🚚 ${htmlTexto(t.nome)}</div>
       <button class="del-btn" onclick="delTransp(${t.id})" title="Desativar">×</button>
     </div>
   `).join('');
@@ -3923,10 +3930,10 @@ function renderAtividades(){
   }
   cont.innerHTML = ATIVIDADES.map(a => `
     <div class="ativ-row">
-      <div class="ativ-nome">${a.nome}</div>
+      <div class="ativ-nome">${htmlTexto(a.nome)}</div>
       <input type="number" class="ativ-peso-edit" value="${a.peso}" step="0.05" min="0.01" onblur="atualizarPesoAtividade(${a.id}, this.value)" title="Peso (Enter ou Tab para salvar)"/>
       <div class="ativ-peso-display">peso ${a.peso}</div>
-      <button class="del-btn" onclick="delAtividade(${a.id}, '${a.nome.replace(/'/g,"\\'")}')" title="Desativar">×</button>
+      <button class="del-btn" onclick="delAtividade(${a.id}, '${htmlJs(a.nome)}')" title="Desativar">×</button>
     </div>
   `).join('');
 }
@@ -3979,12 +3986,12 @@ function renderAtribuicoes(){
     return `
       <div class="atrib-card ${semAtrib?'sem-atribuicao':''}">
         <div>
-          <div class="atrib-nome">${a.colaborador_nome}</div>
+          <div class="atrib-nome">${htmlTexto(a.colaborador_nome)}</div>
           <div class="atrib-meta-individual">${semAtrib ? '— sem atividade' : `meta: ${metaInd} · peso ${a.atividade_peso}`}</div>
         </div>
         <select onchange="atribuirAtividade(${a.colaborador_id}, this.value)">
           <option value="">— sem atividade —</option>
-          ${ATIVIDADES.map(at => `<option value="${at.id}" ${at.id===a.atividade_id?'selected':''}>${at.nome} (peso ${at.peso})</option>`).join('')}
+          ${ATIVIDADES.map(at => `<option value="${at.id}" ${at.id===a.atividade_id?'selected':''}>${htmlTexto(at.nome)} (peso ${at.peso})</option>`).join('')}
         </select>
       </div>
     `;
@@ -4029,7 +4036,7 @@ async function carregarMetaDia(){
     };
     renderMetaDia();
   } catch(e) {
-    cont.innerHTML = `<div class="meta-empty" style="color:var(--danger);">Erro ao carregar: ${e.erro||e.message}</div>`;
+    cont.innerHTML = `<div class="meta-empty" style="color:var(--danger);">Erro ao carregar: ${htmlTexto(e.erro||e.message)}</div>`;
   }
 }
 
@@ -4206,11 +4213,11 @@ function renderMetaDia(){
     const barCor = l.cor==='abaixo'||l.cor==='ocioso' ? 'var(--danger)' : (l.cor==='atencao' ? 'var(--warn)' : 'var(--accent)');
     const showCopy = l.cor==='abaixo' || l.cor==='ocioso' || l.cor==='atencao';
 
-    return `<div class="meta-card ${l.cor}">
+    return `<div class="meta-card ${htmlTexto(l.cor)}">
       <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
         <div>
-          <div style="font-size:13px;font-weight:600;">${l.colaborador_nome.toUpperCase()}</div>
-          <div style="font-size:10px;color:var(--text2);font-family:var(--mono);">${l.atividade_nome} · peso ${l.peso}</div>
+          <div style="font-size:13px;font-weight:600;">${htmlTexto(l.colaborador_nome.toUpperCase())}</div>
+          <div style="font-size:10px;color:var(--text2);font-family:var(--mono);">${htmlTexto(l.atividade_nome)} · peso ${l.peso}</div>
         </div>
         <span class="meta-card-pill" style="background:${l.pillBg};color:${l.pillTxt};">${l.status}</span>
       </div>
@@ -4352,7 +4359,7 @@ async function carregarFechamento(){
     const status = await api('GET','/api/fechamento/'+mesAnt+'/status');
     renderFechamento(status);
   } catch(e) {
-    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro ao carregar: ${e.erro || e.message}</div>`;
+    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro ao carregar: ${htmlTexto(e.erro || e.message)}</div>`;
   }
 }
 
@@ -4438,8 +4445,8 @@ async function verPendentesFechamento(mes){
       const horas = Math.floor((b.segundos_parado % 86400) / 3600);
       const tempo = dias > 0 ? `${dias}d ${horas}h` : `${horas}h`;
       return `<div class="fech-pend-row">
-        <div class="pend-etiq">${b.etiqueta}</div>
-        <div>${b.marketplace_nome || '-'} · ${b.colaborador_nome || '-'}</div>
+        <div class="pend-etiq">${htmlTexto(b.etiqueta)}</div>
+        <div>${htmlTexto(b.marketplace_nome || '-')} · ${htmlTexto(b.colaborador_nome || '-')}</div>
         <div style="font-size:10px;color:var(--text3);font-family:var(--mono);">${dataStr}</div>
         <div class="pend-tempo">há ${tempo}</div>
       </div>`;
@@ -4456,7 +4463,7 @@ async function verPendentesFechamento(mes){
         <div class="fech-pendentes-list">${linhas}</div>
       </div>`;
   } catch(e) {
-    area.innerHTML = `<div style="padding:18px;color:var(--danger);">Erro: ${e.erro || e.message}</div>`;
+    area.innerHTML = `<div style="padding:18px;color:var(--danger);">Erro: ${htmlTexto(e.erro || e.message)}</div>`;
   }
 }
 
@@ -4493,7 +4500,7 @@ async function iniciarFechamento(mes){
         </div>
       </div>`;
   } catch(e) {
-    cont.innerHTML = `<div style="padding:18px;color:var(--danger);">Erro ao gerar Excel: ${e.erro || e.message}</div>`;
+    cont.innerHTML = `<div style="padding:18px;color:var(--danger);">Erro ao gerar Excel: ${htmlTexto(e.erro || e.message)}</div>`;
   }
 }
 
@@ -4661,7 +4668,7 @@ async function carregarOciosidade(){
     ocioData = r;
     renderOciosidade();
   } catch(e) {
-    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${e.erro || e.message}</div>`;
+    cont.innerHTML = `<div style="padding:18px;background:rgba(255,77,77,.06);border-left:3px solid var(--danger);border-radius:6px;color:var(--danger);">Erro: ${htmlTexto(e.erro || e.message)}</div>`;
   }
 }
 
@@ -4797,11 +4804,11 @@ function renderOcioResumo(){
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
           <div>
             <div style="font-size:14px;font-weight:600;">
-              ${c.colaborador_nome}
+              ${htmlTexto(c.colaborador_nome)}
               <span style="margin-left:6px;font-size:9px;padding:2px 8px;border-radius:8px;font-weight:600;font-family:var(--mono);background:${pesoCorBg};color:${pesoCor};border:1px solid ${pesoCor}66;">PESO ${c.peso_categoria || 1}</span>
             </div>
             <div style="font-size:10px;color:var(--text2);font-family:var(--mono);">
-              ${c.total_bipagens} bipagens · ${c.primeiro_bipe || '—'}–${c.ultimo_bipe || '—'} · ${c.atividade_nome || ''}
+              ${c.total_bipagens} bipagens · ${c.primeiro_bipe || '—'}–${c.ultimo_bipe || '—'} · ${htmlTexto(c.atividade_nome || '')}
             </div>
           </div>
           <div style="text-align:right;">
@@ -4882,7 +4889,7 @@ function renderOcioTabela(){
 
   const linhas = eventos.map(e => `
     <div class="ocio-row">
-      <div style="font-weight:500;">${e.colaborador_nome}</div>
+      <div style="font-weight:500;">${htmlTexto(e.colaborador_nome)}</div>
       <div><span class="ocio-tipo-pill ${tipoEventoClasse(e.tipo)}">${tipoEventoLabel(e.tipo)}</span></div>
       <div style="font-family:var(--mono);">${e.inicio_str}</div>
       <div style="font-family:var(--mono);">${e.fim_str}</div>
@@ -4919,7 +4926,7 @@ function renderOcioTimeline(){
     // Se não tem bipagens, linha vazia
     if (c.total_bipagens === 0) {
       return `<div class="ocio-timeline-row">
-        <div style="font-size:12px;font-weight:500;color:var(--text2);">${c.colaborador_nome}</div>
+        <div style="font-size:12px;font-weight:500;color:var(--text2);">${htmlTexto(c.colaborador_nome)}</div>
         <div class="ocio-timeline-track">
           <div class="ocio-timeline-almoco" style="left:${pct(ALM_INI)}%;width:${pct(ALM_FIM)-pct(ALM_INI)}%;"></div>
         </div>
@@ -4939,7 +4946,7 @@ function renderOcioTimeline(){
     }).join('');
 
     return `<div class="ocio-timeline-row">
-      <div style="font-size:12px;font-weight:500;">${c.colaborador_nome}</div>
+      <div style="font-size:12px;font-weight:500;">${htmlTexto(c.colaborador_nome)}</div>
       <div class="ocio-timeline-track">
         <div class="ocio-timeline-almoco" style="left:${pct(ALM_INI)}%;width:${pct(ALM_FIM)-pct(ALM_INI)}%;"></div>
         <div class="ocio-timeline-bar" style="left:${pct(primeiroMin)}%;width:${pct(ultimoMin)-pct(primeiroMin)}%;"></div>
@@ -4982,16 +4989,16 @@ setInterval(()=>{
 function populateSelects() {
   const cs = S.colaboradores.sort((a,b)=>a.nome.localeCompare(b.nome));
   const ms = S.marketplaces.sort((a,b)=>a.nome.localeCompare(b.nome));
-  const cOpts = `<option value="">— selecionar —</option>`+cs.map(c=>`<option value="${c.id}">${c.nome}</option>`).join('');
-  const mOpts = `<option value="">— selecionar —</option>`+ms.map(m=>`<option value="${m.id}">${m.nome}</option>`).join('');
+  const cOpts = `<option value="">— selecionar —</option>`+cs.map(c=>`<option value="${c.id}">${htmlTexto(c.nome)}</option>`).join('');
+  const mOpts = `<option value="">— selecionar —</option>`+ms.map(m=>`<option value="${m.id}">${htmlTexto(m.nome)}</option>`).join('');
 
   const sc = document.getElementById('sel-colab'); const psc = sc.value; sc.innerHTML = cOpts; sc.value = psc;
   const sc2 = document.getElementById('sel-colab2'); const psc2 = sc2.value; sc2.innerHTML = cOpts; sc2.value = psc2;
   const sm = document.getElementById('sel-mkt'); const psm = sm.value; sm.innerHTML = mOpts; sm.value = psm;
 
-  document.getElementById('pend-colab').innerHTML = `<option value="">— selecionar —</option>`+cs.map(c=>`<option value="${c.nome}">${c.nome}</option>`).join('');
-  document.getElementById('hist-colab').innerHTML = `<option value="">Todos</option>`+cs.map(c=>`<option value="${c.nome}">${c.nome}</option>`).join('');
-  document.getElementById('hist-mkt').innerHTML   = `<option value="">Todos</option>`+ms.map(m=>`<option value="${m.nome}">${m.nome}</option>`).join('');
+  document.getElementById('pend-colab').innerHTML = `<option value="">— selecionar —</option>`+cs.map(c=>`<option value="${htmlTexto(c.nome)}">${htmlTexto(c.nome)}</option>`).join('');
+  document.getElementById('hist-colab').innerHTML = `<option value="">Todos</option>`+cs.map(c=>`<option value="${htmlTexto(c.nome)}">${htmlTexto(c.nome)}</option>`).join('');
+  document.getElementById('hist-mkt').innerHTML   = `<option value="">Todos</option>`+ms.map(m=>`<option value="${htmlTexto(m.nome)}">${htmlTexto(m.nome)}</option>`).join('');
 }
 
 // Helpers
@@ -5205,7 +5212,7 @@ function renderBipagem() {
   let html = `<div class="stat-card total"><div class="stat-label">Total hoje</div><div class="stat-value">${hojeC.length}</div></div>`;
   S.marketplaces.forEach(m => {
     const cnt = hojeC.filter(b=>b.marketplace_id===m.id).length;
-    html += `<div class="stat-card"><div class="stat-label" style="color:${m.cor}">${m.nome}</div><div class="stat-value" style="color:${m.cor}">${cnt}</div></div>`;
+    html += `<div class="stat-card"><div class="stat-label" style="color:${htmlTexto(m.cor)}">${htmlTexto(m.nome)}</div><div class="stat-value" style="color:${htmlTexto(m.cor)}">${cnt}</div></div>`;
   });
   document.getElementById('stats-row').innerHTML = html;
 
@@ -5216,14 +5223,14 @@ function renderBipagem() {
       ? bips.map(b=>`<tr>
           <td class="mono">${b.data}</td>
           <td class="mono">${b.hora}</td>
-          <td class="etiq">${b.etiqueta}</td>
-          <td class="mono">${b.colaborador_nome}</td>
+          <td class="etiq">${htmlTexto(b.etiqueta)}</td>
+          <td class="mono">${htmlTexto(b.colaborador_nome)}</td>
           <td><button class="del-btn" onclick="delBip('${b.id}')">✕</button></td>
         </tr>`).join('')
       : `<tr><td colspan="5" class="mkt-empty">sem bipagens hoje</td></tr>`;
     return `<div class="mkt-card">
       <div class="mkt-header">
-        <div style="display:flex;align-items:center;gap:8px;"><div class="mkt-dot" style="background:${m.cor}"></div><span class="mkt-name">${m.nome}</span></div>
+        <div style="display:flex;align-items:center;gap:8px;"><div class="mkt-dot" style="background:${htmlTexto(m.cor)}"></div><span class="mkt-name">${htmlTexto(m.nome)}</span></div>
         <span class="mkt-badge">${bips.length}</span>
       </div>
       <div class="tbl-scroll">
@@ -5343,7 +5350,7 @@ async function renderProdutividade(){
 
   if (erro) {
     pie.style.background = 'var(--surface2)';
-    document.getElementById('prod-legend').innerHTML = `<div class="empty-state" style="padding:1rem;color:var(--danger);">Erro: ${erro}</div>`;
+    document.getElementById('prod-legend').innerHTML = `<div class="empty-state" style="padding:1rem;color:var(--danger);">Erro: ${htmlTexto(erro)}</div>`;
     document.getElementById('prod-ranking').innerHTML = '';
     return;
   }
@@ -5366,8 +5373,8 @@ async function renderProdutividade(){
 
   document.getElementById('prod-legend').innerHTML = lista.map(item => `
     <div class="prod-legend-item">
-      <span class="prod-dot" style="background:${item.cor}"></span>
-      <span class="prod-name">${item.nome}</span>
+      <span class="prod-dot" style="background:${htmlTexto(item.cor)}"></span>
+      <span class="prod-name">${htmlTexto(item.nome)}</span>
       <span class="prod-meta">${item.qtd} · ${item.perc.toFixed(1).replace('.', ',')}%</span>
     </div>
   `).join('');
@@ -5376,9 +5383,9 @@ async function renderProdutividade(){
     <div class="prod-row">
       <div class="prod-pos">#${i + 1}</div>
       <div>
-        <div style="font-weight:600;margin-bottom:5px;">${item.nome}</div>
+        <div style="font-weight:600;margin-bottom:5px;">${htmlTexto(item.nome)}</div>
         <div class="prod-bar">
-          <div class="prod-bar-fill" style="width:${item.perc}%;background:${item.cor};"></div>
+          <div class="prod-bar-fill" style="width:${item.perc}%;background:${htmlTexto(item.cor)};"></div>
         </div>
       </div>
       <div class="prod-qtd">${item.qtd} un.</div>
@@ -5406,8 +5413,8 @@ function renderPendencias() {
   if (!S.pendencias.length) { tb.innerHTML='<tr><td colspan="7" class="empty-state">Nenhuma pendência.</td></tr>'; return; }
   tb.innerHTML = S.pendencias.map(p=>`<tr>
     <td class="mono">${p.data}</td><td class="mono">${p.hora}</td>
-    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${p.etiqueta}</td>
-    <td>${p.colaborador_nome||'—'}</td><td>${p.transito||'—'}</td><td>${p.obs||'—'}</td>
+    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${htmlTexto(p.etiqueta)}</td>
+    <td>${htmlTexto(p.colaborador_nome||'—')}</td><td>${htmlTexto(p.transito||'—')}</td><td>${htmlTexto(p.obs||'—')}</td>
     <td><button class="btn btn-danger-outline btn-sm" onclick="delPend('${p.id}')">✕</button></td>
   </tr>`).join('');
 }
@@ -5442,8 +5449,8 @@ function renderRetornos() {
   if (!S.retornos.length) { tb.innerHTML='<tr><td colspan="5" class="empty-state">Nenhum retorno.</td></tr>'; return; }
   tb.innerHTML = S.retornos.map(r=>`<tr>
     <td class="mono">${r.data}</td><td class="mono">${r.hora}</td>
-    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${r.etiqueta}</td>
-    <td>${r.motivo||'—'}</td>
+    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${htmlTexto(r.etiqueta)}</td>
+    <td>${htmlTexto(r.motivo||'—')}</td>
     <td><button class="btn btn-danger-outline btn-sm" onclick="delRet('${r.id}')">✕</button></td>
   </tr>`).join('');
 }
@@ -5530,10 +5537,10 @@ async function renderHistorico() {
 
   tb.innerHTML = resp.rows.map(b => `<tr>
     <td class="mono">${b.data}</td><td class="mono">${b.hora}</td>
-    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${b.etiqueta}</td>
-    <td><span style="color:${getMktColor(b.marketplace_nome)};font-size:12px;font-weight:600;">${b.marketplace_nome}</span></td>
-    <td>${b.colaborador_nome}</td>
-    <td style="font-size:11px;color:var(--text3);">${b.usuario_nome || '—'}</td>
+    <td style="font-family:var(--mono);color:var(--text);font-size:12px;">${htmlTexto(b.etiqueta)}</td>
+    <td><span style="color:${htmlTexto(getMktColor(b.marketplace_nome))};font-size:12px;font-weight:600;">${htmlTexto(b.marketplace_nome)}</span></td>
+    <td>${htmlTexto(b.colaborador_nome)}</td>
+    <td style="font-size:11px;color:var(--text3);">${htmlTexto(b.usuario_nome || '—')}</td>
     <td><button class="btn btn-danger-outline btn-sm" onclick="delBipHist('${b.id}')">✕</button></td>
   </tr>`).join('');
 
@@ -5612,11 +5619,11 @@ async function carregarUsuarios() {
     g.innerHTML = usuarios.map(u=>`
       <div class="usuario-chip">
         <div class="usuario-chip-info">
-          <div class="usuario-chip-name">${u.nome}${u.role==='admin'?'<span class="badge-admin">ADMIN</span>':''}</div>
-          <div class="usuario-chip-user">@${u.username}</div>
+          <div class="usuario-chip-name">${htmlTexto(u.nome)}${u.role==='admin'?'<span class="badge-admin">ADMIN</span>':''}</div>
+          <div class="usuario-chip-user">@${htmlTexto(u.username)}</div>
         </div>
         <div class="usuario-chip-actions">
-          <button class="btn btn-ghost btn-sm" onclick="resetarSenha(${u.id},'${u.username}')" title="Redefinir senha">🔑</button>
+          <button class="btn btn-ghost btn-sm" onclick="resetarSenha(${u.id},'${htmlJs(u.username)}')" title="Redefinir senha">🔑</button>
           ${u.role!=='admin'||usuarios.filter(x=>x.role==='admin').length>1?`<button class="btn btn-danger-outline btn-sm" onclick="delUsuario(${u.id})">✕</button>`:''}
         </div>
       </div>`).join('');
@@ -5664,7 +5671,7 @@ function renderColabs(){
   if(!S.colaboradores.length){g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum colaborador.</div>';return;}
   g.innerHTML=S.colaboradores.sort((a,b)=>a.nome.localeCompare(b.nome)).map(c=>`
     <div class="config-chip">
-      <div class="config-chip-left"><span>👤</span><span style="font-size:13px;font-weight:500;">${c.nome}</span></div>
+      <div class="config-chip-left"><span>👤</span><span style="font-size:13px;font-weight:500;">${htmlTexto(c.nome)}</span></div>
       <button class="config-chip-del" onclick="delColab(${c.id})">✕</button>
     </div>`).join('');
 }
@@ -5675,7 +5682,7 @@ const COLORS=['#ff5722','#ffe600','#ff9900','#e91e8c','#4d9fff','#00e5a0','#a855
 function renderColorPicks(){document.getElementById('color-picks').innerHTML=COLORS.map(c=>`<div class="color-swatch${c===selectedColor?' selected':''}" style="background:${c}" onclick="pickColor('${c}')"></div>`).join('');}
 function pickColor(c){selectedColor=c;renderColorPicks();}
 async function addMkt(){const nome=document.getElementById('mkt-nome').value.trim();if(!nome){toast('Informe o nome.','warn');return;}try{const m=await api('POST','/api/marketplaces',{nome,cor:selectedColor});S.marketplaces.push(m);document.getElementById('mkt-nome').value='';populateSelects();renderMktConfig();renderBipagem();toast('Marketplace adicionado.','ok');}catch(e){toast(e.erro||'Erro.','err');}}
-function renderMktConfig(){const g=document.getElementById('mkt-config-grid');if(!S.marketplaces.length){g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum marketplace.</div>';return;}g.innerHTML=S.marketplaces.map(m=>`<div class="config-chip"><div class="config-chip-left"><div class="config-chip-dot" style="background:${m.cor}"></div><span style="font-size:13px;font-weight:500;">${m.nome}</span></div><button class="config-chip-del" onclick="delMkt(${m.id})">✕</button></div>`).join('');}
+function renderMktConfig(){const g=document.getElementById('mkt-config-grid');if(!S.marketplaces.length){g.innerHTML='<div style="color:var(--text3);font-size:12px;font-family:var(--mono);">Nenhum marketplace.</div>';return;}g.innerHTML=S.marketplaces.map(m=>`<div class="config-chip"><div class="config-chip-left"><div class="config-chip-dot" style="background:${htmlTexto(m.cor)}"></div><span style="font-size:13px;font-weight:500;">${htmlTexto(m.nome)}</span></div><button class="config-chip-del" onclick="delMkt(${m.id})">✕</button></div>`).join('');}
 async function delMkt(id){if(!confirm('Remover?'))return;await api('DELETE',`/api/marketplaces/${id}`);S.marketplaces=S.marketplaces.filter(m=>m.id!==id);populateSelects();renderMktConfig();renderBipagem();}
 // ── Export CSV ────────────────────────────────────────────────
 async function exportCSV(tipo){
@@ -6153,23 +6160,15 @@ function renderAll(){renderBipagem();renderProdutividade();renderPendencias();re
     caixa.style.display = 'block';
     clearTimeout(timer); timer = setTimeout(function () { caixa.style.display = 'none'; }, ruim ? 12000 : 4000);
   }
-  function conectar() {
-    try {
-      var ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host);
-      ws.onmessage = function (ev) {
-        var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-        if (!m || m.event !== 'etq:reserva' || !m.data) return;
-        var d = m.data, eu = '';
-        try { eu = (typeof usuarioLogado !== 'undefined' && usuarioLogado && usuarioLogado.nome) || ''; } catch (e) {}
-        if (d.usuario && eu && d.usuario !== eu) return;      // aviso só para quem bipou
-        var itens = (d.itens || []).map(function (i) { return i.qtd + ' un de ' + i.sku + (i.variacao ? ' ' + i.variacao : ''); }).join(', ');
-        if (d.sem_estoque) mostrar('Sem estoque disponível para a etiqueta ' + d.etiqueta + ': ' + itens + '. A reserva foi lançada e o saldo ficou negativo. Avise o responsável.', true);
-        else mostrar('Reserva lançada: ' + itens + '.', false);
-      };
-      ws.onclose = function () { setTimeout(conectar, 5000); };
-    } catch (e) {}
-  }
-  conectar();
+  document.addEventListener('etq:reserva', function (e) {
+    if (!e.detail) return;
+    var d = e.detail, eu = '';
+    try { eu = (typeof usuarioLogado !== 'undefined' && usuarioLogado && usuarioLogado.nome) || ''; } catch (e) {}
+    if (d.usuario && eu && d.usuario !== eu) return;      // aviso só para quem bipou
+    var itens = (d.itens || []).map(function (i) { return i.qtd + ' un de ' + i.sku + (i.variacao ? ' ' + i.variacao : ''); }).join(', ');
+    if (d.sem_estoque) mostrar('Sem estoque disponível para a etiqueta ' + d.etiqueta + ': ' + itens + '. A reserva foi lançada e o saldo ficou negativo. Avise o responsável.', true);
+    else mostrar('Reserva lançada: ' + itens + '.', false);
+  });
 })();
 </script>
 </body>
