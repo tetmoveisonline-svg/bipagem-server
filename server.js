@@ -3,17 +3,41 @@ const { WebSocketServer } = require('ws');
 const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
+const { promisify } = require('util');
+const { rateLimit } = require('express-rate-limit');
 const { Pool } = require('pg');
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const SESSION_COOKIE = 'bip_session';
+const SESSION_MS = 8 * 60 * 60 * 1000;
+const cookieOptions = {
+  httpOnly: true,
+  sameSite: 'strict',
+  secure: Boolean(process.env.RAILWAY_ENVIRONMENT) || process.env.NODE_ENV === 'production',
+  path: '/',
+};
+const scrypt = promisify(crypto.scrypt);
+const scryptOptions = { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 };
+const loginLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 15, standardHeaders: 'draft-7', legacyHeaders: false,
+  message: { erro: 'Muitas tentativas. Tente novamente mais tarde.' } });
+if (process.env.TRUST_PROXY_HOPS || process.env.RAILWAY_ENVIRONMENT) {
+  const hops = Number(process.env.TRUST_PROXY_HOPS || 1);
+  if (!Number.isInteger(hops) || hops < 1) throw new Error('TRUST_PROXY_HOPS inválido.');
+  app.set('trust proxy', hops);
+}
 const PORT = process.env.PORT || 3000;
 
 // ── PostgreSQL database ───────────────────────────────────────
+const databaseUrl = process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL) : null;
+if (databaseUrl) {
+  for (const key of ['ssl', 'sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'uselibpqcompat']) databaseUrl.searchParams.delete(key);
+}
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+  connectionString: databaseUrl?.href,
+  connectionTimeoutMillis: 5000,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: true, ca: process.env.DATABASE_CA || undefined } : false
 });
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -40,9 +64,46 @@ function nowBR() {
     })
   };
 }
-function hashSenha(senha) {
-  return crypto.createHash('sha256').update(senha + 'bipagem_salt_2024').digest('hex');
+function senhaValida(senha) {
+  return typeof senha === 'string' && senha.length >= 12 && senha.length <= 256;
 }
+
+async function hashSenha(senha) {
+  const salt = crypto.randomBytes(16);
+  const digest = await scrypt(senha, salt, 64, scryptOptions);
+  return 'scrypt:' + salt.toString('hex') + ':' + digest.toString('hex');
+}
+
+async function verificarSenha(senha, hash) {
+  if (typeof senha !== 'string' || senha.length > 256) return false;
+  const moderno = /^scrypt:([0-9a-f]{32}):([0-9a-f]{128})$/.exec(hash);
+  if (moderno) {
+    const calculado = await scrypt(senha, Buffer.from(moderno[1], 'hex'), 64, scryptOptions);
+    return crypto.timingSafeEqual(calculado, Buffer.from(moderno[2], 'hex'));
+  }
+  if (!/^[0-9a-f]{64}$/.test(hash)) return false;
+  const legado = crypto.createHash('sha256').update(senha + 'bipagem_salt_2024').digest();
+  return crypto.timingSafeEqual(legado, Buffer.from(hash, 'hex'));
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function tokenDaSessao(req) {
+  const token = /(?:^|;\s*)bip_session=([0-9a-f]{64})(?=;|$)/.exec(req.headers.cookie || '');
+  return token ? hashToken(token[1]) : null;
+}
+
+async function buscarSessao(token) {
+  const result = await pool.query(`
+    SELECT u.id, u.username, u.nome, u.role, u.tema, s.expira_em
+    FROM sessoes s JOIN usuarios u ON u.id = s.usuario_id
+    WHERE s.token = $1 AND s.expira_em > NOW()
+  `, [token]);
+  return result.rows[0];
+}
+
 
 function gerarToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -81,6 +142,11 @@ async function initDB() {
       usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
+
+    ALTER TABLE sessoes ADD COLUMN IF NOT EXISTS expira_em TIMESTAMPTZ;
+    DELETE FROM sessoes WHERE expira_em IS NULL OR expira_em <= NOW();
+    ALTER TABLE sessoes ALTER COLUMN expira_em SET NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_sessoes_expira_em ON sessoes (expira_em);
 
     CREATE TABLE IF NOT EXISTS colaboradores (
       id SERIAL PRIMARY KEY,
@@ -207,14 +273,6 @@ async function initDB() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_coletada_em ON bipagens(coletada_em)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_carga_id ON bipagens(carga_id)`);
 
-  // Cleanup: remover módulo de Produção (descontinuado)
-  // Ordem importante: filhos primeiro (FK), depois pais
-  await pool.query(`DROP TABLE IF EXISTS producao_pedido_insumos CASCADE`);
-  await pool.query(`DROP TABLE IF EXISTS producao_entradas CASCADE`);
-  await pool.query(`DROP TABLE IF EXISTS producao_insumos CASCADE`);
-  await pool.query(`DROP TABLE IF EXISTS producao_fornecedores CASCADE`);
-  await pool.query(`DROP TABLE IF EXISTS producao_pedidos CASCADE`);
-
   // Seed de transportadoras padrão
   const transps = await pool.query('SELECT id FROM transportadoras LIMIT 1');
   if (transps.rowCount === 0) {
@@ -242,10 +300,21 @@ async function initDB() {
 
   const admin = await pool.query(`SELECT id FROM usuarios WHERE role = 'admin' LIMIT 1`);
   if (admin.rowCount === 0) {
+    const senha = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+    if (!senhaValida(senha) || senha === 'admin123') throw new Error('Defina BOOTSTRAP_ADMIN_PASSWORD com 12 a 256 caracteres.');
     await pool.query(
-      `INSERT INTO usuarios (username, senha, nome, role) VALUES ($1, $2, $3, $4)`,
-      ['admin', hashSenha('admin123'), 'Administrador', 'admin']
+      `INSERT INTO usuarios (username, senha, nome, role) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (username) DO NOTHING`,
+      ['admin', await hashSenha(senha), 'Administrador', 'admin']
     );
+    const criado = await pool.query(`SELECT 1 FROM usuarios WHERE role = 'admin' LIMIT 1`);
+    if (!criado.rowCount) throw new Error('O nome admin já pertence a um usuário sem permissão administrativa.');
+  }
+
+  if (admin.rowCount && senhaValida(process.env.BOOTSTRAP_ADMIN_PASSWORD)) {
+    const inicial = crypto.createHash('sha256').update('admin123bipagem_salt_2024').digest('hex');
+    await pool.query("UPDATE usuarios SET senha = $1 WHERE username = 'admin' AND role = 'admin' AND senha = $2",
+      [await hashSenha(process.env.BOOTSTRAP_ADMIN_PASSWORD), inicial]);
   }
 
   const colabs = await pool.query(`SELECT id FROM colaboradores LIMIT 1`);
@@ -279,13 +348,79 @@ async function initDB() {
 function broadcast(event, data) {
   const msg = JSON.stringify({ event, data });
   wss.clients.forEach(c => {
-    if (c.readyState === 1) c.send(msg);
+    if (c.readyState !== 1 || Date.now() >= c.expiraEm) return;
+    if (c.bufferedAmount > 1024 * 1024) c.terminate();
+    else c.send(msg);
   });
 }
 
-wss.on('connection', ws => ws.on('error', console.error));
+function origemValida(req) {
+  try {
+    if (!req.headers.origin) return false;
+    const origin = new URL(req.headers.origin);
+    return ['https:', 'http:'].includes(origin.protocol) && origin.host === req.headers.host
+      && (!cookieOptions.secure || origin.protocol === 'https:');
+  } catch {
+    return false;
+  }
+}
+
+function encerrarSockets(filtro) {
+  for (const ws of wss.clients) {
+    if (filtro(ws)) ws.terminate();
+  }
+}
+
+const wsHeartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.vivo || Date.now() >= ws.expiraEm) ws.terminate();
+    else {
+      ws.vivo = false;
+      ws.ping();
+    }
+  }
+}, 30000);
+wsHeartbeat.unref();
+
+server.on('upgrade', async (req, socket, head) => {
+  const erroSocket = () => socket.destroy();
+  socket.on('error', erroSocket);
+  try {
+    const token = tokenDaSessao(req);
+    if (req.url !== '/ws' || !origemValida(req) || !token) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    const usuario = await buscarSessao(token);
+    if (socket.destroyed) return;
+    if (!usuario) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    socket.removeListener('error', erroSocket);
+    wss.handleUpgrade(req, socket, head, ws => {
+      ws.token = token;
+      ws.usuarioId = usuario.id;
+      ws.expiraEm = usuario.expira_em.getTime();
+      ws.vivo = true;
+      ws.on('pong', () => { ws.vivo = true; });
+      ws.on('error', console.error);
+    });
+  } catch (e) {
+    console.error('WebSocket:', e.message);
+    socket.destroy();
+  }
+});
 
 // ── Middleware ───────────────────────────────────────────────
+app.disable('x-powered-by');
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin && !origemValida(req)) {
+    return res.status(403).json({ erro: 'Origem não autorizada.' });
+  }
+  next();
+});
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -310,20 +445,12 @@ app.use((req, res, next) => {
 // ── Auth middleware ──────────────────────────────────────────
 async function autenticar(req, res, next) {
   try {
-    const token = req.headers['authorization'] || req.query.token;
+    const token = tokenDaSessao(req);
     if (!token) return res.status(401).json({ erro: 'Não autenticado.' });
+    const usuario = await buscarSessao(token);
+    if (!usuario) return res.status(401).json({ erro: 'Sessão inválida.' });
 
-    const result = await pool.query(`
-      SELECT u.id, u.username, u.nome, u.role, u.tema
-      FROM sessoes s
-      JOIN usuarios u ON u.id = s.usuario_id
-      WHERE s.token = $1
-      LIMIT 1
-    `, [token]);
-
-    if (result.rowCount === 0) return res.status(401).json({ erro: 'Sessão inválida.' });
-
-    req.usuario = result.rows[0];
+    req.usuario = usuario;
     req.token = token;
     next();
   } catch (e) {
@@ -338,24 +465,41 @@ function apenasAdmin(req, res, next) {
 }
 
 // ── AUTH ROUTES ──────────────────────────────────────────────
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimit, async (req, res) => {
   try {
-    const { username, senha } = req.body;
-    if (!username || !senha) return res.status(400).json({ erro: 'Usuário e senha obrigatórios.' });
+    const { username, senha } = req.body || {};
+    if (typeof username !== 'string' || !username.trim() || username.length > 128
+        || typeof senha !== 'string' || !senha || senha.length > 256) {
+      return res.status(400).json({ erro: 'Usuário e senha obrigatórios.' });
+    }
 
     const userFmt = username.trim().toLowerCase();
-    const result = await pool.query(`SELECT * FROM usuarios WHERE username = $1 LIMIT 1`, [userFmt]);
+    const result = await pool.query('SELECT * FROM usuarios WHERE username = $1 LIMIT 1', [userFmt]);
     const usuario = result.rows[0];
-
-    if (!usuario || usuario.senha !== hashSenha(senha)) {
-      return res.status(401).json({ erro: 'Usuário ou senha incorretos.' });
+    const rejeitar = () => res.status(401).json({ erro: 'Usuário ou senha incorretos.' });
+    if (!usuario || !await verificarSenha(senha, usuario.senha)) return rejeitar();
+    if (usuario.role === 'admin' && senha === 'admin123' && !usuario.senha.startsWith('scrypt:')) {
+      return res.status(403).json({ erro: 'Senha inicial bloqueada. Redefina a senha do administrador.' });
     }
 
     const token = gerarToken();
-    await pool.query(`INSERT INTO sessoes (token, usuario_id) VALUES ($1, $2)`, [token, usuario.id]);
-
+    const anterior = tokenDaSessao(req);
+    const novoHash = usuario.senha.startsWith('scrypt:') ? usuario.senha : await hashSenha(senha);
+    const criada = await estqTx(async cli => {
+      const atual = await cli.query('SELECT senha FROM usuarios WHERE id = $1 FOR UPDATE', [usuario.id]);
+      if (atual.rows[0]?.senha !== usuario.senha) return false;
+      if (novoHash !== usuario.senha) {
+        await cli.query('UPDATE usuarios SET senha = $1 WHERE id = $2', [novoHash, usuario.id]);
+      }
+      await cli.query('DELETE FROM sessoes WHERE expira_em <= NOW() OR token = $1', [anterior]);
+      await cli.query('INSERT INTO sessoes (token, usuario_id, expira_em) VALUES ($1, $2, $3)',
+        [hashToken(token), usuario.id, new Date(Date.now() + SESSION_MS)]);
+      return true;
+    });
+    if (!criada) return rejeitar();
+    encerrarSockets(ws => ws.token === anterior);
+    res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_MS });
     res.json({
-      token,
       usuario: { id: usuario.id, username: usuario.username, nome: usuario.nome, role: usuario.role, tema: usuario.tema || 'dark' }
     });
   } catch (e) {
@@ -367,6 +511,8 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', autenticar, async (req, res) => {
   try {
     await pool.query(`DELETE FROM sessoes WHERE token = $1`, [req.token]);
+    encerrarSockets(ws => ws.token === req.token);
+    res.clearCookie(SESSION_COOKIE, cookieOptions);
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -418,7 +564,10 @@ app.get('/api/usuarios', autenticar, apenasAdmin, async (req, res) => {
 app.post('/api/usuarios', autenticar, apenasAdmin, async (req, res) => {
   try {
     const { username, senha, nome, role = 'user' } = req.body;
-    if (!username || !senha) return res.status(400).json({ erro: 'Usuário e senha obrigatórios.' });
+    if (typeof username !== 'string' || !username.trim() || username.length > 128
+        || !senhaValida(senha) || !['user', 'admin'].includes(role)) {
+      return res.status(400).json({ erro: 'Usuário e perfil válidos, e senha de 12 a 256 caracteres são obrigatórios.' });
+    }
 
     const userFmt = username.trim().toLowerCase();
     const nomeFmt = (nome || userFmt).trim();
@@ -427,7 +576,7 @@ app.post('/api/usuarios', autenticar, apenasAdmin, async (req, res) => {
       INSERT INTO usuarios (username, senha, nome, role)
       VALUES ($1, $2, $3, $4)
       RETURNING id, username, nome, role, criado_em
-    `, [userFmt, hashSenha(senha), nomeFmt, role]);
+    `, [userFmt, await hashSenha(senha), nomeFmt, role]);
 
     const novo = toISO(result.rows[0]);
     broadcast('usuario:add', novo);
@@ -443,15 +592,16 @@ app.put('/api/usuarios/:id/senha', autenticar, apenasAdmin, async (req, res) => 
   try {
     const { senha } = req.body;
     const id = toInt(req.params.id);
-    if (!senha) return res.status(400).json({ erro: 'Nova senha obrigatória.' });
-
-    const result = await pool.query(
-      `UPDATE usuarios SET senha = $1 WHERE id = $2 RETURNING id`,
-      [hashSenha(senha), id]
-    );
-
-    if (result.rowCount === 0) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-    await pool.query(`DELETE FROM sessoes WHERE usuario_id = $1`, [id]);
+    if (!senhaValida(senha)) return res.status(400).json({ erro: 'A senha deve ter de 12 a 256 caracteres.' });
+    const hash = await hashSenha(senha);
+    const alterada = await estqTx(async cli => {
+      const result = await cli.query('UPDATE usuarios SET senha = $1 WHERE id = $2 RETURNING id', [hash, id]);
+      if (!result.rowCount) return false;
+      await cli.query('DELETE FROM sessoes WHERE usuario_id = $1', [id]);
+      return true;
+    });
+    if (!alterada) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+    encerrarSockets(ws => ws.usuarioId === id);
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -474,6 +624,7 @@ app.delete('/api/usuarios/:id', autenticar, apenasAdmin, async (req, res) => {
     }
 
     await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
+    encerrarSockets(ws => ws.usuarioId === id);
     broadcast('usuario:del', { id });
     res.json({ ok: true });
   } catch (e) {
@@ -837,14 +988,15 @@ app.post('/api/conferencia', autenticar, async (req, res) => {
     });
   } catch (e) {
     console.error('POST /api/conferencia:', e.message);
-    res.status(500).json({ erro: 'Erro ao conferir: ' + e.message });
+    res.status(500).json({ erro: 'Erro ao conferir etiquetas.' });
   }
 });
 
 // POST /api/bipagens/lote — entrada em massa
 app.post('/api/bipagens/lote', autenticar, async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const { marketplace_id, colaborador_id, confirmar } = req.body || {};
     const etiquetas = limparEtiquetas(req.body && req.body.etiquetas);
     if (!etiquetas.length) { client.release(); return res.status(400).json({ erro: 'Nenhuma etiqueta válida no arquivo.' }); }
@@ -903,8 +1055,9 @@ app.post('/api/bipagens/lote', autenticar, async (req, res) => {
 
 // POST /api/retornos/lote — saída em massa
 app.post('/api/retornos/lote', autenticar, async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const { motivo = '', confirmar } = req.body || {};
     const etiquetas = limparEtiquetas(req.body && req.body.etiquetas);
     if (!etiquetas.length) { client.release(); return res.status(400).json({ erro: 'Nenhuma etiqueta válida no arquivo.' }); }
@@ -1287,7 +1440,7 @@ app.get('/api/cargas', autenticar, async (req, res) => {
     })));
   } catch (e) {
     console.error('GET /api/cargas:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1303,7 +1456,7 @@ app.get('/api/cargas/aberta', autenticar, async (req, res) => {
       fechada_em: c.fechada_em ? c.fechada_em.toISOString() : null
     });
   } catch (e) {
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1332,7 +1485,7 @@ app.get('/api/cargas/:id', autenticar, async (req, res) => {
       }))
     });
   } catch (e) {
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1368,7 +1521,7 @@ app.post('/api/cargas', autenticar, async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error('POST /api/cargas:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1394,7 +1547,7 @@ app.post('/api/cargas/:id/finalizar', autenticar, async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error('POST /api/cargas/:id/finalizar:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1410,14 +1563,15 @@ app.delete('/api/cargas/:id', autenticar, async (req, res) => {
     broadcast('carga:cancelada', { id: cargaId, numero: r.rows[0].numero });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
 // Importação em lote (romaneio da transportadora)
 app.post('/api/coletas/lote', autenticar, async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const transportadora = (req.body.transportadora || '').trim();
     const etiquetas = Array.isArray(req.body.etiquetas) ? req.body.etiquetas : [];
     if (!transportadora) return res.status(400).json({ erro: 'Selecione a transportadora.' });
@@ -1478,11 +1632,11 @@ app.post('/api/coletas/lote', autenticar, async (req, res) => {
       nao_encontradas: naoEncontradas
     });
   } catch (e) {
-    await client.query('ROLLBACK').catch(()=>{});
+    if (client) await client.query('ROLLBACK').catch(()=>{});
     console.error('POST /api/coletas/lote:', e.message);
-    res.status(500).json({ erro: 'Erro ao importar lote: ' + e.message });
+    res.status(500).json({ erro: 'Erro ao importar lote.' });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -1509,7 +1663,7 @@ app.get('/api/atividades', autenticar, async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM atividades WHERE ativa = TRUE ORDER BY peso DESC, nome');
     res.json(r.rows.map(a => ({ ...a, peso: parseFloat(a.peso) })));
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Criar atividade
@@ -1528,7 +1682,7 @@ app.post('/api/atividades', autenticar, async (req, res) => {
     const ativ = { ...r.rows[0], peso: parseFloat(r.rows[0].peso) };
     broadcast('atividade:upsert', ativ);
     res.json(ativ);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Atualizar peso da atividade
@@ -1546,7 +1700,7 @@ app.put('/api/atividades/:id', autenticar, async (req, res) => {
     const ativ = { ...r.rows[0], peso: parseFloat(r.rows[0].peso) };
     broadcast('atividade:upsert', ativ);
     res.json(ativ);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Desativar atividade
@@ -1556,7 +1710,7 @@ app.delete('/api/atividades/:id', autenticar, async (req, res) => {
     await pool.query('UPDATE atividades SET ativa = FALSE WHERE id = $1', [req.params.id]);
     broadcast('atividade:del', { id: parseInt(req.params.id) });
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Listar atribuições de um mês (col_atividade) — retorna lista de colaboradores com sua atividade do mês
@@ -1582,7 +1736,7 @@ app.get('/api/atribuicoes', autenticar, async (req, res) => {
         atividade_peso: a.atividade_peso !== null ? parseFloat(a.atividade_peso) : null,
       }))
     });
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Atribuir atividade a um colaborador num mês (upsert)
@@ -1609,7 +1763,7 @@ app.post('/api/atribuicoes', autenticar, async (req, res) => {
     `, [colaborador_id, atividade_id, mes]);
     broadcast('atribuicao:upsert', r.rows[0]);
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Listar metas mensais (todas)
@@ -1617,7 +1771,7 @@ app.get('/api/metas', autenticar, async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM metas_mensais ORDER BY mes DESC');
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Pegar/criar meta de um mês específico
@@ -1627,13 +1781,12 @@ app.get('/api/metas/:mes', autenticar, async (req, res) => {
     if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
     const r = await pool.query('SELECT * FROM metas_mensais WHERE mes = $1', [mes]);
     res.json(r.rows[0] || { mes, meta_global: null });
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Definir meta de um mês (upsert)
 app.put('/api/metas/:mes', autenticar, async (req, res) => {
   try {
-    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
     const mes = req.params.mes;
     const meta = parseInt(req.body.meta_global);
     if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
@@ -1645,7 +1798,7 @@ app.put('/api/metas/:mes', autenticar, async (req, res) => {
     `, [mes, meta]);
     broadcast('meta:upsert', r.rows[0]);
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // ── FECHAMENTO MENSAL ─────────────────────────────────────────
@@ -1675,7 +1828,7 @@ app.get('/api/fechamento/:mes/status', autenticar, async (req, res) => {
     });
   } catch (e) {
     console.error('GET /api/fechamento/:mes/status:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1700,14 +1853,13 @@ app.get('/api/fechamento/:mes/pendentes', autenticar, async (req, res) => {
     })));
   } catch (e) {
     console.error('GET /api/fechamento/:mes/pendentes:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
 // Dump completo do mês (pra gerar Excel no front)
 app.get('/api/fechamento/:mes/dados', autenticar, async (req, res) => {
   try {
-    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
     const mes = req.params.mes;
     if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
 
@@ -1762,15 +1914,15 @@ app.get('/api/fechamento/:mes/dados', autenticar, async (req, res) => {
     });
   } catch (e) {
     console.error('GET /api/fechamento/:mes/dados:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
 // Confirma o fechamento e DELETA os dados do mês (só após confirmação do front)
-app.post('/api/fechamento/:mes/confirmar', autenticar, async (req, res) => {
-  const client = await pool.connect();
+app.post('/api/fechamento/:mes/confirmar', autenticar, apenasAdmin, async (req, res) => {
+  let client;
   try {
-    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    client = await pool.connect();
     const mes = req.params.mes;
     if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
 
@@ -1819,11 +1971,11 @@ app.post('/api/fechamento/:mes/confirmar', autenticar, async (req, res) => {
       }
     });
   } catch (e) {
-    await client.query('ROLLBACK').catch(()=>{});
+    if (client) await client.query('ROLLBACK').catch(()=>{});
     console.error('POST /api/fechamento/:mes/confirmar:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -2081,7 +2233,7 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
     });
   } catch (e) {
     console.error('GET /api/ociosidade:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2289,7 +2441,7 @@ app.get('/api/estoque/produtos', autenticar, async (req, res) => {
       SELECT * FROM estoque_produtos ORDER BY nome, variante
     `);
     res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Adicionar produto
@@ -2306,7 +2458,7 @@ app.post('/api/estoque/produtos', autenticar, apenasAdmin, async (req, res) => {
     res.json(prod);
   } catch(e) {
     if (e.code === '23505') return res.status(409).json({ erro: 'Produto/variante já existe.' });
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2316,7 +2468,7 @@ app.delete('/api/estoque/produtos/:id', autenticar, apenasAdmin, async (req, res
     await pool.query('DELETE FROM estoque_produtos WHERE id=$1', [req.params.id]);
     broadcast('estoque:produto_del', { id: req.params.id });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Registrar movimento (entrada ou saída)
@@ -2325,31 +2477,34 @@ app.post('/api/estoque/movimentos', autenticar, async (req, res) => {
     const { produto_id, tipo, quantidade, lote, obs } = req.body;
     if (!produto_id || !tipo || !quantidade) return res.status(400).json({ erro: 'Produto, tipo e quantidade obrigatórios.' });
     if (!['entrada','saida'].includes(tipo)) return res.status(400).json({ erro: 'Tipo deve ser entrada ou saida.' });
-    const qtd = parseInt(quantidade);
-    if (qtd <= 0) return res.status(400).json({ erro: 'Quantidade deve ser maior que zero.' });
+    const qtd = Number(quantidade);
+    if (!Number.isSafeInteger(qtd) || qtd <= 0 || qtd > 2147483647) {
+      return res.status(400).json({ erro: 'Quantidade inválida.' });
+    }
 
-    const prod = await pool.query('SELECT * FROM estoque_produtos WHERE id=$1', [produto_id]);
-    if (!prod.rows.length) return res.status(404).json({ erro: 'Produto não encontrado.' });
-    const p = prod.rows[0];
-
-    const novoSaldo = tipo === 'entrada' ? p.saldo_atual + qtd : p.saldo_atual - qtd;
-    const { data, hora } = nowBR();
-    const data_iso = new Date().toISOString().slice(0,10);
-
-    await pool.query('UPDATE estoque_produtos SET saldo_atual=$1 WHERE id=$2', [novoSaldo, produto_id]);
-
-    const result = await pool.query(`
-      INSERT INTO estoque_movimentos
-      (id, produto_id, produto_nome, variante, tipo, quantidade, saldo_apos, lote, obs, data, data_iso, usuario_nome)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *
-    `, [uid(), produto_id, p.nome, p.variante, tipo, qtd, novoSaldo, lote||null, obs||'', data, data_iso, req.usuario.nome]);
-
-    const mov = result.rows[0];
+    const mov = await estqTx(async cli => {
+      const delta = tipo === 'entrada' ? qtd : -qtd;
+      const prod = await cli.query(`
+        UPDATE estoque_produtos SET saldo_atual = saldo_atual + $1 WHERE id = $2
+        RETURNING nome, variante, saldo_atual
+      `, [delta, produto_id]);
+      if (!prod.rows.length) return null;
+      const p = prod.rows[0];
+      const { data } = nowBR();
+      const dataIso = new Date().toISOString().slice(0, 10);
+      const result = await cli.query(`
+        INSERT INTO estoque_movimentos
+        (id, produto_id, produto_nome, variante, tipo, quantidade, saldo_apos, lote, obs, data, data_iso, usuario_nome)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *
+      `, [uid(), produto_id, p.nome, p.variante, tipo, qtd, p.saldo_atual, lote || null, obs || '', data, dataIso, req.usuario.nome]);
+      return result.rows[0];
+    });
+    if (!mov) return res.status(404).json({ erro: 'Produto não encontrado.' });
+    const novoSaldo = mov.saldo_apos;
     broadcast('estoque:movimento', { ...mov, saldo_atual: novoSaldo });
-    // Recalcular status do lote se informado
     if (lote) await recalcularLotes(produto_id, parseInt(lote));
     res.json({ movimento: mov, saldo_atual: novoSaldo });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Listar movimentos com filtros
@@ -2358,29 +2513,31 @@ app.get('/api/estoque/movimentos', autenticar, async (req, res) => {
     const { produto_id, tipo, de, ate } = req.query;
     let q = 'SELECT * FROM estoque_movimentos WHERE 1=1';
     const params = [];
-    if (produto_id) { q += ` AND produto_id=${params.length+1}`; params.push(produto_id); }
-    if (tipo)       { q += ` AND tipo=${params.length+1}`; params.push(tipo); }
-    if (de)         { q += ` AND data_iso >= ${params.length+1}`; params.push(de); }
-    if (ate)        { q += ` AND data_iso <= ${params.length+1}`; params.push(ate); }
+    if (produto_id) { q += ` AND produto_id=$${params.length+1}`; params.push(produto_id); }
+    if (tipo)       { q += ` AND tipo=$${params.length+1}`; params.push(tipo); }
+    if (de)         { q += ` AND data_iso >= $${params.length+1}`; params.push(de); }
+    if (ate)        { q += ` AND data_iso <= $${params.length+1}`; params.push(ate); }
     q += ' ORDER BY criado_em DESC LIMIT 1000';
     const result = await pool.query(q, params);
     res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Excluir movimento (e recalcular saldo)
 app.delete('/api/estoque/movimentos/:id', autenticar, apenasAdmin, async (req, res) => {
   try {
-    const mov = await pool.query('SELECT * FROM estoque_movimentos WHERE id=$1', [req.params.id]);
-    if (!mov.rows.length) return res.status(404).json({ erro: 'Movimento não encontrado.' });
-    const m = mov.rows[0];
-    await pool.query('DELETE FROM estoque_movimentos WHERE id=$1', [req.params.id]);
-    // Recalcular saldo
-    const ajuste = m.tipo === 'entrada' ? -m.quantidade : m.quantidade;
-    await pool.query('UPDATE estoque_produtos SET saldo_atual = saldo_atual + $1 WHERE id=$2', [ajuste, m.produto_id]);
+    const m = await estqTx(async cli => {
+      const mov = await cli.query('DELETE FROM estoque_movimentos WHERE id = $1 RETURNING *', [req.params.id]);
+      if (!mov.rows.length) return null;
+      const movimento = mov.rows[0];
+      const ajuste = movimento.tipo === 'entrada' ? -movimento.quantidade : movimento.quantidade;
+      await cli.query('UPDATE estoque_produtos SET saldo_atual = saldo_atual + $1 WHERE id = $2', [ajuste, movimento.produto_id]);
+      return movimento;
+    });
+    if (!m) return res.status(404).json({ erro: 'Movimento não encontrado.' });
     broadcast('estoque:movimento_del', { id: req.params.id, produto_id: m.produto_id });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Resumo geral
@@ -2396,7 +2553,7 @@ app.get('/api/estoque/resumo', autenticar, async (req, res) => {
       produtos: produtos.rows,
       movimentos_hoje: movHoje.rows
     });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 
@@ -2447,17 +2604,18 @@ async function initLotes() {
       criado_em TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+  // Migrate lote_insumos: add pedido_id if missing
+  try {
+    await pool.query('ALTER TABLE lote_insumos ADD COLUMN IF NOT EXISTS pedido_id TEXT');
+    await pool.query('UPDATE lote_insumos SET pedido_id = lote_id WHERE pedido_id IS NULL AND lote_id IS NOT NULL');
+  } catch(e) {}
 }
 
 function calcStatusPedido(itens) {
   if (!itens.length) return 'aberto';
-  const todos = itens.every(i => parseInt(i.qtd_recebida) >= parseInt(i.qtd_pedida));
-  if (todos) return 'completo';
-  const algum = itens.some(i => parseInt(i.qtd_recebida) > 0);
-  const algumExc = itens.some(i => parseInt(i.qtd_recebida) > parseInt(i.qtd_pedida));
-  if (algumExc && todos) return 'excedente';
-  if (algumExc) return 'parcial';
-  if (algum) return 'parcial';
+  const todos = itens.every(i => i.qtd_recebida >= i.qtd_pedida);
+  if (todos) return itens.some(i => i.qtd_recebida > i.qtd_pedida) ? 'excedente' : 'completo';
+  if (itens.some(i => i.qtd_recebida > 0)) return 'parcial';
   return 'aberto';
 }
 
@@ -2483,7 +2641,7 @@ app.get('/api/estoque/lotes', autenticar, async (req, res) => {
     res.json(result);
   } catch(e) { 
     console.error('GET lotes error:', e.message);
-    res.status(500).json({ erro: e.message }); 
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2524,7 +2682,7 @@ app.post('/api/estoque/lotes', autenticar, async (req, res) => {
     res.json(full);
   } catch(e) { 
     console.error('POST lotes error:', e.message);
-    res.status(500).json({ erro: e.message }); 
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2534,7 +2692,7 @@ app.delete('/api/estoque/lotes/:id', autenticar, apenasAdmin, async (req, res) =
     await pool.query('DELETE FROM pedidos_lote WHERE id=$1', [req.params.id]);
     broadcast('estoque:lote_del', { id: req.params.id });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Recalcular lote ao registrar movimento
@@ -2588,11 +2746,7 @@ async function initInsumos() {
     );
     -- lote_insumos gerenciada por initLotes
   `);
-  // Migrate lote_insumos: add pedido_id if missing
-  try {
-    await pool.query('ALTER TABLE lote_insumos ADD COLUMN IF NOT EXISTS pedido_id TEXT');
-    await pool.query('UPDATE lote_insumos SET pedido_id = lote_id WHERE pedido_id IS NULL AND lote_id IS NOT NULL');
-  } catch(e) {}
+
 }
 
 // Listar insumos
@@ -2605,7 +2759,7 @@ app.get('/api/insumos', autenticar, async (req, res) => {
     sql += ' ORDER BY nome';
     const result = await pool.query(sql, params);
     res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Criar insumo
@@ -2621,7 +2775,7 @@ app.post('/api/insumos', autenticar, apenasAdmin, async (req, res) => {
     res.json(result.rows[0]);
   } catch(e) {
     if (e.code === '23505') return res.status(409).json({ erro: 'Insumo já cadastrado.' });
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2635,7 +2789,7 @@ app.put('/api/insumos/:id', autenticar, apenasAdmin, async (req, res) => {
     );
     broadcast('insumo:update', result.rows[0]);
     res.json(result.rows[0]);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Remover insumo
@@ -2644,7 +2798,7 @@ app.delete('/api/insumos/:id', autenticar, apenasAdmin, async (req, res) => {
     await pool.query('DELETE FROM insumos WHERE id=$1', [req.params.id]);
     broadcast('insumo:del', { id: req.params.id });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Listar insumos de um lote
@@ -2655,7 +2809,7 @@ app.get('/api/lotes/:loteId/insumos', autenticar, async (req, res) => {
       [req.params.loteId]
     );
     res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Adicionar insumo ao lote
@@ -2673,7 +2827,7 @@ app.post('/api/lotes/:loteId/insumos', autenticar, async (req, res) => {
         data_entrega_fab||null, obs||'']);
     broadcast('lote_insumo:add', result.rows[0]);
     res.json(result.rows[0]);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Remover insumo do lote
@@ -2682,7 +2836,7 @@ app.delete('/api/lotes/:loteId/insumos/:id', autenticar, async (req, res) => {
     await pool.query('DELETE FROM lote_insumos WHERE id=$1 AND pedido_id=$2', [req.params.id, req.params.loteId]);
     broadcast('lote_insumo:del', { id: req.params.id, lote_id: req.params.loteId });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 
@@ -2748,73 +2902,52 @@ app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res
     if (!qtd || qtd <= 0)
       return res.status(400).json({ erro: 'Quantidade inválida.' });
 
-    // 1) Buscar item do lote
-    const item = await pool.query('SELECT * FROM lote_itens WHERE id=$1 AND pedido_id=$2',
-      [req.params.itemId, req.params.loteId]);
-    if (!item.rows.length) return res.status(404).json({ erro: 'Item não encontrado.' });
-    const it = item.rows[0];
+    const out = await estqTx(async cli => {
+      const pedido = await cli.query('SELECT * FROM pedidos_lote WHERE id = $1 FOR UPDATE', [req.params.loteId]);
+      if (!pedido.rows.length) return null;
+      const numeroLote = pedido.rows[0].numero;
+      const item = await cli.query('SELECT * FROM lote_itens WHERE id = $1 AND pedido_id = $2 FOR UPDATE',
+        [req.params.itemId, req.params.loteId]);
+      if (!item.rows.length) return null;
+      const it = item.rows[0];
+      const recebido = it.qtd_recebida + qtd;
+      const status = calcStatusItem({ qtd_pedida: it.qtd_pedida, qtd_recebida: recebido });
+      await cli.query('UPDATE lote_itens SET qtd_recebida = $1, status = $2 WHERE id = $3', [recebido, status, it.id]);
 
-    // 2) Buscar lote (para pegar o número do lote)
-    const pedidoRes = await pool.query('SELECT * FROM pedidos_lote WHERE id=$1', [req.params.loteId]);
-    if (!pedidoRes.rows.length) return res.status(404).json({ erro: 'Lote não encontrado.' });
-    const numeroLote = pedidoRes.rows[0].numero;
-
-    // 3) Atualizar quantidade recebida + status do item
-    const novoRecebido = parseInt(it.qtd_recebida) + qtd;
-    const ped = parseInt(it.qtd_pedida);
-    let statusItem = 'parcial';
-    if (novoRecebido === 0)    statusItem = 'aberto';
-    if (novoRecebido === ped)  statusItem = 'completo';
-    if (novoRecebido > ped)    statusItem = 'excedente';
-
-    await pool.query(
-      'UPDATE lote_itens SET qtd_recebida=$1, status=$2 WHERE id=$3',
-      [novoRecebido, statusItem, it.id]
-    );
-
-    // 4) Criar ENTRADA no estoque do produto (se houver produto vinculado)
-    let movimento = null;
-    let novoSaldo = null;
-    if (it.produto_id) {
-      const prod = await pool.query('SELECT * FROM estoque_produtos WHERE id=$1', [it.produto_id]);
-      if (prod.rows.length) {
-        const p = prod.rows[0];
-        novoSaldo = p.saldo_atual + qtd;
-        const { data } = nowBR();
-        const data_iso = new Date().toISOString().slice(0,10);
-
-        await pool.query('UPDATE estoque_produtos SET saldo_atual=$1 WHERE id=$2', [novoSaldo, it.produto_id]);
-
-        const movRes = await pool.query(`
-          INSERT INTO estoque_movimentos
-          (id, produto_id, produto_nome, variante, tipo, quantidade, saldo_apos, lote, obs, data, data_iso, usuario_nome)
-          VALUES ($1,$2,$3,$4,'entrada',$5,$6,$7,$8,$9,$10,$11) RETURNING *
-        `, [uid(), it.produto_id, p.nome, p.variante, qtd, novoSaldo, numeroLote, obs||'', data, data_iso, req.usuario.nome]);
-        movimento = movRes.rows[0];
-        broadcast('estoque:movimento', { ...movimento, saldo_atual: novoSaldo });
+      let movimento = null;
+      let novoSaldo = null;
+      if (it.produto_id) {
+        const prod = await cli.query(`
+          UPDATE estoque_produtos SET saldo_atual = saldo_atual + $1 WHERE id = $2
+          RETURNING nome, variante, saldo_atual
+        `, [qtd, it.produto_id]);
+        if (prod.rows.length) {
+          const p = prod.rows[0];
+          novoSaldo = p.saldo_atual;
+          const { data } = nowBR();
+          const dataIso = new Date().toISOString().slice(0, 10);
+          const mov = await cli.query(`
+            INSERT INTO estoque_movimentos
+            (id, produto_id, produto_nome, variante, tipo, quantidade, saldo_apos, lote, obs, data, data_iso, usuario_nome)
+            VALUES ($1,$2,$3,$4,'entrada',$5,$6,$7,$8,$9,$10,$11) RETURNING *
+          `, [uid(), it.produto_id, p.nome, p.variante, qtd, novoSaldo, numeroLote, obs || '', data, dataIso, req.usuario.nome]);
+          movimento = mov.rows[0];
+        }
       }
-    }
 
-    // 5) Recalcular status geral do pedido
-    const allItens = await pool.query('SELECT * FROM lote_itens WHERE pedido_id=$1', [req.params.loteId]);
-    const statuses = allItens.rows.map(i => i.status);
-    let statusGeral = 'aberto';
-    if (statuses.every(s => s === 'completo')) statusGeral = 'completo';
-    else if (statuses.every(s => s === 'completo' || s === 'excedente')) statusGeral = 'excedente';
-    else if (statuses.some(s => ['parcial','completo','excedente'].includes(s))) statusGeral = 'parcial';
-
-    const pedido = await pool.query(
-      'UPDATE pedidos_lote SET status=$1 WHERE id=$2 RETURNING *',
-      [statusGeral, req.params.loteId]
-    );
-
-    const full = { ...pedido.rows[0], itens: allItens.rows.map(r => r.id === it.id ? {...r, qtd_recebida: novoRecebido, status: statusItem} : r) };
-    broadcast('estoque:lote_update', full);
-    console.log(`POST entrega: lote #${numeroLote} ${it.produto_nome}/${it.variante} +${qtd} (saldo: ${novoSaldo}) obs="${obs||''}"`);
-    res.json({ ...full, movimento, saldo_atual: novoSaldo });
+      const itens = await cli.query('SELECT * FROM lote_itens WHERE pedido_id = $1', [req.params.loteId]);
+      const atualizado = await cli.query('UPDATE pedidos_lote SET status = $1 WHERE id = $2 RETURNING *',
+        [calcStatusPedido(itens.rows), req.params.loteId]);
+      return { lote: { ...atualizado.rows[0], itens: itens.rows }, movimento, novoSaldo };
+    });
+    if (!out) return res.status(404).json({ erro: 'Lote ou item não encontrado.' });
+    const { lote, movimento, novoSaldo } = out;
+    if (movimento) broadcast('estoque:movimento', { ...movimento, saldo_atual: novoSaldo });
+    broadcast('estoque:lote_update', lote);
+    res.json({ ...lote, movimento, saldo_atual: novoSaldo });
   } catch(e) {
     console.error('POST entrega error:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2827,7 +2960,7 @@ app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res
 // Só cria tabelas novas (estq_*). As tabelas do estoque antigo
 // (estoque_produtos, estoque_movimentos, lotes, insumos) não são tocadas.
 // ═══════════════════════════════════════════════════════════════════════
-const ESTQ_PRODUCAO_URL = (process.env.PRODUCAO_URL || 'https://producao-server-production.up.railway.app').replace(/\/+$/, '');
+const ESTQ_PRODUCAO_URL = (process.env.PRODUCAO_URL || '').replace(/\/+$/, '');
 const ESTQ_TOKEN = process.env.INTEGRACAO_TOKEN || '';
 const ESTQ_POR_PAGINA = 50;
 const ESTQ_MOTIVOS_AJUSTE = ['Avaria', 'Perda', 'Troca', 'Retorno de cliente', 'Acerto de contagem', 'Outro'];
@@ -3025,15 +3158,19 @@ app.post('/api/integracao/coleta', autenticarIntegracao, async (req, res) => {
 // Só cria e atualiza nome/cor. Nunca altera SKU da Shopee nem saldo.
 async function estqSincronizarProdutos() {
   if (!_estqPronto || _estqSincronizando) return { ok: false, erro: 'Sincronização em andamento.' };
-  if (!ESTQ_TOKEN) return { ok: false, erro: 'Variável INTEGRACAO_TOKEN não configurada.' };
+  if (!ESTQ_TOKEN || !ESTQ_PRODUCAO_URL) return { ok: false, erro: 'Configure INTEGRACAO_TOKEN e PRODUCAO_URL.' };
   if (typeof fetch !== 'function') return { ok: false, erro: 'Versão do Node sem fetch.' };
   _estqSincronizando = true;
   try {
+    const destino = new URL(ESTQ_PRODUCAO_URL);
+    if (destino.protocol !== 'https:' || destino.username || destino.password || destino.search || destino.hash) {
+      throw new Error('PRODUCAO_URL deve ser uma URL HTTPS sem credenciais, query ou fragmento.');
+    }
     const pedir = async caminho => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 10000);
       try {
-        const r = await fetch(ESTQ_PRODUCAO_URL + caminho, { headers: { 'x-integracao-token': ESTQ_TOKEN }, signal: ctrl.signal });
+        const r = await fetch(ESTQ_PRODUCAO_URL + caminho, { headers: { 'x-integracao-token': ESTQ_TOKEN }, signal: ctrl.signal, redirect: 'error' });
         if (!r.ok) throw new Error(r.status === 401 ? 'Token recusado pela Produção.' : 'Produção respondeu HTTP ' + r.status + '.');
         return await r.json();
       } finally { clearTimeout(timer); }
@@ -3078,10 +3215,20 @@ function estqDisponivel(req, res, next) {
   next();
 }
 
+const confirmarSenhaLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  skipSuccessfulRequests: true,
+  keyGenerator: req => String(req.usuario.id),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { erro: 'Muitas confirmações de senha. Tente novamente mais tarde.' }
+});
+
 async function estqSenhaConfere(req, senha) {
   if (!senha) return false;
   const r = await pool.query('SELECT senha FROM usuarios WHERE id = $1', [req.usuario.id]);
-  return r.rows.length > 0 && r.rows[0].senha === hashSenha(String(senha));
+  return r.rows.length > 0 && await verificarSenha(senha, r.rows[0].senha);
 }
 
 // ── Saldos + situação da ligação ──────────────────────────────────────
@@ -3181,7 +3328,7 @@ app.put('/api/estq/itens/:id/sku', autenticar, apenasAdmin, estqDisponivel, asyn
 });
 
 // ── Ajuste manual (admin, com senha e motivo) ─────────────────────────
-app.post('/api/estq/ajuste', autenticar, apenasAdmin, estqDisponivel, async (req, res) => {
+app.post('/api/estq/ajuste', autenticar, apenasAdmin, confirmarSenhaLimit, estqDisponivel, async (req, res) => {
   try {
     const b = req.body || {};
     const itemId = estqInt(b.item_id), qtd = estqInt(b.quantidade);
@@ -3210,7 +3357,7 @@ app.post('/api/estq/ajuste', autenticar, apenasAdmin, estqDisponivel, async (req
 
 // ── Contagem em lote (admin, com senha) ───────────────────────────────
 // Recebe o saldo contado de cada item e o sistema calcula a diferença.
-app.post('/api/estq/contagem', autenticar, apenasAdmin, estqDisponivel, async (req, res) => {
+app.post('/api/estq/contagem', autenticar, apenasAdmin, confirmarSenhaLimit, estqDisponivel, async (req, res) => {
   try {
     const b = req.body || {};
     const obs = String(b.obs || '').trim().slice(0, 300);
@@ -3291,6 +3438,15 @@ async function initEtq() {
         impressa_por TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_etq_etiquetas_em ON etq_etiquetas (enviado_em);
+
+      CREATE TABLE IF NOT EXISTS etq_arquivo_etiquetas (
+        arquivo_id INTEGER NOT NULL REFERENCES etq_arquivos(id) ON DELETE CASCADE,
+        rastreio TEXT NOT NULL REFERENCES etq_etiquetas(rastreio) ON DELETE CASCADE,
+        PRIMARY KEY (arquivo_id, rastreio)
+      );
+      INSERT INTO etq_arquivo_etiquetas (arquivo_id, rastreio)
+      SELECT a.id, e.rastreio FROM etq_etiquetas e JOIN etq_arquivos a ON a.id = e.arquivo_id
+      ON CONFLICT DO NOTHING;
 
       CREATE TABLE IF NOT EXISTS etq_itens (
         id BIGSERIAL PRIMARY KEY,
@@ -3486,7 +3642,7 @@ app.post('/api/etq/arquivos', autenticar, estqDisponivel, etqDisponivel, async (
         }
         // Ainda não impressa: atualiza os itens com a leitura mais recente, desde que nada tenha sido lançado no estoque.
         const lanc = await cli.query(`SELECT 1 FROM etq_itens WHERE rastreio = $1 AND estado <> '' LIMIT 1`, [e.rastreio]);
-        if (!lanc.rows.length) {
+        if (!lanc.rows.length && (ant.enviado_por_id === eu.id || eu.role === 'admin')) {
           await cli.query('DELETE FROM etq_itens WHERE rastreio = $1', [e.rastreio]);
           for (const it of e.itens) await cli.query(`INSERT INTO etq_itens (rastreio, sku, variacao, produto, qtd) VALUES ($1,$2,$3,$4,$5)`,
             [e.rastreio, it.sku, it.variacao, it.produto, it.qtd]);
@@ -3495,6 +3651,10 @@ app.post('/api/etq/arquivos', autenticar, estqDisponivel, etqDisponivel, async (
         if (ant.enviado_por_id !== eu.id) situacoes.push({ rastreio: e.rastreio, situacao: 'enviada', por: ant.enviado_por, em: ant.enviado_em.toISOString() });
         else situacoes.push({ rastreio: e.rastreio, situacao: 'nova' });
       }
+      await cli.query(`
+        INSERT INTO etq_arquivo_etiquetas (arquivo_id, rastreio)
+        SELECT $1, rastreio FROM unnest($2::text[]) AS etiquetas(rastreio)
+      `, [arquivoId, limpas.map(e => e.rastreio)]);
       await cli.query('UPDATE etq_arquivos SET novas = $2, repetidas = $3 WHERE id = $1', [arquivoId, limpas.length - repetidas, repetidas]);
       return { arquivo_id: arquivoId, enviado_em: arq.rows[0].enviado_em.toISOString(), situacoes };
     });
@@ -3524,6 +3684,11 @@ app.post('/api/etq/arquivos/:id/baixar', autenticar, estqDisponivel, etqDisponiv
     if (!arq.rows.length) return res.status(404).json({ erro: 'Arquivo não encontrado.' });
     if (arq.rows[0].usuario_id !== req.usuario.id) return res.status(403).json({ erro: 'Este arquivo foi enviado por outro usuário.' });
     const out = await estqTx(async cli => {
+      const permitidas = await cli.query(`
+        SELECT rastreio FROM etq_arquivo_etiquetas
+        WHERE arquivo_id = $1 AND rastreio = ANY($2::text[])
+      `, [arquivoId, rastreios]);
+      if (permitidas.rowCount !== new Set(rastreios).size) return null;
       // Só marca o que ainda não foi impresso. Se outra pessoa imprimiu nesse meio tempo, devolve quem foi.
       const marc = await cli.query(`
         UPDATE etq_etiquetas SET impressa_em = NOW(), impressa_por = $2
@@ -3535,6 +3700,7 @@ app.post('/api/etq/arquivos/:id/baixar', autenticar, estqDisponivel, etqDisponiv
       const minhas = new Set(marc.rows.map(x => x.rastreio));
       return todas.rows.map(x => ({ rastreio: x.rastreio, marcada: minhas.has(x.rastreio), por: x.impressa_por, em: x.impressa_em ? x.impressa_em.toISOString() : null }));
     });
+    if (!out) return res.status(403).json({ erro: 'Há etiquetas que não pertencem a este arquivo.' });
     res.json({ ok: true, etiquetas: out });
   } catch (e) {
     console.error(e);
@@ -3543,7 +3709,7 @@ app.post('/api/etq/arquivos/:id/baixar', autenticar, estqDisponivel, etqDisponiv
 });
 
 // ── Reimpressão: qualquer usuário, com a própria senha e o motivo ─────
-app.post('/api/etq/reimprimir', autenticar, estqDisponivel, etqDisponivel, async (req, res) => {
+app.post('/api/etq/reimprimir', autenticar, confirmarSenhaLimit, estqDisponivel, etqDisponivel, async (req, res) => {
   try {
     const b = req.body || {};
     const rastreio = etqRastreio(b.rastreio), motivo = String(b.motivo || '').trim();
@@ -3602,8 +3768,11 @@ app.put('/api/etq/etiquetas/:rastreio/itens', autenticar, estqDisponivel, etqDis
       itens.push({ sku: etqTexto(it.sku, 80), variacao: etqTexto(it.variacao, 120), produto: etqTexto(it.produto, 200), qtd });
     }
     const out = await estqTx(async cli => {
-      const a = await cli.query('SELECT impressa_em FROM etq_etiquetas WHERE rastreio = $1 FOR UPDATE', [rastreio]);
+      const a = await cli.query('SELECT impressa_em, enviado_por_id FROM etq_etiquetas WHERE rastreio = $1 FOR UPDATE', [rastreio]);
       if (!a.rows.length) return { status: 404, erro: 'Etiqueta não encontrada.' };
+      if (a.rows[0].enviado_por_id !== req.usuario.id && req.usuario.role !== 'admin') {
+        return { status: 403, erro: 'Só quem enviou a etiqueta ou um administrador pode corrigir os itens.' };
+      }
       if (a.rows[0].impressa_em) return { status: 400, erro: 'Etiqueta já impressa: os itens não podem mais ser alterados.' };
       const lanc = await cli.query(`SELECT 1 FROM etq_itens WHERE rastreio = $1 AND estado <> '' LIMIT 1`, [rastreio]);
       if (lanc.rows.length) return { status: 400, erro: 'Esta etiqueta já foi bipada: os itens não podem mais ser alterados.' };
@@ -3645,8 +3814,8 @@ app.get('/', (req, res) => res.json({ status: 'online', mensagem: 'API Bipagem',
 
 initDB()
   .then(() => initEstoque())
-  .then(() => initLotes())
   .then(() => initInsumos())
+  .then(() => initLotes())
   .then(() => initEstq())
   .then(() => initEtq())
   .then(() => {

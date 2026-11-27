@@ -123,7 +123,7 @@
   /* ───────── Romaneio em PDF ───────── */
   async function lerRomaneio(bytes) {
     if (!window.pdfjsLib) throw new Error('Leitor de PDF não carregado.');
-    const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
     const blocos = [];
     for (let n = 1; n <= pdf.numPages; n++) {
       const page = await pdf.getPage(n);

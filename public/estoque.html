@@ -495,7 +495,7 @@ button.nav-item.active{background:rgba(0,229,160,.06);border-left-color:var(--ac
 <div class="toast-area" id="toast-area" role="status"></div>
 
 <script>
-var token = null; try { token = localStorage.getItem('bip_token') || null; } catch (e) {}
+try { localStorage.removeItem('bip_token'); } catch (e) {}
 var usuario = null, dados = null, ehAdmin = false;
 var mov = { pagina: 1, paginas: 1 };
 var pendentes = [];     // SKUs que vieram em etiquetas e ainda não têm vínculo
@@ -520,7 +520,7 @@ function toast(msg, tipo, dur) {
   setTimeout(function () { el.remove(); }, dur || 3500);
 }
 async function api(metodo, caminho, corpo) {
-  var o = { method: metodo, headers: { 'Content-Type': 'application/json', 'Authorization': token || '' } };
+  var o = { method: metodo, headers: { 'Content-Type': 'application/json' } };
   if (corpo) o.body = JSON.stringify(corpo);
   var r = await fetch(caminho, o), j = null;
   try { j = await r.json(); } catch (e) { j = {}; }
@@ -539,12 +539,11 @@ async function fazerLogin() {
     var r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, senha: s }) });
     var d = await r.json();
     if (!r.ok) { err.textContent = d.erro || 'Erro ao entrar.'; return; }
-    token = d.token; usuario = d.usuario;
-    try { localStorage.setItem('bip_token', token); } catch (e) {}
+    usuario = d.usuario;
     iniciar();
   } catch (e) { err.textContent = 'Erro de conexão.'; }
 }
-function sair() { try { localStorage.removeItem('bip_token'); } catch (e) {} token = null; $('app').style.display = 'none'; $('login-wrap').style.display = 'flex'; }
+function sair() { usuario = null; $('app').style.display = 'none'; $('login-wrap').style.display = 'flex'; }
 async function fazerLogout() { try { await api('POST', '/api/logout'); } catch (e) {} sair(); }
 
 /* ── início ── */
@@ -565,7 +564,7 @@ async function carregar(avisar) {
     renderLigacao(); renderSaldo(); preencherFiltroItens();
     if ($('panel-mov').classList.contains('active')) carregarMov(mov.pagina);
     if (avisar) toast('Estoque atualizado.');
-  } catch (e) { if (token) toast(msgErro(e), 'err'); }
+  } catch (e) { if (usuario) toast(msgErro(e), 'err'); }
 }
 function abrir(p) {
   ['saldo', 'mov', 'sku', 'contagem'].forEach(function (x) { $('panel-' + x).classList.toggle('active', x === p); $('nav-' + x).classList.toggle('active', x === p); });
@@ -752,12 +751,12 @@ document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && $(
 var wsTimer = null;
 function conectarWS() {
   try {
-    var ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host);
+    var ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws');
     ws.onopen = function () { $('ws-dot').classList.add('on'); };
-    ws.onclose = function () { $('ws-dot').classList.remove('on'); if (token) setTimeout(conectarWS, 4000); };
+    ws.onclose = function () { $('ws-dot').classList.remove('on'); if (usuario) setTimeout(conectarWS, 4000); };
     ws.onmessage = function (ev) {
       try { if (JSON.parse(ev.data).event !== 'estq:atualizado') return; } catch (e) { return; }
-      clearTimeout(wsTimer); wsTimer = setTimeout(function () { if (token && $('modal-ajuste').style.display !== 'flex') carregar(false); }, 500);
+      clearTimeout(wsTimer); wsTimer = setTimeout(function () { if (usuario && $('modal-ajuste').style.display !== 'flex') carregar(false); }, 500);
     };
   } catch (e) {}
 }
@@ -765,7 +764,7 @@ function relogio() { $('data-full').textContent = new Date().toLocaleDateString(
 relogio(); setInterval(relogio, 60000);
 
 (async function () {
-  if (token) { try { usuario = await api('GET', '/api/me'); return iniciar(); } catch (e) {} }
+  try { usuario = await api('GET', '/api/me'); return iniciar(); } catch (e) {}
   sair();
 })();
 </script>
