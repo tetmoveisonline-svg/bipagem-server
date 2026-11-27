@@ -36,6 +36,7 @@ if (databaseUrl) {
 }
 const pool = new Pool({
   connectionString: databaseUrl?.href,
+  connectionTimeoutMillis: 5000,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: true, ca: process.env.DATABASE_CA || undefined } : false
 });
 
@@ -271,14 +272,6 @@ async function initDB() {
   await pool.query(`ALTER TABLE bipagens ADD COLUMN IF NOT EXISTS cancelamento_motivo TEXT`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_coletada_em ON bipagens(coletada_em)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_bipagens_carga_id ON bipagens(carga_id)`);
-
-  // Cleanup: remover módulo de Produção (descontinuado)
-  // Ordem importante: filhos primeiro (FK), depois pais
-  await pool.query(`DROP TABLE IF EXISTS producao_pedido_insumos CASCADE`);
-  await pool.query(`DROP TABLE IF EXISTS producao_entradas CASCADE`);
-  await pool.query(`DROP TABLE IF EXISTS producao_insumos CASCADE`);
-  await pool.query(`DROP TABLE IF EXISTS producao_fornecedores CASCADE`);
-  await pool.query(`DROP TABLE IF EXISTS producao_pedidos CASCADE`);
 
   // Seed de transportadoras padrão
   const transps = await pool.query('SELECT id FROM transportadoras LIMIT 1');
@@ -995,14 +988,15 @@ app.post('/api/conferencia', autenticar, async (req, res) => {
     });
   } catch (e) {
     console.error('POST /api/conferencia:', e.message);
-    res.status(500).json({ erro: 'Erro ao conferir: ' + e.message });
+    res.status(500).json({ erro: 'Erro ao conferir etiquetas.' });
   }
 });
 
 // POST /api/bipagens/lote — entrada em massa
 app.post('/api/bipagens/lote', autenticar, async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const { marketplace_id, colaborador_id, confirmar } = req.body || {};
     const etiquetas = limparEtiquetas(req.body && req.body.etiquetas);
     if (!etiquetas.length) { client.release(); return res.status(400).json({ erro: 'Nenhuma etiqueta válida no arquivo.' }); }
@@ -1061,8 +1055,9 @@ app.post('/api/bipagens/lote', autenticar, async (req, res) => {
 
 // POST /api/retornos/lote — saída em massa
 app.post('/api/retornos/lote', autenticar, async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const { motivo = '', confirmar } = req.body || {};
     const etiquetas = limparEtiquetas(req.body && req.body.etiquetas);
     if (!etiquetas.length) { client.release(); return res.status(400).json({ erro: 'Nenhuma etiqueta válida no arquivo.' }); }
@@ -1445,7 +1440,7 @@ app.get('/api/cargas', autenticar, async (req, res) => {
     })));
   } catch (e) {
     console.error('GET /api/cargas:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1461,7 +1456,7 @@ app.get('/api/cargas/aberta', autenticar, async (req, res) => {
       fechada_em: c.fechada_em ? c.fechada_em.toISOString() : null
     });
   } catch (e) {
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1490,7 +1485,7 @@ app.get('/api/cargas/:id', autenticar, async (req, res) => {
       }))
     });
   } catch (e) {
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1526,7 +1521,7 @@ app.post('/api/cargas', autenticar, async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error('POST /api/cargas:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1552,7 +1547,7 @@ app.post('/api/cargas/:id/finalizar', autenticar, async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error('POST /api/cargas/:id/finalizar:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1568,14 +1563,15 @@ app.delete('/api/cargas/:id', autenticar, async (req, res) => {
     broadcast('carga:cancelada', { id: cargaId, numero: r.rows[0].numero });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
 // Importação em lote (romaneio da transportadora)
 app.post('/api/coletas/lote', autenticar, async (req, res) => {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     const transportadora = (req.body.transportadora || '').trim();
     const etiquetas = Array.isArray(req.body.etiquetas) ? req.body.etiquetas : [];
     if (!transportadora) return res.status(400).json({ erro: 'Selecione a transportadora.' });
@@ -1636,11 +1632,11 @@ app.post('/api/coletas/lote', autenticar, async (req, res) => {
       nao_encontradas: naoEncontradas
     });
   } catch (e) {
-    await client.query('ROLLBACK').catch(()=>{});
+    if (client) await client.query('ROLLBACK').catch(()=>{});
     console.error('POST /api/coletas/lote:', e.message);
-    res.status(500).json({ erro: 'Erro ao importar lote: ' + e.message });
+    res.status(500).json({ erro: 'Erro ao importar lote.' });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -1667,7 +1663,7 @@ app.get('/api/atividades', autenticar, async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM atividades WHERE ativa = TRUE ORDER BY peso DESC, nome');
     res.json(r.rows.map(a => ({ ...a, peso: parseFloat(a.peso) })));
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Criar atividade
@@ -1686,7 +1682,7 @@ app.post('/api/atividades', autenticar, async (req, res) => {
     const ativ = { ...r.rows[0], peso: parseFloat(r.rows[0].peso) };
     broadcast('atividade:upsert', ativ);
     res.json(ativ);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Atualizar peso da atividade
@@ -1704,7 +1700,7 @@ app.put('/api/atividades/:id', autenticar, async (req, res) => {
     const ativ = { ...r.rows[0], peso: parseFloat(r.rows[0].peso) };
     broadcast('atividade:upsert', ativ);
     res.json(ativ);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Desativar atividade
@@ -1714,7 +1710,7 @@ app.delete('/api/atividades/:id', autenticar, async (req, res) => {
     await pool.query('UPDATE atividades SET ativa = FALSE WHERE id = $1', [req.params.id]);
     broadcast('atividade:del', { id: parseInt(req.params.id) });
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Listar atribuições de um mês (col_atividade) — retorna lista de colaboradores com sua atividade do mês
@@ -1740,7 +1736,7 @@ app.get('/api/atribuicoes', autenticar, async (req, res) => {
         atividade_peso: a.atividade_peso !== null ? parseFloat(a.atividade_peso) : null,
       }))
     });
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Atribuir atividade a um colaborador num mês (upsert)
@@ -1767,7 +1763,7 @@ app.post('/api/atribuicoes', autenticar, async (req, res) => {
     `, [colaborador_id, atividade_id, mes]);
     broadcast('atribuicao:upsert', r.rows[0]);
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Listar metas mensais (todas)
@@ -1775,7 +1771,7 @@ app.get('/api/metas', autenticar, async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM metas_mensais ORDER BY mes DESC');
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Pegar/criar meta de um mês específico
@@ -1785,13 +1781,12 @@ app.get('/api/metas/:mes', autenticar, async (req, res) => {
     if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
     const r = await pool.query('SELECT * FROM metas_mensais WHERE mes = $1', [mes]);
     res.json(r.rows[0] || { mes, meta_global: null });
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Definir meta de um mês (upsert)
 app.put('/api/metas/:mes', autenticar, async (req, res) => {
   try {
-    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
     const mes = req.params.mes;
     const meta = parseInt(req.body.meta_global);
     if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
@@ -1803,7 +1798,7 @@ app.put('/api/metas/:mes', autenticar, async (req, res) => {
     `, [mes, meta]);
     broadcast('meta:upsert', r.rows[0]);
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ erro: e.message }); }
+  } catch (e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // ── FECHAMENTO MENSAL ─────────────────────────────────────────
@@ -1833,7 +1828,7 @@ app.get('/api/fechamento/:mes/status', autenticar, async (req, res) => {
     });
   } catch (e) {
     console.error('GET /api/fechamento/:mes/status:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -1858,14 +1853,13 @@ app.get('/api/fechamento/:mes/pendentes', autenticar, async (req, res) => {
     })));
   } catch (e) {
     console.error('GET /api/fechamento/:mes/pendentes:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
 // Dump completo do mês (pra gerar Excel no front)
 app.get('/api/fechamento/:mes/dados', autenticar, async (req, res) => {
   try {
-    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
     const mes = req.params.mes;
     if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
 
@@ -1920,15 +1914,15 @@ app.get('/api/fechamento/:mes/dados', autenticar, async (req, res) => {
     });
   } catch (e) {
     console.error('GET /api/fechamento/:mes/dados:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
 // Confirma o fechamento e DELETA os dados do mês (só após confirmação do front)
-app.post('/api/fechamento/:mes/confirmar', autenticar, async (req, res) => {
-  const client = await pool.connect();
+app.post('/api/fechamento/:mes/confirmar', autenticar, apenasAdmin, async (req, res) => {
+  let client;
   try {
-    if (req.usuario.role !== 'admin') return res.status(403).json({ erro: 'Acesso negado.' });
+    client = await pool.connect();
     const mes = req.params.mes;
     if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ erro: 'Mês inválido.' });
 
@@ -1977,11 +1971,11 @@ app.post('/api/fechamento/:mes/confirmar', autenticar, async (req, res) => {
       }
     });
   } catch (e) {
-    await client.query('ROLLBACK').catch(()=>{});
+    if (client) await client.query('ROLLBACK').catch(()=>{});
     console.error('POST /api/fechamento/:mes/confirmar:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -2239,7 +2233,7 @@ app.get('/api/ociosidade/:data?', autenticar, async (req, res) => {
     });
   } catch (e) {
     console.error('GET /api/ociosidade:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2447,7 +2441,7 @@ app.get('/api/estoque/produtos', autenticar, async (req, res) => {
       SELECT * FROM estoque_produtos ORDER BY nome, variante
     `);
     res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Adicionar produto
@@ -2464,7 +2458,7 @@ app.post('/api/estoque/produtos', autenticar, apenasAdmin, async (req, res) => {
     res.json(prod);
   } catch(e) {
     if (e.code === '23505') return res.status(409).json({ erro: 'Produto/variante já existe.' });
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2474,7 +2468,7 @@ app.delete('/api/estoque/produtos/:id', autenticar, apenasAdmin, async (req, res
     await pool.query('DELETE FROM estoque_produtos WHERE id=$1', [req.params.id]);
     broadcast('estoque:produto_del', { id: req.params.id });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Registrar movimento (entrada ou saída)
@@ -2510,7 +2504,7 @@ app.post('/api/estoque/movimentos', autenticar, async (req, res) => {
     broadcast('estoque:movimento', { ...mov, saldo_atual: novoSaldo });
     if (lote) await recalcularLotes(produto_id, parseInt(lote));
     res.json({ movimento: mov, saldo_atual: novoSaldo });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Listar movimentos com filtros
@@ -2519,14 +2513,14 @@ app.get('/api/estoque/movimentos', autenticar, async (req, res) => {
     const { produto_id, tipo, de, ate } = req.query;
     let q = 'SELECT * FROM estoque_movimentos WHERE 1=1';
     const params = [];
-    if (produto_id) { q += ` AND produto_id=${params.length+1}`; params.push(produto_id); }
-    if (tipo)       { q += ` AND tipo=${params.length+1}`; params.push(tipo); }
-    if (de)         { q += ` AND data_iso >= ${params.length+1}`; params.push(de); }
-    if (ate)        { q += ` AND data_iso <= ${params.length+1}`; params.push(ate); }
+    if (produto_id) { q += ` AND produto_id=$${params.length+1}`; params.push(produto_id); }
+    if (tipo)       { q += ` AND tipo=$${params.length+1}`; params.push(tipo); }
+    if (de)         { q += ` AND data_iso >= $${params.length+1}`; params.push(de); }
+    if (ate)        { q += ` AND data_iso <= $${params.length+1}`; params.push(ate); }
     q += ' ORDER BY criado_em DESC LIMIT 1000';
     const result = await pool.query(q, params);
     res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Excluir movimento (e recalcular saldo)
@@ -2543,7 +2537,7 @@ app.delete('/api/estoque/movimentos/:id', autenticar, apenasAdmin, async (req, r
     if (!m) return res.status(404).json({ erro: 'Movimento não encontrado.' });
     broadcast('estoque:movimento_del', { id: req.params.id, produto_id: m.produto_id });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Resumo geral
@@ -2559,7 +2553,7 @@ app.get('/api/estoque/resumo', autenticar, async (req, res) => {
       produtos: produtos.rows,
       movimentos_hoje: movHoje.rows
     });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 
@@ -2647,7 +2641,7 @@ app.get('/api/estoque/lotes', autenticar, async (req, res) => {
     res.json(result);
   } catch(e) { 
     console.error('GET lotes error:', e.message);
-    res.status(500).json({ erro: e.message }); 
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2688,7 +2682,7 @@ app.post('/api/estoque/lotes', autenticar, async (req, res) => {
     res.json(full);
   } catch(e) { 
     console.error('POST lotes error:', e.message);
-    res.status(500).json({ erro: e.message }); 
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2698,7 +2692,7 @@ app.delete('/api/estoque/lotes/:id', autenticar, apenasAdmin, async (req, res) =
     await pool.query('DELETE FROM pedidos_lote WHERE id=$1', [req.params.id]);
     broadcast('estoque:lote_del', { id: req.params.id });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Recalcular lote ao registrar movimento
@@ -2765,7 +2759,7 @@ app.get('/api/insumos', autenticar, async (req, res) => {
     sql += ' ORDER BY nome';
     const result = await pool.query(sql, params);
     res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Criar insumo
@@ -2781,7 +2775,7 @@ app.post('/api/insumos', autenticar, apenasAdmin, async (req, res) => {
     res.json(result.rows[0]);
   } catch(e) {
     if (e.code === '23505') return res.status(409).json({ erro: 'Insumo já cadastrado.' });
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -2795,7 +2789,7 @@ app.put('/api/insumos/:id', autenticar, apenasAdmin, async (req, res) => {
     );
     broadcast('insumo:update', result.rows[0]);
     res.json(result.rows[0]);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Remover insumo
@@ -2804,7 +2798,7 @@ app.delete('/api/insumos/:id', autenticar, apenasAdmin, async (req, res) => {
     await pool.query('DELETE FROM insumos WHERE id=$1', [req.params.id]);
     broadcast('insumo:del', { id: req.params.id });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Listar insumos de um lote
@@ -2815,7 +2809,7 @@ app.get('/api/lotes/:loteId/insumos', autenticar, async (req, res) => {
       [req.params.loteId]
     );
     res.json(result.rows);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Adicionar insumo ao lote
@@ -2833,7 +2827,7 @@ app.post('/api/lotes/:loteId/insumos', autenticar, async (req, res) => {
         data_entrega_fab||null, obs||'']);
     broadcast('lote_insumo:add', result.rows[0]);
     res.json(result.rows[0]);
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 // Remover insumo do lote
@@ -2842,7 +2836,7 @@ app.delete('/api/lotes/:loteId/insumos/:id', autenticar, async (req, res) => {
     await pool.query('DELETE FROM lote_insumos WHERE id=$1 AND pedido_id=$2', [req.params.id, req.params.loteId]);
     broadcast('lote_insumo:del', { id: req.params.id, lote_id: req.params.loteId });
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ erro: e.message }); }
+  } catch(e) { res.status(500).json({ erro: 'Erro interno do servidor.' }); }
 });
 
 
@@ -2953,7 +2947,7 @@ app.post('/api/lotes/:loteId/itens/:itemId/entrega', autenticar, async (req, res
     res.json({ ...lote, movimento, saldo_atual: novoSaldo });
   } catch(e) {
     console.error('POST entrega error:', e.message);
-    res.status(500).json({ erro: e.message });
+    res.status(500).json({ erro: 'Erro interno do servidor.' });
   }
 });
 
@@ -3221,6 +3215,16 @@ function estqDisponivel(req, res, next) {
   next();
 }
 
+const confirmarSenhaLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  skipSuccessfulRequests: true,
+  keyGenerator: req => String(req.usuario.id),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { erro: 'Muitas confirmações de senha. Tente novamente mais tarde.' }
+});
+
 async function estqSenhaConfere(req, senha) {
   if (!senha) return false;
   const r = await pool.query('SELECT senha FROM usuarios WHERE id = $1', [req.usuario.id]);
@@ -3324,7 +3328,7 @@ app.put('/api/estq/itens/:id/sku', autenticar, apenasAdmin, estqDisponivel, asyn
 });
 
 // ── Ajuste manual (admin, com senha e motivo) ─────────────────────────
-app.post('/api/estq/ajuste', autenticar, apenasAdmin, estqDisponivel, async (req, res) => {
+app.post('/api/estq/ajuste', autenticar, apenasAdmin, confirmarSenhaLimit, estqDisponivel, async (req, res) => {
   try {
     const b = req.body || {};
     const itemId = estqInt(b.item_id), qtd = estqInt(b.quantidade);
@@ -3353,7 +3357,7 @@ app.post('/api/estq/ajuste', autenticar, apenasAdmin, estqDisponivel, async (req
 
 // ── Contagem em lote (admin, com senha) ───────────────────────────────
 // Recebe o saldo contado de cada item e o sistema calcula a diferença.
-app.post('/api/estq/contagem', autenticar, apenasAdmin, estqDisponivel, async (req, res) => {
+app.post('/api/estq/contagem', autenticar, apenasAdmin, confirmarSenhaLimit, estqDisponivel, async (req, res) => {
   try {
     const b = req.body || {};
     const obs = String(b.obs || '').trim().slice(0, 300);
@@ -3705,7 +3709,7 @@ app.post('/api/etq/arquivos/:id/baixar', autenticar, estqDisponivel, etqDisponiv
 });
 
 // ── Reimpressão: qualquer usuário, com a própria senha e o motivo ─────
-app.post('/api/etq/reimprimir', autenticar, estqDisponivel, etqDisponivel, async (req, res) => {
+app.post('/api/etq/reimprimir', autenticar, confirmarSenhaLimit, estqDisponivel, etqDisponivel, async (req, res) => {
   try {
     const b = req.body || {};
     const rastreio = etqRastreio(b.rastreio), motivo = String(b.motivo || '').trim();
